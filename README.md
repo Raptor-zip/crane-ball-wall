@@ -21,6 +21,7 @@ MathWorks のブログ記事 [Simulate in MATLAB, Animate in Blender](https://bl
 | 動画：enter（上段 fast、下段 pump） | [docs/media/enter.mp4](docs/media/enter.mp4) |
 | 動画：escape（上段 fast、下段 pump） | [docs/media/escape.mp4](docs/media/escape.mp4) |
 | 論文（12 ページ、過程と検証の詳細） | [docs/paper.pdf](docs/paper.pdf) |
+| 解説動画（YouTube、7:48。運動方程式の立式から解き方まで） | [youtu.be/cEGxACeO0iQ](https://youtu.be/cEGxACeO0iQ)（mp4 は [Release explainer-v1](https://github.com/Raptor-zip/crane-ball-wall/releases/tag/explainer-v1)） |
 | 要約（2 ページの 2 段組） | [docs/paper_summary.pdf](docs/paper_summary.pdf) |
 
 ![escape の動画の 1 コマ](docs/media/escape_frame.png)
@@ -74,6 +75,27 @@ uv run python -m ballwall.video --still 3  # 3 秒目の 1 コマだけ PNG で�
 
 上の 4 つの実行の結果（`trajectory.json`、`report.json`）から作る。1 本の中を上下に分け、上に fast、下に pump を
 同じ時計で並べて再生する。1920×1080、30 fps、H.264（yuv420p）で、X（旧 Twitter）にそのまま投稿できる形式。
+
+### 解説動画（YouTube 向け、約 8 分）
+
+公開版：https://youtu.be/cEGxACeO0iQ （書き出した mp4 とサムネイルは GitHub Release `explainer-v1` に置いてある）
+
+運動方程式の立式から、軌道最適化・時変 LQR・検証までを解説する動画を `explainer/` で作る。
+数式とアニメーションは Manim、ナレーション（VOICEVOX：ずんだもん）・字幕・チャプターの組み立ては Remotion。
+
+```bash
+docker run --rm -d --name voicevox_engine -p 127.0.0.1:50021:50021 voicevox/voicevox_engine:cpu-latest
+uv sync --group explainer
+./explainer/build.sh        # → explainer/remotion/out/explainer.mp4, thumbnail.png, description.txt
+```
+
+| ファイル | 役割 |
+|---|---|
+| `explainer/script.py` | 台本（字幕と読みの対応）。尺・字幕・チャプターの唯一の出典 |
+| `explainer/tts.py` | ナレーションを合成し、実測の長さから `timeline.json` を書く |
+| `explainer/prep.py` | 図に使うデータを実際のプランナー・シミュレーターから作る |
+| `explainer/manim/scenes.py` | 15 シーン。`timeline.json` の各行の開始時刻にアニメーションを合わせる |
+| `explainer/remotion/` | クリップ・音声・字幕・チャプター表示・進捗バーの合成とサムネイル |
 
 ### 論文と docs/ の作り直し
 

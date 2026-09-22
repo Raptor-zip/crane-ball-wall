@@ -16,3 +16,11 @@ paper/*.out
 paper/*.toc
 paper/main.pdf
 paper/x_summary.pdf
+# 解説動画（explainer/）：データ・音声・タイムライン・クリップはすべて build.sh で再生成できる
+explainer/data/
+explainer/manim/media/
+explainer/remotion/node_modules/
+explainer/remotion/out/
+explainer/remotion/public/voice/
+explainer/remotion/public/timeline.json
+explainer/remotion/public/thumb_bg.png

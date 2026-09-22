@@ -18,6 +18,9 @@ package = false
 
 [dependency-groups]
 dev = ["pytest>=8"]
+explainer = [
+    "manim>=0.19.1",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
