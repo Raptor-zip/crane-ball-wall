@@ -1,0 +1,18 @@
+# 再生成できる生成物だけを無視する（ソースと手作業の素材は追跡する）
+out/
+*.mp4
+# README から参照する動画は追跡する
+!docs/media/*.mp4
+*.gif
+.venv/
+__pycache__/
+.pytest_cache/
+# 論文：図とPDFは paper/make_figs.py と lualatex で再生成できる
+paper/figs/
+paper/cache/
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.toc
+paper/main.pdf
+paper/x_summary.pdf

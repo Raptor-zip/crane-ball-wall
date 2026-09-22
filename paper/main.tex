@@ -1,0 +1,501 @@
+\documentclass[a4paper,10pt]{ltjsarticle}
+\usepackage[top=22mm,bottom=24mm,left=22mm,right=22mm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{siunitx}
+\usepackage{float}
+\usepackage[section]{placeins} % keep floats inside their section
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,calc}
+\usepackage[hidelinks]{hyperref}
+
+\sisetup{detect-all}
+\newcommand{\figref}[1]{図~\ref{#1}}
+\newcommand{\tabref}[1]{表~\ref{#1}}
+\newcommand{\secref}[1]{\ref{#1}~節}
+\newcommand{\eqnref}[1]{式~(\ref{#1})}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{吊り下げボールを壁の隙間に出し入れするガントリークレーン\\
+軌道最適化・時変LQR・独立検証による再現}
+\author{貝淵蒼馬}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+MathWorks のブログ記事「Simulate in MATLAB, Animate in Blender」では，ガントリークレーンで吊り荷を振り上げて壁を越えさせる制御問題を，
+MATLAB で解き Blender で映像化している．本稿はこれを MATLAB を使わずに Python で再現し，さらに難しい問題へ拡張する．
+すなわち，紐で吊ったボールを2枚の壁の間の幅 \SI{42}{cm} の隙間に入れて静止させる動き（enter）と，
+隙間で静止した状態から抜け出して元の位置で静止させる動き（escape）である．
+軌道は直接多重シューティング法と内点法（CasADi/IPOPT）で求め，時変 LQR で追従させ，
+連続時間の高精度積分（DOP853）で検証した．
+開発の途中で2回，独立したエージェント群による検証を行い，張力制約が区間の端で破れていたこと，
+局所解が多く安価な初期値では力が約 1.7 倍大きい解にしか届かないことなどを見つけて修正した．
+最終的な計画では，壁とのすき間 \SI{1.96}{cm} 以上，紐の張力 \SI{1.497}{N} 以上を保ったまま，
+力の最大値は enter/escape の短時間版で \SI{20.6}{N}/\SI{22.1}{N}，共振を使う長時間版で \SI{12.3}{N}/\SI{13.3}{N} となった．
+一方，1000 回のモンテカルロ評価では enter の成功率が 86--91\% にとどまり，モデル誤差に弱いことも明らかにした．
+\end{abstract}
+
+\section{はじめに}
+
+吊り荷を運ぶクレーンは，台車を動かすと荷が振れるため，振れを抑えながら素早く運ぶことが古典的な制御問題になっている．
+MathWorks のブログ記事\cite{gulley2026}は，これを「壊れやすい壁を越える」問題に仕立て，
+大きな力で一気に振り上げる解と，振り子の共振を使って小さな力で振り幅を育てる解を LLM と MATLAB で求め，Blender で映像化した．
+同じ内容は MATLAB Japan の投稿\cite{matlabjp2026}でも紹介されている．
+
+本稿の目的は次の3つである．
+\begin{enumerate}
+  \item MATLAB を使わずに，同じ種類のシミュレーションを高い精度で再現すること．
+  \item 問題を「壁を2枚にし，その間の狭い隙間にボールを入れて静止させる（enter）」「隙間から抜け出す（escape）」に拡張すること．
+        吊り具は元記事の剛体の棒ではなく，たるみうる紐とし，張力が正であることを制約に入れる．
+  \item 結果を独立に検証し，どこまで信用できるか（精度，最適性，モデル誤差への頑健性）を数値で示すこと．
+\end{enumerate}
+
+本稿は結果だけでなく，開発と検証の過程も記録する（\secref{sec:process}）．
+最初の実装は「動いているように見える」が，独立検証で制約の抜けや局所解の問題が見つかり，それを直す過程で手法が大きく変わった．
+最終的には3次元表示（three.js）に移すことを想定しており，シミュレーション結果はフレーム列として書き出してある．
+コードと結果は \url{https://github.com/Raptor-zip/crane-ball-wall} で公開している．
+
+\section{問題設定}
+
+\subsection{シーンと記号}
+
+\figref{fig:scene} にシーンを示す．
+水平なレールの上を質量 $M$ の台車が動き，台車の支点（高さ \SI{1.25}{m}）から長さ $L$ の紐で質量 $m$，半径 $r$ のボールを吊る．
+入力は台車への水平力 $F$ である．床の上に厚さ \SI{0.12}{m}，高さ \SI{0.75}{m} の壁 A，B が立ち，その間の隙間の幅は \SI{0.42}{m} である．
+状態を $\bm{s} = (x, \dot x, \theta, \dot\theta)$ とする．$x$ は台車の位置，$\theta$ は紐の鉛直下向きからの角度である．
+パラメータを\tabref{tab:params}にまとめる．
+元記事には数値が示されていないため，寸法は元の動画から比率を読み取り，実現可能性を確かめながら決めた（\secref{sec:process}）．
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{figs/scene.pdf}
+  \caption{シーン．台車（青）は水平力 $F$ で動き，紐の先のボール（赤）を壁 A，B の間の隙間（中央 $x=1.63$）に出し入れする．
+    レールの可動範囲は $-1.0 \le x \le 3.2$ \si{m}．}
+  \label{fig:scene}
+\end{figure}
+
+\begin{table}[tbp]
+  \centering
+  \caption{モデルとシーンのパラメータ．}
+  \label{tab:params}
+  \begin{tabular}{llr}
+    \toprule
+    記号 & 意味 & 値 \\
+    \midrule
+    $M$, $m$ & 台車の質量，ボールの質量 & \SI{2.0}{kg}, \SI{1.0}{kg} \\
+    $L$, $r$ & 紐の長さ（支点からボール中心），ボールの半径 & \SI{1.0}{m}, \SI{0.06}{m} \\
+    $b$, $c$ & 台車の粘性摩擦，支点の粘性減衰 & \SI{0.3}{N.s/m}, \SI{0.002}{N.m.s/rad} \\
+    $g$ & 重力加速度 & \SI{9.81}{m/s^2} \\
+    & 壁 A，壁 B の $x$ 範囲（高さ \SI{0.75}{m}） & $[1.30, 1.42]$, $[1.84, 1.96]$ \si{m} \\
+    & レールの可動範囲，速度上限，力の上限 & $[-1.0, 3.2]$ \si{m}, \SI{4}{m/s}, \SI{40}{N} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{2つの動き（ミッション）}
+
+\begin{description}
+  \item[enter] 台車 $x=0$ で静止した状態から始め，ボールを壁 A の上に振り上げて隙間に入れ，台車 $x=1.63$（隙間の中央）で静止させる．
+  \item[escape] enter の逆．隙間で静止した状態から始め，壁 A の上を越えて抜け出し，台車 $x=0$ で静止させる．
+\end{description}
+
+どちらにも2つの設定（プリセット）を用意した．
+\textbf{fast} は時間 $T=\SI{4}{s}$ で力の2乗積分 $\int F^2\,dt$ を最小にする．
+\textbf{pump} は時間 $T=\SI{12}{s}$ で主に力の最大値 $\max|F|$ を最小にする．
+前者は元記事の「急加速と急ブレーキ」，後者は「共振ポンプ」の段階に対応する．
+
+\section{モデル}
+
+\subsection{運動方程式}
+
+台車と質点振り子のラグランジアンから，台車の粘性摩擦 $b\dot x$ と支点の減衰 $c\dot\theta$ を一般化力として加えると，
+\begin{align}
+  (M+m)\,\ddot x + mL\cos\theta\,\ddot\theta - mL\dot\theta^2\sin\theta &= F - b\dot x, \label{eq:eom1}\\
+  mL\cos\theta\,\ddot x + mL^2\ddot\theta + mgL\sin\theta &= -c\dot\theta \label{eq:eom2}
+\end{align}
+を得る．$2\times 2$ の質量行列の行列式は $mL^2(M + m\sin^2\theta) > 0$ なので，常に閉じた形で $\ddot x$，$\ddot\theta$ が求まる．
+紐は質量がなく伸びないものとし，張力はボールの運動方程式の紐方向成分から
+\begin{equation}
+  T_{\mathrm s} = m\left(g\cos\theta + L\dot\theta^2 - \ddot x\sin\theta\right) \label{eq:tension}
+\end{equation}
+となる．紐はたるみうるので，$T_{\mathrm s} > 0$ の範囲でしかこのモデルは正しくない．そこで張力の下限を制約として課す．
+$\ddot x$ は $F$ を含むので，$F$ が不連続に変わると張力も跳ぶ．この性質は後で重要になる（\secref{sec:process}）．
+
+\subsection{時間反転対称性}
+\label{sec:reversal}
+
+摩擦がなければ（$b=c=0$），\eqnref{eq:eom1}--(\ref{eq:eom2}) は時間反転 $t \mapsto T-t$ で不変である．
+すなわち，力 $F(t)$ のもとでの解 $(x(t), \theta(t))$ に対し，$x_r(t) = x(T-t)$，$\theta_r(t) = \theta(T-t)$ は力 $F(T-t)$ のもとでの解になる．
+enter を逆再生すると escape になるので，一方の解はもう一方の良い初期値になる．
+台車の摩擦があるときは，速度の符号が反転することから
+\begin{equation}
+  F_r(t) = F(T-t) - 2b\,\dot x(T-t) \label{eq:reversal}
+\end{equation}
+とすれば台車側の式は厳密に満たされる．支点の減衰 $c$ は台車から打ち消せないので，残る誤差は小さいが 0 ではない．
+テストでは，摩擦のない場合の逆再生の誤差が \num{1e-6} 未満であること，
+\eqnref{eq:reversal} の補正ありの誤差（\num{8.5e-7}）が補正なし（\num{7.7e-3}）や符号を誤った場合（\num{1.5e-2}）より十分小さいことを確かめている．
+
+\section{軌道最適化}
+
+\subsection{離散化と制約}
+
+時間を $N$ 区間に等分し（$\Delta t = T/N = \SI{20}{ms}$），各区間で力 $U_k$ を一定とする直接多重シューティング法\cite{bock1984,betts2010}を用いる．
+各区間は古典的ルンゲ・クッタ法（RK4）を2ステップ使って積分する．解くべき非線形計画問題は
+\begin{align}
+  \min_{\bm X, \bm U}\quad & J = \sum_{k=0}^{N-1} \Delta t\, U_k^2 + \frac{w_s}{\Delta t}\sum_{k=0}^{N} (U_k - U_{k-1})^2 \;\bigl[+\, w_p\,p\bigr] \label{eq:nlp}\\
+  \text{s.t.}\quad & \bm X_{k+1} = \Phi_{\mathrm{RK4}}(\bm X_k, U_k),\quad \bm X_0 = \bm s_{\mathrm{start}},\quad \bm X_N = \bm s_{\mathrm{goal}}, \nonumber\\
+  & d_{\mathrm{ball}}(\bm X_j) \ge \SI{2}{cm},\quad d_{\mathrm{string}}(\bm X_j) \ge \SI{2}{cm} \quad (j = k,\; k+\tfrac12), \nonumber\\
+  & T_{\mathrm s}(\bm X_j, U_k) \ge \SI{1.5}{N} \quad (j = k,\; k+\tfrac12,\; k+1), \nonumber\\
+  & x_{\min} + \SI{3}{cm} \le x_k \le x_{\max} - \SI{3}{cm},\quad |\dot x_k| \le \SI{4}{m/s},\quad |U_k| \le \SI{40}{N},\quad |U_k| \le p \nonumber
+\end{align}
+である（$U_{-1} = U_N = 0$，$w_s = 10^{-3}$）．括弧内の項と変数 $p$ は pump のときだけ使い，$w_p = 20$ とした．
+$\bm X_{k+1/2}$ は区間の中点の状態（RK4 の1段目の結果）である．
+壁とのすき間 $d$ は，壁を床に立つ半無限の長方形とみなした符号付き距離関数を，勾配が連続になるよう平滑化したもの（平滑化幅 \SI{1}{mm}）で表す．
+紐は支点からボールまでの線分上の8点で判定する．
+問題は CasADi\cite{casadi} で記述し，IPOPT\cite{ipopt}（内点法）で解く．fast で変数は約 1000 個，制約は約 9200 個である．
+
+\subsection{壁の高さのホモトピー}
+
+壁の制約は非凸で，最初から実際の高さで解くと実行不可能と判定されやすい．
+そこで壁を \SI{40}{\%} の高さから始めて，前の解を初期値に少しずつ高くしていく．
+途中で失敗したら刻み幅を半分にして直前の成功した解からやり直し，成功したら刻み幅を 1.5 倍に戻す．
+
+\subsection{局所解と多点スタート}
+\label{sec:multistart}
+
+この問題には局所解が多く，初期値によって答えが大きく変わる．
+\figref{fig:localopt} は escape/fast の2つの局所解である．
+壁の高さのホモトピーでたどり着く解 (a) は目的関数 $J=505.1$，力の最大値 \SI{37.9}{N} であるのに対し，
+解 (b) は $J=334.0$，\SI{22.1}{N} である．(b) はボールをまず隙間の中で揺らしてエネルギーを蓄えてから引き出す．
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{figs/local_optima.pdf}
+  \caption{escape/fast の2つの局所解（ストロボ写真と力の時系列）．(a) 壁の高さのホモトピーで得られる解．
+    (b) 細かい分割（$N=800$）から得た解．(b) は隙間の中でいったん揺らしてから引き出すため，力の最大値が約 4 割小さい．}
+  \label{fig:localopt}
+\end{figure}
+
+(b) の族にたどり着く方法を探すため，多くの初期値を並列に試した（\tabref{tab:multistart}）．
+ホモトピーの刻み方を変える，隙間の中で振り子の周期で揺らす初期値を与える，長い時間 $T$ で解いてから縮める，
+粗い分割（$N=100$，400）の解を補間する，といった安価な工夫はすべて $J\approx 500$ の族に収束した．
+一方，分割を細かくして（$N=600$，800，1000）ホモトピーで最初から解くと，一部の組み合わせで (b) の族に届いた．
+ただし届くかどうかは $N$ とミッションの組み合わせで変わり，計算にも 2--8 分かかる．
+
+\begin{table}[tbp]
+  \centering
+  \caption{初期値の作り方と到達した目的関数 $J$（fast，$N=200$）．— は IPOPT が実行不可能と判定したもの．enter の 8 秒の場合は計算を打ち切った．}
+  \label{tab:multistart}
+  \begin{tabular}{lcc}
+    \toprule
+    初期値の作り方 & enter & escape \\
+    \midrule
+    壁の高さのホモトピー（既定の刻み） & 501.7 & 505.1 \\
+    ホモトピーの刻みを変える（3通り） & 507.9--513.9 & 482.2--511.6 \\
+    隙間で揺らす初期値＋ホモトピー（8通り） & — & 501.5--509.9 \\
+    粗い分割（$N=100$，400）の解を補間 & 499.9--506.6 & 507.7 \\
+    長い $T$（5，6，8 秒）で解いてから縮める & 501.7--513.9 & 501.5--515.3 \\
+    もう一方のミッションの解を時間反転 & 505.9 & 506.5 \\
+    細かい分割 $N=600$ から & \textbf{333.16} & 515.25 \\
+    細かい分割 $N=800$ から & \textbf{333.16} & \textbf{333.97} \\
+    細かい分割 $N=1000$ から & 507.87 & \textbf{333.97} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+そこで次の仕組みにした（\code{ballwall/search.py}）．
+\begin{enumerate}
+  \item 見つかった良い解を\textbf{種}としてファイルに保存しておく．種には問題設定（物理パラメータ，シーン，制約）の指紋を付け，同じ問題の種とだけ目的関数を比べる．
+  \item 毎回，複数の初期値から並列に解いて目的関数が最小のものを採用する．
+        初期値は，ゼロからのホモトピー，もう一方のミッションの時間反転，種，種の時間反転，fast の種を時間方向に引き伸ばしたもの（pump 用）である．
+  \item 採用した解から解き直し，目的関数が下がらなくなるまで繰り返す（再実行したとき同じ解になるようにするため）．
+  \item \code{--search} を付けたときだけ，時間のかかる細かい分割の候補も加え，より良い解が見つかれば種を更新する．
+\end{enumerate}
+pump の種は，fast の種を 3 倍に引き伸ばした初期値から解き直して作った（ゼロからでは $J=453$/476 にとどまる）．
+2回目の検証で約 40 分かけて別の方法（ランダムな摂動，$N=1200$，張力制約を緩めてから戻す，など）でも探したが，
+\SI{0.5}{\%} 以上良い解は見つからなかった（最大 \SI{0.3}{\%}）．
+
+\section{追従制御と検証の方法}
+
+\subsection{時変 LQR}
+
+計画した軌道のまわりで，RK4 の1区間写像を線形化した離散時間の行列 $A_k$，$B_k$ を使い，
+後ろ向きのリッカチ漸化式で時変 LQR のゲイン $K_k$ を求める\cite{tedrake}．
+重みは $Q = \mathrm{diag}(40, 4, 80, 4)$，$R = 0.05$ で，終端の重みは目標点での定常 LQR の解とした．
+制御則は $u_k = U_k - K_k(\bm s_k - \bm X_k)$ で，\SI{50}{Hz} のゼロ次ホールドで出力し，$\pm\SI{40}{N}$ で飽和させる．
+計画の終了後は目標点の定常 LQR で保持する．
+
+\subsection{検証}
+
+制御器は離散時間のまま，プラントは \eqnref{eq:eom1}--(\ref{eq:eom2}) を DOP853\cite{hairer}（相対許容誤差 \num{1e-10}）で連続時間のまま積分する．
+各区間の密出力を使って \SI{1}{kHz} の格子でボール（円）と紐（線分）の壁とのすき間を厳密に計算し，
+張力は力が切り替わる直前の値（左極限）も含めて最小値を取る．
+レールの範囲と速度上限も確かめ，終了時刻 $T$ と \SI{2.5}{s} の保持後の静止誤差を報告する．
+
+\section{結果}
+
+\subsection{4つの動き}
+
+\figref{fig:strobes} に4つの動きのストロボ写真を，\tabref{tab:results} に閉ループシミュレーションの結果をまとめる．
+4つとも壁に当たらず，紐はたるまず，レールと速度の範囲に収まった．
+時刻 $T$ での位置誤差は \SI{2e-5}{mm} 以下である（モデル誤差がない場合）．
+ボールのすき間と張力が設計値（\SI{2}{cm}，\SI{1.5}{N}）をわずかに下回るのは，制約を区間内の決まった点でしか課していないためで，
+その差は \SI{0.43}{mm} と \SI{2.6}{mN} 以下である．
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{figs/strobes.pdf}
+  \caption{4つの動きのストロボ写真（計画の時間 $T$ まで，濃いほど後の時刻）．赤い線はボールの中心の軌跡．}
+  \label{fig:strobes}
+\end{figure}
+
+\begin{table}[tbp]
+  \centering
+  \caption{閉ループシミュレーションの結果（モデル誤差なし）．}
+  \label{tab:results}
+  \begin{tabular}{lcccc}
+    \toprule
+    & enter/fast & escape/fast & enter/pump & escape/pump \\
+    \midrule
+    時間 $T$ [s] & 4 & 4 & 12 & 12 \\
+    目的関数 $J$ & 333.16 & 333.97 & 438.46 & 459.72 \\
+    力の最大値 [N] & 20.6 & 22.1 & 12.3 & 13.3 \\
+    ボールと壁の最小すき間 [cm] & 1.96 & 1.96 & 1.96 & 1.96 \\
+    紐と壁の最小すき間 [cm] & 6.6 & 6.6 & 6.5 & 6.6 \\
+    紐の最小張力 [N] & 1.4993 & 1.4974 & 1.5000 & 1.4984 \\
+    台車の最高速度 [m/s] & 2.99 & 3.01 & 2.81 & 2.79 \\
+    振れ角の最大値 [deg] & 65.7 & 65.7 & 75.2 & 75.0 \\
+    時刻 $T$ の位置誤差 [mm] & \num{1.1e-5} & \num{4.7e-7} & \num{6.9e-7} & \num{1.4e-6} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\figref{fig:ts_escape} は escape の時系列である．
+escape/pump では，最初の約 3.5 秒で隙間の中で左右に3回ずつ揺らして振り幅を $\pm\ang{28}$ まで育て，
+\SI{13.3}{N} で引き出したあと，残りの約 8 秒は揺れに合わせて逆向きに押して揺れを減らしている．
+隙間の中での揺れは，ボールが両側の壁の面に 2 cm まで近づく振り幅で頭打ちになっている．
+enter の時系列（付録の\figref{fig:ts_enter}）はこれをほぼ逆にたどる．
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{figs/timeseries_escape.pdf}
+  \caption{escape の時系列．上から，台車とボールの位置（赤帯は壁の $x$ 範囲），振れ角，力，壁とのすき間（\SI{30}{cm} で打ち切り，破線は \SI{2}{cm}），
+    紐の張力（破線は \SI{1.5}{N}）．4 段目の実線はボール，破線は紐と壁のすき間．点線は計画の終了時刻 $T$ で，その後は目標点で保持している．}
+  \label{fig:ts_escape}
+\end{figure}
+
+\subsection{enter と escape の対称性}
+
+\tabref{tab:results} のとおり，enter と escape はほぼ同じ目的関数と力で済む．
+\figref{fig:reversal} は enter/fast の解と escape/fast の解の逆再生を重ねたもので，
+台車の位置の差は最大 \SI{2.9}{cm}，振れ角の差は最大 \ang{2.2} である．
+差は摩擦と，制約を課す点（区間の始点・中点・終点）の非対称から生じる．
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{figs/reversal.pdf}
+  \caption{enter/fast の計画（実線）と，escape/fast の計画を \eqnref{eq:reversal} で逆再生したもの（破線）．}
+  \label{fig:reversal}
+\end{figure}
+
+\subsection{元記事との比較}
+
+元記事では共振ポンプで力の最大値が 1/20 になっているが，ここでは fast に対して約 1/1.7 にとどまる．
+pump の力の最大値は，振り幅を育てる段階ではなく隙間への出入り（受け止めと引き出し）の瞬間で決まっており，
+$T$ を延ばしてもほとんど下がらない（enter：\SI{12}{s} で \SI{12.34}{N}，\SI{20}{s} で \SI{12.29}{N}，\SI{30}{s} で \SI{12.26}{N}）．
+幅 \SI{42}{cm} の隙間に出入りさせる分だけ，壁を1枚越えるだけの元記事の問題より難しい．
+
+\subsection{モデル誤差への頑健性}
+
+制御器は名目のモデルで設計し，シミュレーションする実機側のパラメータだけを変えた．
+\tabref{tab:robust} は，誤差を1つずつ大きくしたときに最初に失敗する大きさ（壁への接触，紐のたるみ，レール端の超過，速度超過のいずれか）である．
+\figref{fig:mc} は，複数の誤差を同時に入れた 1000 回のモンテカルロでのボールの最小すき間の分布である
+（紐の長さ $\pm\SI{1}{\%}$，両質量 $\pm\SI{10}{\%}$，粘性摩擦 0.5--1.5 倍，クーロン摩擦 0--\SI{0.5}{N}，力の一次遅れ 0--\SI{10}{ms}，
+測定ノイズ \SI{1}{mm}・\ang{0.2}・\SI{1}{cm/s}・\SI{1}{deg/s}）．
+
+\begin{table}[tbp]
+  \centering
+  \caption{誤差を1つずつ入れたときに最初に失敗する大きさ．（た）は紐がたるむ，（レ）はレール端を越える失敗で，ほかは壁への接触．}
+  \label{tab:robust}
+  \small
+  \begin{tabular}{lcccc}
+    \toprule
+    誤差 & enter/fast & escape/fast & enter/pump & escape/pump \\
+    \midrule
+    紐が長い & +1.8\% & +3.4\% & +1.6\% & +2.9\%（レ） \\
+    紐が短い & $-2.1$\% & $-26$\% & $-1.6$\% & $-14$\% \\
+    台車の質量 & $-25$\%/+69\% & $-36$\%（た）/+38\% & $-21$\%/+11\% & $-44$\%（た）/+20\%（レ） \\
+    ボールの質量 & $-13$\%/+20\% & なし/+29\% & $-13$\%/+22\% & なし/+46\% \\
+    台車の粘性摩擦 & 2.0 倍 & 2.7 倍 & 2.1 倍 & 3.9 倍 \\
+    台車のクーロン摩擦 & \SI{0.51}{N} & \SI{1.1}{N} & \SI{0.63}{N} & \SI{2.0}{N} \\
+    力のむだ時間 & \SI{20}{ms} & \SI{35}{ms}（た） & \SI{41}{ms} & \SI{38}{ms}（た） \\
+    力の一次遅れ & \SI{20}{ms} & \SI{50}{ms}（た） & \SI{40}{ms} & \SI{54}{ms}（た） \\
+    測定ノイズ（倍率） & 5.5 & 6.1 & 5.1 & 4.0 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[tbp]
+  \centering
+  \includegraphics[width=\textwidth]{figs/mc.pdf}
+  \caption{複数の誤差を同時に入れた 1000 回のモンテカルロでの，ボールと壁の最小すき間の分布．赤は壁に接触した試行．}
+  \label{fig:mc}
+\end{figure}
+
+escape は強く（成功率 99.5\% と 100\%），enter は弱い（91.1\% と 86.1\%）．
+原因は計画の形にある．4つの計画はどれも，ボールを壁 A の上面，隙間側の壁 A の右面，壁 B の左面の3か所で 2 cm まで近づける．
+enter では隙間の両面への接近が，追従誤差のたまった後半に来るため，誤差がどちら向きでも壁に当たる．
+escape では同じ接近が，まだ誤差の小さい最初の段階に来る．
+また制御器は状態に比例するだけで積分動作がないため，クーロン摩擦 \SI{1}{N} で保持後にも 0.5--\SI{10}{mm} の位置誤差が残る．
+
+\section{開発と検証の過程}
+\label{sec:process}
+
+\figref{fig:process} に開発の流れを示す．以下，各段階で分かったことを記す．
+
+\begin{figure}[tbp]
+  \centering
+  \begin{tikzpicture}[
+      node distance=3.2mm,
+      stage/.style={draw, rounded corners=2pt, fill=#1, text width=41mm, minimum height=9mm, align=center, font=\small, inner sep=3pt},
+      note/.style={text width=100mm, align=left, font=\footnotesize, inner sep=1pt},
+      flow/.style={-{Stealth[length=2mm]}, thick, color=black!60},
+    ]
+    \node[stage=blue!8]   (s1) {元記事と動画の調査};
+    \node[stage=blue!8, below=of s1] (s2) {enter の実装（v1）};
+    \node[stage=blue!8, below=of s2] (s3) {escape の追加};
+    \node[stage=orange!15, below=of s3] (s4) {独立検証 1 回目};
+    \node[stage=green!10, below=of s4] (s5) {制約・検証・描画の修正};
+    \node[stage=green!10, below=of s5] (s6) {局所解の探索と種};
+    \node[stage=orange!15, below=of s6] (s7) {独立検証 2 回目};
+    \node[stage=green!10, below=of s7] (s8) {修正と頑健性の評価};
+    \foreach \a/\b in {s1/s2,s2/s3,s3/s4,s4/s5,s5/s6,s6/s7,s7/s8} \draw[flow] (\a) -- (\b);
+    \node[note, right=5mm of s1] {記事本文と投稿動画を取得し，動画のフレームから壁・隙間・振り子の比率を推定};
+    \node[note, right=5mm of s2] {多重シューティング＋IPOPT，時変 LQR，DOP853 による検証．壁 \SI{0.8}{m} は実行不可能で，\SI{0.75}{m}・速度上限 \SI{4}{m/s} に調整};
+    \node[note, right=5mm of s3] {始点と終点を入れ替え，enter の時間反転を初期値に追加．pump で $J$ が 994 から 563 に改善};
+    \node[note, right=5mm of s4] {6 観点・10 エージェント．張力が区間の終端で \SI{0.73}{N} まで低下，レール端の超過，局所解（\SI{37}{N} に対し \SI{22}{N} の解）などを発見};
+    \node[note, right=5mm of s5] {張力を始点・中点・終点で，すき間を中点でも課す．レール端から \SI{3}{cm} の余裕．左極限の張力とレールの検査};
+    \node[note, right=5mm of s6] {安価な初期値はすべて $J\approx 500$．細かい分割で 334 の族に到達し，種として保存};
+    \node[note, right=5mm of s7] {5 観点・9 エージェント．数値はすべて再現．enter の弱さ（成功率 86--91\%），\code{--rod} の判定，種の比較の誤りなどを発見};
+    \node[note, right=5mm of s8] {種に問題設定の指紋，解き直しによる仕上げ，出力先の分離．頑健性の表と限界を文書化};
+  \end{tikzpicture}
+  \caption{開発と検証の流れ．青は実装，橙は独立検証，緑は検証を受けた修正．}
+  \label{fig:process}
+\end{figure}
+
+\subsection{元記事の調査と最初の実装}
+
+記事本文から，元の問題が「台車と振り子の4状態系，入力は台車への力，出力はボールの位置」であること，
+LQR で受け止める段階と，共振で力を 1/20 にする段階があることを読み取った．
+画像はサイトの制限で取得できなかったが，投稿の動画（9 秒）からフレームを切り出し，壁2枚と隙間，剛体の棒で吊ったボールという場面を確認した．
+
+最初の実装では，壁の高さ \SI{0.8}{m}，速度上限 \SI{2.5}{m/s} では実行不可能だった．
+高さと速度上限を振って調べると，紐（張力 $>0$）では高さ \SI{0.75}{m} に速度上限 \SI{4}{m/s} が必要で，\SI{0.85}{m} ではほぼ実行不可能だった．
+ボールが隙間に出入りする短い間に，台車が隙間の真上まで大きく移動しなければならないためである．
+元の動画のように壁がレールの高さ近くまであると，剛体の棒でなければ実現できない．
+
+\subsection{escape の追加}
+
+escape はシーンの始点と終点を入れ替えるだけで定式化できる．
+ただし pump では，ゼロからのホモトピーが $J=994$ の解にとどまり，
+enter の解を \eqnref{eq:reversal} で逆再生した初期値からは $J=563$ の解が得られた．
+非凸な問題では，問題の対称性から作った初期値が有効な例である．
+
+\subsection{独立検証 1 回目}
+
+実装と独立に，6つの観点（物理，衝突判定，コードレビュー，頑健性，映像，数値収束）で検証するエージェントを並列に走らせ，
+重要な指摘は別のエージェントに反証を試みさせた．
+運動方程式は記号計算で独立に導出したものと 20 万点で \num{3e-14} まで一致し，
+別の積分器（Radau，LSODA，刻みの小さい RK4）で力の列を再生した軌道とは \num{1.1e-11} まで一致し，
+エネルギーの収支（仕事と散逸）も \SI{4e-11}{J} の精度で閉じた．
+一方で，次の問題が見つかった．
+\begin{itemize}
+  \item 張力の制約を各区間の始点でしか課していなかった．力が区間の境目で跳ぶと張力も跳ぶ（\eqnref{eq:tension}）ため，区間の終端では \SI{0.73}{N} まで下がっていた．
+        検証側も格子点で新しい力を使っていたため，この最小値を見逃していた（\SI{0.77}{N} と報告）．
+  \item 計画が台車をレール端（$x=-1.0$）ぎりぎりまで使い，質量に誤差があると閉ループで最大 \SI{9}{mm} はみ出したが，検証では確かめていなかった．
+  \item 局所解の問題（\secref{sec:multistart}）．fast で $J=337$，pump で 457 の解が存在した．
+  \item 紐が \SI{3}{\%} 長いと壁に当たる，力に \SI{20}{ms} の遅れがあると紐がたるむ，などの弱さ．
+  \item 映像では，力がほぼ 0 のときに矢印の向きが入れ替わる，数値の表示がレールの端と重なる，など．
+\end{itemize}
+
+\subsection{修正と局所解の探索}
+
+張力を区間の始点・中点・終点で，すき間をノードと中点で課すように直し，レール端から \SI{3}{cm} の余裕を取った．
+検証には左極限の張力，レールの範囲，速度上限，終了時刻での誤差を加えた．
+この修正で問題が変わったため，局所解の探索（\tabref{tab:multistart}）をやり直し，種と多点スタートの仕組みを作った．
+
+\subsection{独立検証 2 回目}
+
+最終の計画を対象に，5つの観点（独立な再計算，頑健性，映像，コードと文書の整合，最適性）で再度検証した．
+独立に作り直した運動方程式・制御器・シミュレータは状態で \num{5e-15}，力で \SI{6e-14}{N} まで一致し，
+報告した数値はすべて再現された（\SI{20}{kHz} の格子と局所的な精密化で，すき間の最小値の差は \SI{5.3e-8}{m} 以下）．
+新たに見つかったのは，enter の弱さ（\tabref{tab:robust}），pump の解が解き直すたびに少しずつ変わること，
+剛体の棒のモードで検証が常に失敗すること，種の目的関数を別の問題設定の種と比べてしまうこと，映像の時間カーソルが最初と最後のフレームで見えないこと，などである．
+これらを直し，再実行で同じ解（目的関数で相対 \num{1e-9} 以内）になることを確かめた．
+
+\section{限界と今後の課題}
+
+\begin{itemize}
+  \item \textbf{頑健性}：enter はモデル誤差に弱い．隙間の面に対するすき間を壁の上面より大きく取る，誤差の範囲を見込んだ計画（ロバスト最適化），
+        LQR の重みの見直し，積分動作や摩擦の補償が候補である．
+  \item \textbf{モデル化していないもの}：空気抵抗，紐の伸び（張力は最大約 \SI{30}{N}），ボールの回転の慣性，紐がたるんだ後の運動，
+        アクチュエータの応答（fast では開始時と終了時に力が約 \SI{8}{N} 階段状に変わる），壁以外の障害物（pump ではボールがレール端より \SI{26}{cm} 外まで振れる）．
+  \item \textbf{最適性}：求めた解は局所解である．探索した範囲では改善は \SI{0.3}{\%} 以下だったが，大域的な最適性は保証しない．
+  \item \textbf{3次元表示}：結果はフレーム列（\code{trajectory.json}）として書き出してあり，three.js で再生する予定である．
+\end{itemize}
+
+\section{まとめ}
+
+MathWorks の記事のクレーン制御問題を，MATLAB を使わずに Python で再現し，紐で吊ったボールを2枚の壁の隙間に出し入れする問題に拡張した．
+直接多重シューティング法と時変 LQR によって，壁とのすき間 \SI{1.96}{cm}，張力 \SI{1.497}{N} 以上を保つ enter と escape の動きを得た．
+2回の独立検証により，数値の再現性は \num{1e-11} 程度まで確かめられた一方，制約の抜け，局所解，モデル誤差への弱さといった，
+結果を見ただけでは分からない問題が見つかった．これらを直した過程も含めて記録した．
+
+\begin{thebibliography}{9}
+  \bibitem{gulley2026} N.~Gulley, ``Simulate in MATLAB, Animate in Blender,'' MATLAB Community Blog, MathWorks, July 31, 2026.
+    \url{https://blogs.mathworks.com/community/2026/07/31/simulate-in-matlab-animate-in-blender/}
+  \bibitem{matlabjp2026} MATLAB Japan（@MATLAB\_Japan），X への投稿，2026年9月21日．
+    \url{https://x.com/MATLAB_Japan/status/2101869021473759342}
+  \bibitem{bock1984} H.~G. Bock and K.~J. Plitt, ``A multiple shooting algorithm for direct solution of optimal control problems,''
+    \emph{IFAC Proceedings Volumes}, vol.~17, no.~2, pp.~1603--1608, 1984.
+  \bibitem{betts2010} J.~T. Betts, \emph{Practical Methods for Optimal Control and Estimation Using Nonlinear Programming}, 2nd ed., SIAM, 2010.
+  \bibitem{casadi} J.~A.~E. Andersson, J.~Gillis, G.~Horn, J.~B. Rawlings, and M.~Diehl,
+    ``CasADi: a software framework for nonlinear optimization and optimal control,''
+    \emph{Mathematical Programming Computation}, vol.~11, no.~1, pp.~1--36, 2019.
+  \bibitem{ipopt} A.~W\"achter and L.~T. Biegler, ``On the implementation of an interior-point filter line-search algorithm for large-scale nonlinear programming,''
+    \emph{Mathematical Programming}, vol.~106, no.~1, pp.~25--57, 2006.
+  \bibitem{hairer} E.~Hairer, S.~P. N{\o}rsett, and G.~Wanner, \emph{Solving Ordinary Differential Equations I: Nonstiff Problems}, 2nd ed., Springer, 1993.
+  \bibitem{tedrake} R.~Tedrake, \emph{Underactuated Robotics: Algorithms for Walking, Running, Swimming, Flying, and Manipulation}, Course notes for MIT 6.832.
+\end{thebibliography}
+
+\appendix
+\section{再現方法}
+
+\begin{verbatim}
+uv sync
+uv run python -m ballwall --mission enter  --preset fast
+uv run python -m ballwall --mission escape --preset fast
+uv run python -m ballwall --mission enter  --preset pump
+uv run python -m ballwall --mission escape --preset pump
+uv run python robustness/exact.py && uv run python robustness/sweep.py
+uv run python robustness/thresholds.py && uv run python robustness/mc.py 1000 base
+uv run python paper/make_figs.py
+cd paper && lualatex main.tex && lualatex main.tex
+\end{verbatim}
+
+
+\section{enter の時系列}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.84\textwidth]{figs/timeseries_enter.pdf}
+  \caption{enter の時系列（表示は\figref{fig:ts_escape} と同じ）．}
+  \label{fig:ts_enter}
+\end{figure}
+
+\end{document}
