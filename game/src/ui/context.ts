@@ -7,6 +7,8 @@ import type { LevelDef } from '../sim/level';
 import type { SaveV1, Store } from '../store/save';
 import type { BoardResponse, BoardRow, BootResponse } from '../shared/api';
 import type { DailyView, GhostSummary, ResultsData, Screen, UiAction } from './ui';
+import type { SkinLook, SkinPart } from '../render/skinLooks';
+import type { SkinSet, UnlockRule } from '../core/skins';
 
 /** One entry of ghosts_summary.json "levels" (§8.2). Values can change when the ghost pipeline reruns. */
 export interface SummaryEntry {
@@ -55,6 +57,16 @@ export interface ReplayReq { key: string; rank: number; pidh: string; nameSeed: 
 export type ReplayLoad = { ok: true; id: string } | { ok: false; reason: 'offline' | 'budget' | 'missing' | 'bad' | 'stale' };
 /** replayAvail: 'ready' plays without a request (#1 from boot, your own best, watched before); 'fetch' costs one. */
 export type ReplayAvail = 'ready' | 'fetch' | null;
+/** One catalog entry on the skins screen (GAME_DESIGN.md §7.14): its look (for the thumbnail) and unlock state. */
+export interface SkinItem {
+  id: string; part: SkinPart; set: SkinSet; rule: UnlockRule; look: SkinLook[SkinPart];
+  /** Unlocked (defaults always); isNew: unlocked but not seen on the skins screen yet. */
+  owned: boolean; isNew: boolean;
+  /** Rule progress for the locked card's {have}/{need} and its bar. */
+  have: number; need: number;
+}
+/** What the skins screen shows: the catalog in screen order, the equipped id per part, the number of NEW items. */
+export interface SkinsView { items: readonly SkinItem[]; equipped: Readonly<Record<SkinPart, string>>; unseen: number }
 
 export interface UiContext {
   /** Save data: settings, per-level progress, seen flags, generated name. The UI writes only `settings` and `seen.{notes,aiLostCard}`. */
@@ -90,6 +102,15 @@ export interface UiContext {
   loadReplay?: (req: ReplayReq) => Promise<ReplayLoad>;
   /** Share origin override (default: VITE_PUBLIC_ORIGIN, else location.origin on http(s), else none). */
   origin?: string | null;
+  /** The skins screen's data (§7.14). Without it the skins entry points (title, settings) are hidden. */
+  skins?: () => SkinsView;
+  /** Try-on on the live scene behind the skins sheet (locked skins too); null goes back to the equipped look. */
+  skinPreview?: (ids: Partial<Record<SkinPart, string>> | null) => void;
+  /**
+   * The skins sheet opened (true) / closed (false): core runs the title attract behind it when a menu page opened it.
+   * tall: `sheetTop` is the sheet's top edge (root px), sent again when it moves; core frames the attract above it.
+   */
+  skinsShown?: (open: boolean, sheetTop?: number) => void;
 }
 
 /** Handed to every screen renderer by ui.ts. */
@@ -102,6 +123,8 @@ export interface ScreenEnv {
   back(): void;
   /** True when a sub-screen was opened from another screen (the back button shows). */
   canGoBack(): boolean;
+  /** The screen under the sub-screens (title, select, pause, results ...): what settings / skins were opened from. */
+  host(): Screen['id'];
   save(): SaveV1 | null;
   levels(): readonly LevelDef[];
   summary(id: string): SummaryEntry | null;

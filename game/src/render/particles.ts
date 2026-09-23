@@ -8,6 +8,15 @@ import {
 import { PAL, col } from './scene';
 
 export const S_DISC = 0, S_SOFT = 1, S_RECT = 2, S_RING = 3, S_SPARK = 4;
+/**
+ * Spark-shaped confetti of a trail skin (look shape 'spark'): the S_SPARK star with fatter arms and a small, weak white
+ * core, so the piece keeps its palette colour on the light paper (the S_SPARK core whitens the middle of the star, which
+ * suits the goal twinkles but turned orange confetti pastel). Only skin confetti uses it; today's effects never do.
+ */
+export const S_EMBER = 5;
+
+/** Today's success confetti (brick-coloured notebook confetti), in this order: the default skin draws the same. */
+export const DEFAULT_CONFETTI: readonly string[] = [PAL.brick1, PAL.brick2, PAL.mortar, PAL.gantry, PAL.goal, PAL.stamp, PAL.brick2];
 
 const PT_VS = /* glsl */ `
 attribute vec4 aCol;
@@ -54,10 +63,14 @@ void main() {
     float ring = smoothstep(0.80 - aa, 0.80, r);
     a = (1.0 - smoothstep(1.0 - aa, 1.0, r)) * mix(fillA, 1.0, ring);
     rgb = mix(rgb, rgb * 0.55, ring);
-  } else {
+  } else if (vShape < 4.5) {
     float star = max(0.0, 1.0 - (abs(p.x * p.y) * 9.0 + r * 0.85));
     a = clamp(star * 1.6, 0.0, 1.0) + exp(-r * r * 12.0) * 0.8;
     rgb = mix(rgb, vec3(1.0), exp(-r * r * 10.0) * 0.8);
+  } else {
+    float star = max(0.0, 1.0 - (abs(p.x * p.y) * 5.0 + r * 0.85));
+    a = clamp(star * 1.8, 0.0, 1.0) + exp(-r * r * 12.0) * 0.5;
+    rgb = mix(rgb, vec3(1.0), exp(-r * r * 30.0) * 0.45);
   }
   a *= vCol.a;
   if (a < 0.004) discard;
@@ -252,8 +265,11 @@ export class Particles {
 
   // ---- emitters -------------------------------------------------------------------------
 
-  /** Hot sparks (streaks) from a point, biased along (dx, dy). */
-  sparks(x: number, y: number, z: number, n: number, dx: number, dy: number, speed: number, tint: string = PAL.gantry): void {
+  /**
+   * Hot sparks (streaks) from a point, biased along (dx, dy). The default tint is a literal (today's gantry yellow), so
+   * a crane skin never recolours the near-miss or beam sparks.
+   */
+  sparks(x: number, y: number, z: number, n: number, dx: number, dy: number, speed: number, tint: string = '#F2B705'): void {
     const hot = col('#FFF4C2'), c = col(tint), mid = col('#FF8A1E');
     for (let k = 0; k < n; k++) {
       const a = Math.atan2(dy, dx) + (this.rand() - 0.5) * 2.2;
@@ -282,10 +298,14 @@ export class Particles {
     }
   }
 
-  /** Brick-coloured confetti burst from the goal (§9.5 success): pops up, then flutters down. */
-  confetti(xa: number, xb: number, y0: number, n: number): void {
-    const pal = [PAL.brick1, PAL.brick2, PAL.mortar, PAL.gantry, PAL.goal, PAL.stamp, PAL.brick2];
+  /**
+   * Confetti burst from the goal (§9.5 success): pops up, then flutters down. The trail skin picks the palette and
+   * the piece shape (S_RECT, S_DISC or S_EMBER); the count, draws and physics never change.
+   */
+  confetti(xa: number, xb: number, y0: number, n: number, pal: readonly string[] = DEFAULT_CONFETTI, shape: number = S_RECT): void {
     const cx = (xa + xb) / 2;
+    // A star fills a small part of its sprite: draw it larger so it covers about what a rect piece does.
+    const sizeK = shape === S_EMBER || shape === S_SPARK ? 1.8 : 1;
     for (let k = 0; k < n; k++) {
       const c = this.tmp.set(pal[Math.floor(this.rand() * pal.length)] as string);
       const a = Math.PI / 2 + (this.rand() - 0.5) * 1.5;
@@ -293,7 +313,7 @@ export class Particles {
       this.emit({
         x: cx + (xb - xa) * (this.rand() - 0.5) * 0.6, y: y0 + this.rand() * 0.1, z: 0.05 + this.rand() * 0.3,
         vx: Math.cos(a) * s, vy: Math.sin(a) * s, vz: (this.rand() - 0.5) * 0.4,
-        life: 1.8 + this.rand() * 1.2, size: 6 + this.rand() * 4, color: c, alpha: 1, shape: S_RECT,
+        life: 1.8 + this.rand() * 1.2, size: (6 + this.rand() * 4) * sizeK, color: c, alpha: 1, shape,
         rot: this.rand() * 6.28, spin: (this.rand() - 0.5) * 14, stretch: 1.6, flutter: 2.5 + this.rand() * 3,
         gravity: 3.2, drag: 2.2, shrink: false,
       });

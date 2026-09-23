@@ -57,6 +57,11 @@ export interface SideOpts {
   lineScale?: number;        // stroke width multiplier
   egg?: boolean;
   L?: number;
+  /**
+   * Body colour of the player's ball (skins): the strobe copies and the final ball, never the egg, the required-angle
+   * illustration or the AI ghost. Default C.ball (today); the outline stays ink and the highlight stays white.
+   */
+  ballFill?: string;
 }
 
 /** Default wide x range (§9.2): [rail0 - 0.3, rail1 + 0.3] or level.view.wideX. */
@@ -160,7 +165,7 @@ function dimLine(g: CanvasRenderingContext2D, x1: number, y1: number, x2: number
   g.restore();
 }
 
-function drawBall(g: CanvasRenderingContext2D, cx: number, cy: number, r: number, egg: boolean, alpha = 1, lw = 1): void {
+function drawBall(g: CanvasRenderingContext2D, cx: number, cy: number, r: number, egg: boolean, alpha = 1, lw = 1, fill: string = C.ball): void {
   g.save();
   g.globalAlpha = alpha;
   if (egg) {
@@ -180,7 +185,7 @@ function drawBall(g: CanvasRenderingContext2D, cx: number, cy: number, r: number
     g.ellipse(cx, cy, r * 0.86, r * 1.08, 0, 0, Math.PI * 2);
     g.stroke();
   } else {
-    g.fillStyle = C.ball;
+    g.fillStyle = fill;
     g.beginPath();
     g.arc(cx, cy, r, 0, Math.PI * 2);
     g.fill();
@@ -384,13 +389,14 @@ export function drawSideView(g: CanvasRenderingContext2D, level: LevelDef, cam: 
   }
 
   // Strobe (oldest faint, newest solid).
+  const ballFill = o.ballFill ?? C.ball;
   if (o.strobe && o.strobe.length >= 2) {
     const step = Math.max(1, o.strobeStep ?? 1) * 2;
     const n = Math.floor(o.strobe.length / step);
     let k = 0;
     for (let i = 0; i + 1 < o.strobe.length; i += step, k++) {
       const a = 0.12 + 0.78 * (n <= 1 ? 1 : k / (n - 1));
-      drawBall(g, cam.X(o.strobe[i]!), cam.Y(o.strobe[i + 1]!), BALL_R * cam.s, !!o.egg, a, lw * 0.8);
+      drawBall(g, cam.X(o.strobe[i]!), cam.Y(o.strobe[i + 1]!), BALL_R * cam.s, !!o.egg, a, lw * 0.8, ballFill);
     }
   }
 
@@ -440,9 +446,9 @@ export function drawSideView(g: CanvasRenderingContext2D, level: LevelDef, cam: 
       g.arc(tx + dx * cam.s, cam.Y(BEAM_Y + 0.02), Math.max(1.5, 0.018 * cam.s), 0, Math.PI * 2);
       g.fill();
     }
-    drawBall(g, cam.X(ball.x), cam.Y(ball.y), BALL_R * cam.s, !!o.egg, 1, lw);
+    drawBall(g, cam.X(ball.x), cam.Y(ball.y), BALL_R * cam.s, !!o.egg, 1, lw, ballFill);
   } else if (o.ball) {
-    drawBall(g, cam.X(o.ball.x), cam.Y(o.ball.y), BALL_R * cam.s, !!o.egg, 1, lw);
+    drawBall(g, cam.X(o.ball.x), cam.Y(o.ball.y), BALL_R * cam.s, !!o.egg, 1, lw, ballFill);
   }
   g.restore();
   return cam;

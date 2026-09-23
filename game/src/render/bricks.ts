@@ -1,7 +1,7 @@
 // Instanced brick walls (GAME_DESIGN.md §9.1). Owner: O5.
 //
 // Each wall is a slab x0..x1, 0..h, z in [-0.25, 0.25]. It is drawn as a recessed mortar core
-// (one merged mesh for all walls) plus bricks 0.24 (z) x 0.06 (y) x wall width (x) in running
+// (one merged mesh for all walls) plus bricks 0.24 (z) x rowH (y: 0.06, or 0.1 for block / stone skins) x wall width (x) in running
 // bond, as one InstancedMesh (<= 400 instances) with a per-brick hue jitter. Crash debris uses a
 // second small InstancedMesh with the same geometry and material.
 import {
@@ -11,8 +11,9 @@ import {
 import type { Texture } from 'three';
 import type { WallDef } from '../sim/level';
 import { PAL, Z_WALL_HALF, col } from './scene';
+import { DEFAULT_LOOK } from './skinLooks';
+import type { StageLook } from './skinLooks';
 
-const ROW_H = 0.06;
 const BRICK_Z = 0.24;
 const JOINT = 0.009;
 const MAX_BRICKS = 400;
@@ -31,11 +32,15 @@ export interface Bricks {
   update(dt: number): void;
   /** Restores knocked-out bricks and clears debris (retry). */
   reset(): void;
+  /** Board skin with the same rowH: replays the same jitter draws with its colours; the mortar colour in place. */
+  recolor(stage: StageLook): void;
+  /** Row height the bricks were laid with (a different rowH needs a rebuild). */
+  readonly rowH: number;
   dispose(): void;
 }
 
-function jitterColor(r: () => number, out: Color): Color {
-  const a = col(PAL.brick1), b = col(PAL.brick2);
+/** Per-brick colour between a and b with a small hue / saturation / lightness jitter (5 draws of r). */
+function jitterColor(r: () => number, out: Color, a: Color, b: Color): Color {
   out.copy(a).lerp(b, r());
   const hsl = { h: 0, s: 0, l: 0 };
   out.getHSL(hsl);
@@ -58,7 +63,8 @@ function rng(seed: number): () => number {
   };
 }
 
-export function createBricks(walls: readonly WallDef[], brickTex: Texture): Bricks {
+export function createBricks(walls: readonly WallDef[], brickTex: Texture, stage: StageLook = DEFAULT_LOOK.stage): Bricks {
+  const ROW_H = stage.rowH;
   const group = new Group();
   const geo = new BoxGeometry(1, 1, 1);
   const mat = new MeshStandardMaterial({ map: brickTex, roughness: 0.92, metalness: 0 });
@@ -67,9 +73,17 @@ export function createBricks(walls: readonly WallDef[], brickTex: Texture): Bric
   bricks.receiveShadow = true;
   bricks.frustumCulled = false;
   const info: BrickInfo[] = [];
-  const r = rng(7);
   const o = new Object3D();
   const c = new Color();
+  const c1 = new Color(), c2 = new Color();
+  /** Instance colours: the same rng(7) sequence over `info` in order, whatever the colours. */
+  const paint = (st: StageLook): void => {
+    const r = rng(7);
+    c1.set(st.brick1);
+    c2.set(st.brick2);
+    info.forEach((_, i) => bricks.setColorAt(i, jitterColor(r, c, c1, c2)));
+    if (bricks.instanceColor) bricks.instanceColor.needsUpdate = true;
+  };
 
   walls.forEach((w, wi) => {
     const rows = Math.max(1, Math.round(w.h / ROW_H));
@@ -94,11 +108,10 @@ export function createBricks(walls: readonly WallDef[], brickTex: Texture): Bric
     o.rotation.set(0, 0, 0);
     o.updateMatrix();
     bricks.setMatrixAt(i, o.matrix);
-    bricks.setColorAt(i, jitterColor(r, c));
   });
+  paint(stage);
   bricks.count = info.length;
   bricks.instanceMatrix.needsUpdate = true;
-  if (bricks.instanceColor) bricks.instanceColor.needsUpdate = true;
   group.add(bricks);
 
   // Mortar cores (recessed a few mm so the joints read as grooves).
@@ -120,7 +133,7 @@ export function createBricks(walls: readonly WallDef[], brickTex: Texture): Bric
   mortarGeo.setAttribute('position', new Float32BufferAttribute(P, 3));
   mortarGeo.setAttribute('normal', new Float32BufferAttribute(N, 3));
   mortarGeo.setIndex(I);
-  const mortar = new Mesh(mortarGeo, new MeshLambertMaterial({ color: col(PAL.mortar) }));
+  const mortar = new Mesh(mortarGeo, new MeshLambertMaterial({ color: col(stage.mortar) }));
   mortar.receiveShadow = true;
   mortar.visible = walls.length > 0;
   group.add(mortar);
@@ -210,6 +223,11 @@ export function createBricks(walls: readonly WallDef[], brickTex: Texture): Bric
       if (fade <= 0) debris.count = 0;
     },
     reset: restore,
+    rowH: ROW_H,
+    recolor(st) {
+      paint(st);
+      (mortar.material as MeshLambertMaterial).color.set(st.mortar);
+    },
     dispose() {
       geo.dispose();
       mat.dispose();

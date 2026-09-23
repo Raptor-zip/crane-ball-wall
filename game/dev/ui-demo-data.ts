@@ -10,6 +10,10 @@ import type { DailyView, GhostSummary, ResultsData } from '../src/ui/ui';
 import type { CompareTracks, DemoInfo, ReplayAvail, ReplayLoad, ReplayView, UiContext } from '../src/ui/context';
 import { BUNDLED_LEVELS, BUNDLED_SUMMARY } from '../src/ui/ui';
 import { displayName } from '../src/shared/names';
+import { buildSkinsView } from '../src/core/skinState';
+import { eligibleSkins, skinFacts } from '../src/core/skins';
+import { isDefaultSkinId } from '../src/core/skinIds';
+import { partLook } from '../src/render/skinLooks';
 
 // ---------------------------------------------------------------- ghost decoding (same codec as §8.2, display only)
 
@@ -109,8 +113,29 @@ export function mockSave(lang: 'ja' | 'en', variant: 'fresh' | 'mid' = 'mid'): S
     levels,
     daily: { dayIndex: 22, balls: ['fail', 'ok', 'crown', null, null], bestSub: 400, bestReplay: null, submitted: 'partial', lastSentT120: 412, streak: 5, lastPlayedDay: 22 },
     outbox: [],
-    seen: { onboarding: true, notes: [1], aiLostCard: false, storageNotice: true, tricks: [] },
+    seen: { onboarding: true, notes: [1], aiLostCard: false, storageNotice: true, tricks: variant === 'mid' ? ['brakeFling', 'snap', 'windUp'] : [] },
   };
+}
+
+// ---------------------------------------------------------------- skins (§7.14)
+
+/**
+ * The mid save's skins: everything it earned is owned (the lab set, the crown's braided cord), two of them still NEW
+ * (the lab crane and the blueprint board), the steel ball equipped. `fresh`: nothing unlocked yet.
+ */
+export function mockSkins(save: SaveV1): void {
+  const owned = eligibleSkins(skinFacts(save, BUNDLED_LEVELS)).filter((id) => !isDefaultSkinId(id));
+  save.skins = { owned, seen: owned.filter((id) => id !== 'crane.wood' && id !== 'stage.diazo'), bestStreak: 5 };
+  if (owned.includes('ball.steel')) save.settings.skin = { ball: 'ball.steel' };
+}
+
+/** The try-on ids the skins screen asked for (the demo's 2D scene draws the ball in that colour). */
+let demoTry: Partial<Record<'ball' | 'crane' | 'trail' | 'stage', string>> | null = null;
+
+/** The ball colour the demo's 2D scene should use (equipped, or tried on), undefined for the default red. */
+export function demoBallFill(save: SaveV1): string | undefined {
+  const id = demoTry?.ball ?? buildSkinsView(save, BUNDLED_LEVELS).equipped.ball;
+  return id === 'ball.red' ? undefined : partLook('ball', id).body;
 }
 
 export function mockStore(save: SaveV1): Store {
@@ -370,5 +395,12 @@ export function mockContext(save: SaveV1 | null, opts: { offline?: boolean; boar
       return ai ? pairs(ai) : null;
     },
     pause: () => ({ practiceAvailable: true, skipAvailable: false, assistOffered: true, reverseHint: false }),
+    skins: save ? () => buildSkinsView(save, BUNDLED_LEVELS) : undefined,
+    skinPreview: (ids) => {
+      demoTry = ids;
+    },
+    skinsShown: (open) => {
+      if (!open) demoTry = null;
+    },
   };
 }

@@ -8,6 +8,9 @@ import { PAL, col } from './scene';
 import { PointsBatch, S_RING } from './particles';
 import type { QuadBatch } from './overlays';
 
+/** Trail skin: ribbon colour and width (x today's), strobe copy colour and shape (S_RING or S_DISC). */
+export interface TrailStyle { ribbon: Color; width: number; strobe: Color; shape: number }
+
 const RECENT = 40;       // frames of fading trail
 const MAX_STROBE = 600;  // 60 s at 10 Hz
 
@@ -25,7 +28,18 @@ export class Trail {
   private lastBy = NaN;
   frozen = false;
   private freezeT = 0;
-  private readonly cBall: Color = col(PAL.ball);
+  private readonly cRibbon: Color = col(PAL.ball);
+  private readonly cStrobe: Color = col(PAL.ball);
+  private widthK = 1;
+  private strobeShape = S_RING;
+
+  /** Skin: colours are copied (the caller may reuse its Color objects). */
+  setLook(s: TrailStyle): void {
+    this.cRibbon.copy(s.ribbon);
+    this.cStrobe.copy(s.strobe);
+    this.widthK = s.width;
+    this.strobeShape = s.shape;
+  }
 
   reset(): void {
     this.n = 0;
@@ -74,7 +88,7 @@ export class Trail {
     const shown = Math.floor(this.ns * appear);
     for (let i = 0; i < shown; i++) {
       const age = this.ns > 1 ? i / (this.ns - 1) : 1;
-      b.add(this.sx[i] as number, this.sy[i] as number, -0.005, Math.max(5, ballPx * (0.38 + 0.12 * age)), this.cBall, 0.35 + 0.45 * age, S_RING);
+      b.add(this.sx[i] as number, this.sy[i] as number, -0.005, Math.max(5, ballPx * (0.38 + 0.12 * age)), this.cStrobe, 0.35 + 0.45 * age, this.strobeShape);
     }
   }
 
@@ -89,8 +103,9 @@ export class Trail {
       this.px[k + 1] = this.rx[i] as number;
       this.py[k + 1] = this.ry[i] as number;
     }
-    b.strip(this.px, this.py, n, -0.012, this.cBall,
-      (i) => width * (0.2 + 0.8 * (1 - i / n)),
+    const w = width * this.widthK;
+    b.strip(this.px, this.py, n, -0.012, this.cRibbon,
+      (i) => w * (0.2 + 0.8 * (1 - i / n)),
       (i) => { const t = 1 - i / n; return 0.34 * t * t * fade; });
   }
 

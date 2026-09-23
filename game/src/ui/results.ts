@@ -9,6 +9,7 @@ import { h, s } from './dom';
 import { coin, crownBadge, icon } from './icons';
 import type { IconName } from './icons';
 import { NO_VALUE, fmtCount, fmtDelta, fmtMm, fmtNum, fmtTime, known, levelName, t } from './i18n/format';
+import type { I18nKey } from './i18n/format';
 import { fmtPct } from './share';
 import { openShareSheet } from './sharesheet';
 import { openAiLostCard } from './screens/notes';
@@ -464,6 +465,12 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
       scroll.append(h('div', { class: 'eyebrow', style: 'margin-bottom:6px' }, t('results.badges')),
         h('div', { class: 'badges' }, ...data.badges.map((b) => h('span', { class: 'badge', title: t(`badge.${b}.desc` as 'badge.kamihitoe.desc') },
           h('span', { class: 'badge-dot' }, BADGE_GLYPH[b]), t(`badge.${b}` as 'badge.kamihitoe')))));
+    }
+    if (data.skins?.length) {
+      // Skins this run unlocked (§7.14): their toast can find no room next to the card on a small phone; this line stays.
+      scroll.append(h('div', { class: 'eyebrow', style: 'margin-bottom:6px' }, t('results.skins')),
+        h('div', { class: 'badges res-skins' }, ...data.skins.map((id) => h('span', { class: 'badge' },
+          h('span', { class: 'badge-dot', 'aria-hidden': 'true' }, icon('brush')), t(`skin.${id}.name` as I18nKey)))));
     }
     const onlineChips = h('div', { class: 'res-online' },
       data.aiBeaten !== null ? h('span', { class: 'chip chip--ai' }, icon('crown'), t('results.aiBeaten', { n: fmtCount(data.aiBeaten) })) : null);

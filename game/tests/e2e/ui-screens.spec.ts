@@ -24,6 +24,8 @@ const SCREENS = [
   'title', 'select', 'briefing', 'hud', 'hud-1-1', 'hud-run', 'hud-egg', 'hud-daily', 'hud-daily-ready', 'hud-hold', 'hud-success', 'hud-crash',
   'hud-practice', 'pause', 'pause-practice', 'results', 'results-fail', 'results-crown', 'results-practice', 'share', 'demo', 'board', 'daily',
   'settings', 'about', 'notes',
+  // Skins (GAME_DESIGN.md §7.14): the sheet over the title attract on each tab, and a locked skin tried on.
+  'skins', 'skins-crane', 'skins-trail', 'skins-stage', 'skins-try',
 ] as const;
 const VIEWPORTS = [
   { width: 390, height: 844, touch: true },

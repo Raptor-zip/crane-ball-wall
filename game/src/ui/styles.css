@@ -4332,3 +4332,469 @@ input {
 .yp-ts125 .yp[data-short="1"] .demo--replay .demo-peak {
   display: none;
 }
+/* ================================================================ skins (GAME_DESIGN.md §7.14) — begin
+   The スキン sheet over the live title attract: tall = a card at the bottom (the attract is framed above it), wide = a
+   panel on the side away from the attract's goal (data-side, as the results card). It reuses the card, tab, button and
+   NEW styles; only its layout and the skin cards are new. The scene above / beside it is the preview, so the sheet
+   paints no page background. */
+
+.skins {
+  --skins-w: min(380px, 46%);
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.skins-sheet {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px 8px;
+  overflow: hidden;
+}
+/* tall: the sheet takes the control deck and the bench band, so its top edge is the floor's front edge and the whole
+   play area of the attract stays in view (the preview); on short phones it keeps room for the tabs and a card or two,
+   and core frames the attract above its top edge instead (app.ts sceneLayout). */
+.yp[data-layout="tall"] .skins-sheet {
+  left: calc(var(--safe-l) + 8px);
+  right: calc(var(--safe-r) + 8px);
+  bottom: calc(var(--safe-b) + 8px);
+  height: min(62%, max(calc(var(--deck-h) + var(--bench-h) - 8px - var(--safe-b)), 18rem));
+}
+.yp[data-layout="wide"] .skins-sheet {
+  top: calc(var(--safe-t) + 12px);
+  bottom: calc(var(--safe-b) + 12px);
+  width: var(--skins-w);
+}
+.yp[data-layout="wide"] .skins[data-side="left"] .skins-sheet {
+  left: calc(var(--safe-l) + 12px);
+}
+.yp[data-layout="wide"] .skins[data-side="right"] .skins-sheet {
+  right: calc(var(--safe-r) + 12px);
+}
+.skins-head {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 10px;
+  padding: 0 0 8px 4px;
+}
+.skins-titles {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.skins-head .sheet-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.skins-head .sheet-title .ico {
+  width: 24px;
+  height: 24px;
+  color: var(--ball-lip);
+}
+.skins-note {
+  flex: 1 0 100%;
+  margin: 0;
+  font: 800 0.74rem/1.35 var(--font-head);
+  color: var(--ink-2);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.skins-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  padding: 2px 0 10px;
+}
+.skins-tab {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 48px;
+  padding: 4px 4px;
+  gap: 3px;
+}
+/* One line at 100 % text (landscape phones: see the short rules); at 125 % 「軌跡・演出」 goes on two lines after the ・,
+   and a word is cut only as the last resort (never wider than its tab). */
+.skins-tab-label {
+  max-width: 100%;
+  text-align: center;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.skins-tab b {
+  font: 800 0.74rem/1 var(--font-num);
+  opacity: 0.8;
+}
+.skins-tab .skin-dot {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+}
+.skins-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  margin: 0 -8px;
+  padding: 2px 8px 10px;
+  outline: none;
+}
+.skins-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.skins-egg,
+.skins-hint {
+  margin: 12px 2px 2px;
+  font: 800 0.72rem/1.4 var(--font-head);
+  color: var(--ink-2);
+  text-align: center;
+}
+.skins-egg {
+  margin-top: 6px;
+}
+.skins-egg .ico {
+  width: 15px;
+  height: 15px;
+  margin-right: 4px;
+  vertical-align: -0.2em;
+}
+
+/* A skin card: thumbnail, set, name, then the blurb (unlocked) or the condition and its progress (locked). */
+.skin-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 76px;
+  padding: 8px 10px 8px 9px;
+  border: 2px solid var(--ink);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.06s ease, box-shadow 0.06s ease, background-color 0.12s;
+}
+.skin-card:hover {
+  background: #fffdf7;
+}
+.skin-card:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ink);
+}
+/* Equipped: a 3 px ink border and a check (not colour alone). */
+.skin-card.is-on {
+  border-width: 3px;
+  padding: 7px 9px 7px 8px;
+  background: #fffdf7;
+}
+/* Locked: true colours, a lighter frame, the condition in --ink-2 (never --ink-3). */
+.skin-card.is-locked {
+  border-color: var(--line-2);
+  box-shadow: 0 3px 0 var(--line-2);
+  background: var(--card-2);
+}
+.skin-card.is-trying {
+  border: 2px dashed var(--stamp);
+  box-shadow: 0 3px 0 var(--stamp);
+  background: var(--card);
+}
+.skin-card:focus-visible {
+  outline-offset: 3px;
+}
+.skin-thumb {
+  position: relative;
+  flex: 0 0 auto;
+  width: 60px;
+  height: 60px;
+  border: 1.5px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--paper-1);
+}
+.skin-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 8.5px;
+}
+.skin-badge {
+  position: absolute;
+  right: -7px;
+  bottom: -7px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--card);
+  border-radius: 50%;
+}
+.skin-badge .ico {
+  width: 13px;
+  height: 13px;
+  stroke-width: 3.2;
+}
+.skin-badge--on {
+  background: var(--ink);
+  color: var(--card);
+}
+.skin-badge--lock {
+  background: var(--ink-2);
+  color: var(--card);
+}
+.skin-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.skin-set {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 800 0.64rem/1.2 var(--font-head);
+  letter-spacing: 0.1em;
+  color: var(--ink-2);
+}
+.skin-set::before {
+  content: "";
+  width: 10px;
+  height: 2px;
+  background: currentColor;
+}
+/* A finished set: the vermilion 「そろった」 stamp next to its name. */
+.skin-stamp {
+  padding: 1px 5px;
+  border: 1.5px solid var(--stamp);
+  border-radius: 5px;
+  color: var(--stamp);
+  letter-spacing: 0.04em;
+  transform: rotate(-3deg);
+}
+.skin-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 6px;
+  font: 800 1rem/1.25 var(--font-head);
+}
+.skin-name .newdot {
+  margin-left: 0;
+}
+.skin-on {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--card);
+  font: 800 0.64rem/1.2 var(--font-head);
+  white-space: nowrap;
+}
+.skin-on--try {
+  background: var(--stamp);
+}
+.skin-blurb {
+  font: 500 0.75rem/1.4 var(--font-body);
+  color: var(--ink-2);
+}
+.skin-cond {
+  font: 800 0.75rem/1.35 var(--font-head);
+  color: var(--ink-2);
+}
+.skin-bar {
+  display: block;
+  height: 6px;
+  margin-top: 3px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+.skin-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--ink-2);
+}
+
+/* Trying a locked skin on: a dashed vermilion tag over the scene, where the preview is. */
+.skins-try {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  margin: 0 auto;
+  padding: 4px 4px 4px 12px;
+  border: 2px dashed var(--stamp);
+  border-radius: 16px;
+  background: var(--card);
+  box-shadow: 0 3px 0 var(--ink);
+  color: var(--ink);
+}
+.skins-try[hidden] {
+  display: none;
+}
+.skins-try > .ico {
+  width: 20px;
+  height: 20px;
+  color: var(--stamp);
+}
+.skins-try-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font: 800 0.78rem/1.3 var(--font-head);
+}
+.skins-try-text b {
+  color: var(--stamp);
+}
+.skins-try-text > span {
+  color: var(--ink-2);
+  font-size: 0.72rem;
+}
+.skins-try-short {
+  display: none;
+}
+/* Landscape phones: the banner beside the panel is narrow; its heading is the short 「試着中」. */
+.yp[data-short="1"] .skins-try-long {
+  display: none;
+}
+.yp[data-short="1"] .skins-try-short {
+  display: inline;
+}
+.skins-try-stop {
+  flex: 0 0 auto;
+  width: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  box-shadow: none;
+  border-color: transparent;
+  background: transparent;
+}
+.yp[data-layout="tall"] .skins-try {
+  top: calc(var(--safe-t) + 10px);
+  left: 12px;
+  right: 12px;
+}
+.yp[data-layout="wide"] .skins-try {
+  top: calc(var(--safe-t) + 12px);
+  max-width: none;
+}
+.yp[data-layout="wide"] .skins[data-side="left"] .skins-try {
+  left: calc(var(--safe-l) + var(--skins-w) + 24px);
+  right: calc(var(--safe-r) + 12px);
+}
+.yp[data-layout="wide"] .skins[data-side="right"] .skins-try {
+  left: calc(var(--safe-l) + 12px);
+  right: calc(var(--safe-r) + var(--skins-w) + 24px);
+}
+
+/* The NEW dot of the entry points (title, settings, tabs): a red dot with a card-coloured rim. */
+.skin-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--card);
+  border-radius: 50%;
+  background: var(--ball);
+  box-sizing: content-box;
+}
+.title-skins,
+.set-skins,
+.has-skin-dot {
+  position: relative;
+}
+.title-skins .skin-dot,
+.set-skins .skin-dot,
+.has-skin-dot .skin-dot {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+}
+/* The pill: tall, over the scene's lower left corner just above the footer (the attract's walls, goal and landing are
+   in the middle); wide, the top-left corner, inside the 124 px the logo row keeps free for the corner buttons. */
+.title-float {
+  position: absolute;
+  left: calc(var(--safe-l) + 12px);
+  bottom: calc(100% + 12px);
+}
+.title-corner--left {
+  left: calc(var(--safe-l) + 12px);
+  right: auto;
+}
+.title-skins--pill {
+  min-height: 44px;
+  padding: 0 16px 0 12px;
+  border-radius: 999px;
+  box-shadow: 0 3px 0 var(--ink);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+.title-skins--pill .ico {
+  width: 20px;
+  height: 20px;
+}
+/* Landscape phones: denser cards so three fit beside the scene; a wider panel and tighter tabs so that every tab label
+   (「クレーン」, 「軌跡・演出」) stays on one line at 100 % text. */
+.yp[data-short="1"] .skins {
+  --skins-w: min(380px, 50%);
+}
+.yp[data-short="1"] .skins-tabs {
+  gap: 4px;
+}
+.yp[data-short="1"] .skins-tab {
+  padding: 4px 2px;
+  font-size: 0.64rem;
+}
+.yp[data-short="1"] .skins-sheet {
+  padding: 8px 12px 6px;
+}
+.yp[data-short="1"] .skins-note {
+  display: none;
+}
+.yp[data-short="1"] .skins-tabs {
+  padding-bottom: 8px;
+}
+.yp[data-short="1"] .skins-tab b {
+  font-size: 0.7rem;
+}
+.yp[data-short="1"] .skin-card {
+  min-height: 64px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.yp[data-short="1"] .skin-thumb {
+  width: 52px;
+  height: 52px;
+}
+
+/* The summary unlock toast has two lines (「スキンが9個開いた!」 / where to find them): its line break is in the text. */
+.toast > span {
+  white-space: pre-line;
+}
+
+/* The results card's line of new skins (like its badges): a toast can miss a small phone, this stays on the card. */
+.res-skins .badge {
+  background: var(--card);
+}
+.res-skins .badge-dot {
+  color: var(--ball-lip);
+}
+.res-skins .badge-dot .ico {
+  width: 12px;
+  height: 12px;
+}
+/* ================================================================ skins — end */

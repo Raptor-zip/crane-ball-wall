@@ -39,6 +39,8 @@ const PATHS = {
   arrowR: `<path d="M5 12h14M13.5 6.5 19 12l-5.5 5.5"/>`,
   trophy: `<path d="M7.5 4.5h9v5a4.5 4.5 0 0 1-9 0z"/><path d="M7.5 6.5H4.5a3 3 0 0 0 3 4M16.5 6.5h3a3 3 0 0 1-3 4M12 14v3.5M8.5 20h7M9.5 17.5h5"/>`,
   star: `<path d="M12 3.8l2.5 5.2 5.6.7-4.1 3.9 1 5.6L12 16.5l-5 2.7 1-5.6-4.1-3.9 5.6-.7z" fill="currentColor" stroke-width="1.4"/>`,
+  // Skins (§7.14): a paintbrush.
+  brush: `<path d="M20.2 3.8 12.4 11.6"/><path d="M13.7 13 11 10.3"/><path d="M9.2 12.6c-2.3 0-3.9 1.8-3.9 4 0 1.5-.8 2.5-1.9 2.9 1 .7 2.4 1 3.8 1 2.9 0 4.9-2 4.9-4.6z" fill="currentColor" stroke-width="1.6"/>`,
 } as const;
 
 export type IconName = keyof typeof PATHS;
