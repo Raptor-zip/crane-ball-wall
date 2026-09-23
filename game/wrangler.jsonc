@@ -1,5 +1,5 @@
 // Cloudflare Worker config (GAME_DESIGN.md §10.5). Owner: O9.
-// database_id: replace with the output of `wrangler d1 create yurapita` before `npm run db:migrate:remote` / `npm run deploy`.
+// database_id: the production D1 "yurapita" (created in the dashboard on 2026-09-23).
 // Local development (`wrangler dev`, vitest-pool-workers, `db:migrate:local`) works with the placeholder.
 // `wrangler dev` gets DEV=1 from .dev.vars.
 {
@@ -17,7 +17,7 @@
     {
       "binding": "DB",
       "database_name": "yurapita",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "3ff38c9a-64df-481b-9cb8-f2f2371e0e3c",
       "migrations_dir": "migrations"
     }
   ],
