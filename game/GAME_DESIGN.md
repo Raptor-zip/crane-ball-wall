@@ -899,6 +899,14 @@ export interface DailyPoolFile { format: 1; pool: DailyDef[] }  // 84 件。tier
    - 日替わりの挑戦状（`#c=d:17.…`）は、その日替わりの面を練習として開く（今日の 5 球は消費しない）。
 4. **練習**（ポーズメニュー）：0.5 倍速と 5 秒巻き戻し。ランキングにも PB にも入らない。
 5. **AIの手本**：calm ゴースト（§8.1）を 0.5 倍速で再生し、F(t) の小さなグラフと AI のすき間（横持ちスマホでは省く）を下に控えめに表示する（ボールとゾーンは隠さない。§8.4 項目 6）。
+6. **ランキングのリプレイ**（2026-09-24）：ランキング画面から、1 位の走り（と上位 100 件のどの行も）を AIの手本と同じ画面で見られる。
+   - 入口はランキング画面だけ（§9.4）。ランキングは結果カードから開くので、見ている間も結果カードの走りはそのまま残り、戻ると結果カードの上のランキング（見ていた行）に帰る。
+   - 本物のクレーンがその記録を 0.5 倍速で走り（軌跡の帯と、成功で固まるストロボ、カメラも本番どおり）、名前のタグが付く。AI のゴースト（パーのもの）が横を走る（ゴーストの組が「なし」なら出さない）。
+     手本と違って最後の場面（ホールドが終わって成功した瞬間）で止まり、自分では戻らない。戻る・何かのキー・Esc・画面のタップでランキングへ戻る。
+   - **検証**：再生するリプレイは、Worker が受理に使うのと同じ `simulateReplay` でクライアントが再シミュレーションし、Worker と同じ受理の規則（`rankedScore`：成功、最後のティックで成功、タイムが行の t120 と一致。§7.8 の 5）を満たし、
+     ヘッダーが盤のもの（sim、levelHash、補助・練習のフラグなし）であるときだけ流す。画面のボールは記録器が写したシミュレーターの各ティックの状態そのもので、補間はティックの間だけ。
+     満たさないリプレイは「このリプレイは再生できませんでした」と出して流さない（warn を 1 回）。
+   - **「このゴーストと勝負」**：見た走りを次の挑戦のゴーストにする（§7.6）。自分の記録には出さない。
 
 エンドレス、タイムアタック、レベルエディターは作らない（§12）。
 
@@ -912,10 +920,14 @@ export interface DailyPoolFile { format: 1; pool: DailyDef[] }  // 84 件。tier
   4. AI + ライバル
   5. なし
 - 挑戦状のゴーストは、どのセットにも追加で入る。
+- **勝負のゴースト**（2026-09-24、ランキングのリプレイの「このゴーストと勝負」、§7.5 の 6）：1 位の記録は WR（星）、それ以外はライバル（三角）の形で、名前のタグを付ける。
+  - 挑戦状と同じく、どのセットにも（「なし」にも）入る。セットの中の同じ種類のゴースト（boot の WR、取得したライバル）と入れ替わり、AI のすぐ後ろに入るので、スプリットの比較ゴーストになる。3 体までの上限は同じ。
+  - その面のリトライの間は残り、別の面を開くと（同じ面を面選択から開き直しても）消える。保存はしない。設定のゴーストの組は変えない。
 - 日替わりでは「AI + 今日の自分のベスト」。
 - ゴーストはプレイヤーのティック 0 から出発する。当たり判定はない。
 - **ライバル** = ランキング上で自分の PB の 1 つ上の記録。トップ 100 圏外なら 100 位。
-  - 取得（`GET /api/ghost`）は 1 セッション 3 回まで。
+  - 取得（`GET /api/ghost`）は 1 セッション 3 回まで。この 3 回はランキングのリプレイ（§7.5 の 6）と共有する（`GHOST_MAX_PER_SESSION`、sessionStorage `yurapita:ghosts`）。
+    取得した答えもセッションの間は共有のキャッシュ（sessionStorage `yurapita:ghostCache`、6 件まで）に残り、読み直しても数えない。キャッシュの答えが、今の表のその順位の人・タイムと違えば取り直す（1 回に数える）。
   - 取得するのは、同じ面で 3 回以上挑戦したあとの結果画面で、ライバルが未取得か古いときだけ。
 - **スプリット**：各 `SplitDef` の最初の達成時刻を、比較ゴーストの同じ地点の時刻と比べる。
   - 比較ゴーストは、表示中のセットの AI 以外の先頭（PB / WR / ライバル / 挑戦状）。いなければ AI。
@@ -1139,6 +1151,9 @@ CREATE TABLE plays (
 
 **`GET /api/ghost/:key/:rank`**
 - `{key, rank, pidh, nameSeed, t120, replay}` を返す（2 行読み取り）。`Cache-Control: public, max-age=300`。
+- クライアントの使い道は 2 つで、回数とキャッシュを共有する（§7.6）：ライバル（§7.6）と、ランキングのリプレイ（§7.5 の 6）の 2 位以下の行。
+  1 位は boot の `wr`（その盤の `top[0]` の人とタイムが一致するとき）から、自分の行は手元の自己ベスト（タイムが一致するとき）から流すので、どちらも要求は 0。
+  ランキングを開くだけでは要求しない。1 行を初めて見るときに 1 回、同じセッションで見直すときは 0 回。
 
 **`GET /api/bench?level=2-2&n=10`**
 - `DEV=1` のときだけ有効。同梱のボットリプレイを n 回検証して、CPU 時間を Workers Logs の `cpuTime` で測るための入口。
@@ -1301,11 +1316,13 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
 |---|---|
 | boot（1 セッション 1 回） | 30,000 |
 | submit（日替わり約 1.1 回/人 + 面の PB を 4 件まで束ねて） | 26,000 |
-| ghost（1 セッション平均 0.5、上限 3） | 15,000 |
+| ghost（1 セッション平均 0.5、上限 3。ライバルとランキングのリプレイの合計） | 15,000 |
 | board（トップ 100 を開く、0.2/セッション） | 6,000 |
 | **合計** | **≈ 77,000** |
 
 80,000 を超えると lite に切り替え、ghost と board をほぼ止める。静的アセットは数に入らない。
+ランキングのリプレイ（2026-09-24）は上限 3 回をライバルと共有するので、この表は変わらない。見られるのは多くが 1 位で、boot の `wr` から流すので要求は 0。
+2 位以下を見ると 1 回使うが、ランキングを開くのは 0.2/セッション程度なので、平均 0.5 の見積もりの内に収まる（最悪でも上限 3 回 × セッション数で、別枠の上限を足すより安全側）。
 cron（毎時の再構築 24 回と日次の削除 1 回）は `noteRequest` の数に入らない。
 
 **D1 読み取り**（上限 500 万/日）
@@ -1395,6 +1412,8 @@ boot と board はヒストグラムを同じ行から読むので 0 行増。
   - `location.protocol` が `http:` か `https:`
   - 最初の boot が 3 秒以内に成功した
 - 使えないときは、ランキング関係の UI を隠して小さな「オフライン」チップを出す。それ以外はすべてローカルで動く（進行、PB、PB ゴースト、AI ゴースト、日替わり、挑戦状、共有カード）。
+- ランキングのリプレイ（§7.5 の 6）：boot のあとでオフラインになっても（429 / 5xx を含む）、ランキングは boot の写しで開き、1 位は boot の `wr` から見られる。2 位以下の ▶ は出さない（lite の日も同じ）。
+  1 セッションの回数を使い切ったときは ▶ を残し、押すと要求せずに「このセッションで読み込めるリプレイの上限に達しました」と出す。単一 HTML には結果カードのランキングボタンがないので、この機能は出てこない。
 - `npm run build:single` は `VITE_NET=off` で `dist-single/index.html` を 1 ファイルだけ作る。`fetch` は一度も呼ばない。
   single モードでは `publicDir: false` にして `public/og.png` をコピーしない（OGP 画像はリンクのプレビュー用で、ゲーム自体は使わない）。
   favicon は `index.html` に data: URI の SVG で埋め込む（どちらのビルドでも `/favicon.ico` を取りに行かない）。
@@ -1633,6 +1652,11 @@ AI差 +0.92秒｜ギリ 6mm｜上位 8%｜連続 5日
    - 横：床下のベンチ前面に、画面下端に沿った低い帯（横持ちスマホで高さ 40 px 以下）として置く。文字（凡例と AI の数値）はグラフの上ではなく横に並べ、グラフは帯の内側の幅の 40 % 以上を取る（文字のほうを折り返す）。横持ちスマホでは文字を 2 行までにするため、AI の数値（結果カードの比較バーにもある）を出さず、文字サイズ 125 % では凡例の ±F_max も省く。
    - 再生位置の縦線と「何か押すと戻る」はどちらの向きでも出す。ただし幅 560 px 未満の横画面では、同じことをするスキップボタンがあるので「何か押すと戻る」を省く。この注記は `--ink-2` で 0.72rem 以上にする（小さい文字でもコントラスト 4.5:1 以上）。
    - 手本の間のトースト（プレイ中に出たもの）：横ではスキップボタンの下、右上に 1 つずつ出す（ボールより上、帯にはかからない）。
+   - **ランキングのリプレイ**（§7.5 の 6）も同じ画面で、同じ置き場所と見た目を使う。上の帯は「▶ 12位のリプレイ ×0.5」（1 位は WR のピンク、2 位以下はライバルの橙の文字色 `--wr-lip` / `--rival-lip`）、
+     横では名前とタイムのチップ、右に「このゴーストと勝負」（金。縦は「勝負」）と「戻る」（縦はアイコンだけ）。帯に収まらない幅（320 px や文字 125 %）では題を「12位」に縮め、それでも入らなければ ×0.5 を省く。
+     グラフは その人の力（太線、`--wr-lip` / `--rival-lip`）、AI のパーのゴーストの力（ランキングの AI の行と同じ、シアン）、あなたの自己ベスト（金。自分の記録を見るときはなし）を同じ時間軸・±F_max で重ねる。
+     2 行目は「タイム」（再生に合わせて進み、ランクのタイムで止まる。ホールドの 0.5 秒は数えない）、「すき間」（壁のある面だけ）、「ピーク力」で、どれも再シミュレーションの値（行の値ではない）。注記は「何か押すとランキングへ」。
+     ボールがランクのタイムに届くと「勝負」が 1 回だけ小さく弾む（動きを減らす設定ではなし）。Enter / Space はフォーカスのあるボタン（勝負）を押し、それ以外のキーは戻る。開いて 0.35 秒の間と押しっぱなしの繰り返しのキーでは戻らない。
 7. **パーとメダル**は `ai` の `parSub` から決める（§7.2）。
 8. **タイトル画面のアトラクト**：2-2 の `ai` をループ再生する。
 9. **結果カード**：あなたと AI の x(t)、θ(t)、F(t) を重ねたグラフ。見る人は少ないので既定では閉じておき、比較バーの下の控えめなテキストボタン「グラフを見る」（`aria-expanded`）で開く。開くと 3 段のグラフと凡例が出て、ボタンは「グラフを閉じる」になる。60 Hz の比較用の記録がないときは、開くとボールの高さのグラフ（ストロボと AI の軌跡）を 1 つ出す。
@@ -1731,6 +1755,8 @@ RUNNING ─ リトライ → READY（途中リトライも挑戦 1 回。日替�
 RUNNING/READY ─ Esc・⏸・タブが隠れる → PAUSED → 再開 / リトライ / 練習 / AIの手本 / ゴースト切替 / AIのライン / 理科ノート / 面選択 / 設定
 RESULTS → READY(リトライ) | READY(次の面) | DEMO(AIの手本) | LEADERBOARD | SHARE
 3 連続 Crash（未クリアのキャンペーン面、1 面 1 回）→ DEMO(自動、スキップ可) → READY
+RESULTS(+ランキング) ─(1位のリプレイ / 行の ▶)→ DEMO(リプレイ ×0.5、最後で静止)
+DEMO(リプレイ) ─(戻る・任意の入力・Esc)→ RESULTS + ランキング（見ていた行へ） | ─(このゴーストと勝負)→ READY（同じ面、勝負のゴーストつき）
 LEVEL_SELECT ↔ DAILY_HUB | SETTINGS | ABOUT | NOTES（理科ノート）
 ```
 
@@ -1761,6 +1787,12 @@ LEVEL_SELECT ↔ DAILY_HUB | SETTINGS | ABOUT | NOTES（理科ノート）
     光っている途中で `/api/board` の答えが表を置き換えても、新しい行が続きから光る。
   - 自分が表にいなくて自己ベストがあるときは、「あなた」の行を画面の下端に貼り付ける（sticky）。表が 100 件で「あなた」が 100 位より下（「約342位」か「100位圏外」）なら、
     その前に「⋮」の行を置く（表の中に入るはずの「反映待ち」「未送信」には置かない）。表と「あなた」の行はいつも同じデータから作る。
+  - **リプレイ**（2026-09-24、§7.5 の 6）：ヘッダーに「1位のリプレイを見る」（主のボタン。下に 1 位の名前とタイム）を置く。表が自分の行までスクロールしても見えるように、縦ではタイトルの下の 1 行、横ではタイトルの行の右端。
+    見られる行には最後の細い列に ▶ を付け（読み上げは「12位 ○○ のリプレイを見る」）、行のどこをタップしても見られる（キーボードは ▶ のボタン）。AI の行と、見られない行には付けない。日替わりのトップ 10（今日の5球の画面）には付けない。
+    ランキングを開くだけでは何も読み込まない（どの行が見られるかは手元だけで決める）。押すと読み込みの間その ▶ が回り（動きを減らす設定では「…」）、ほかの行は押しても待つ。読み込めなければ理由のトーストを出して ▶ を戻す。
+    ビューアから戻るとその行を真ん中へ（アニメーションなし）スクロールしてその ▶ にフォーカスし、自分の行は光らせ直さない（最初に開いたときに光ったので）。11 位より下の行は `/api/board` の全体の答えが来てから合わせる。
+    ▶ の列の分、この画面の表だけセルの左右の余白を 8 → 5 px、順位の列を 3em → 2.5em に詰め、名前の列が狭くなりすぎないようにする。
+    見られるのは、その面の結果カードから開いたランキングだけ（過去の日替わりを練習したあとに開く今日の日替わりのランキングには ▶ を出さない）。
   - 人数は結果カードと同じく 3 桁ごとに区切る（「参加 1,065人」）。
     - 面（自己ベストが今の面のハッシュのもの）：100 位より速ければ「反映待ち」（boot の上位 10 件だけのときは、その下の見込み「約37位」）。
       遅ければヒストグラムから「約342位」と「上位32.2%」、ヒストグラムがなければ「100位圏外」。サーバーがその時間でまだ数えていなければ（`sentSub` がないかビンが違う）「未送信」を付ける。
@@ -2101,8 +2133,12 @@ export interface HudState {
 }
 export type Screen =
   | { id: 'title' } | { id: 'select'; world: number } | { id: 'briefing'; level: LevelDef; ai: GhostSummary }
-  | { id: 'hud' } | { id: 'pause' } | { id: 'results'; data: ResultsData } | { id: 'demo'; level: LevelDef }
-  | { id: 'board'; key: string } | { id: 'daily'; data: DailyView } | { id: 'settings' } | { id: 'about' } | { id: 'notes'; world: number };
+  | { id: 'hud' } | { id: 'pause' } | { id: 'results'; data: ResultsData }
+  | { id: 'demo'; level: LevelDef; replay?: ReplayView }     // replay（任意、2026-09-24）：ランキングのリプレイ（§7.5 の 6）。ないときは AIの手本
+  | { id: 'board'; key: string; focusRank?: number }        // focusRank（任意）：ビューアから戻ったとき、その行へスクロールしてフォーカス
+  | { id: 'daily'; data: DailyView } | { id: 'settings' } | { id: 'about' } | { id: 'notes'; world: number };
+export interface ReplayView { id: string; rank: number; name: string; t120: number; kind: 'wr' | 'rival'; mine: boolean;
+  hz: number; f: Float32Array; aiF: Float32Array | null; meF: Float32Array | null; Fmax: number; gapMm: number | null; peakF: number }
 export interface GhostSummary { parSub: number; planT: number; peakF: number; minGapMm: number; pumps: number; calmPath: Float32Array }
 export interface ResultsData { level: LevelDef; ok: boolean; score: number | null; parSub: number; pbSub: number | null; wrSub: number | null;
   medal: Medal; crown: boolean; nextMedalSub: number | null; gapMm: number; aiGapMm: number; peakF: number; aiPeakF: number;
@@ -2114,7 +2150,8 @@ export interface DailyView { dayIndex: number; n: number; level: LevelDef; balls
   bestSub: number | null; parSub: number; top: BoardRow[] | null; rank: number | null; pct: number | null; streak: number; shareText: string }
 export type BoardRow = [pidh: string, nameSeed: number, t120: number, gapUm: number, device: number, created: number];
 export type UiAction = 'retry' | 'next' | 'demo' | 'board' | 'share' | 'resume' | 'practice' | 'select' | 'openLevel' | 'openDaily' | 'settingsChanged' | 'skip' | 'rerollName' | 'assistAccept'
-  | 'ghostCycle' | 'aiLine' | 'notes' | 'mute' | 'reverseHint';   // キーのない端末用の同じ操作（§3.3）と、2-3 の「逆再生」ボタン
+  | 'ghostCycle' | 'aiLine' | 'notes' | 'mute' | 'reverseHint'    // キーのない端末用の同じ操作（§3.3）と、2-3 の「逆再生」ボタン
+  | 'replay' | 'raceGhost';     // {id}：ランキングの行のリプレイを見る / 「このゴーストと勝負」（2026-09-24、§7.5 の 6）
 export interface UiElements { canvas: HTMLCanvasElement; sceneEl: HTMLElement; deckEl: HTMLElement | null }
 export interface UI {
   mount(root: HTMLElement): Layout;              // canvas と、tall ならデッキの要素も UI が作る
@@ -2126,9 +2163,11 @@ export interface UI {
   toast(text: string, kind?: 'info' | 'badge' | 'warn'): void;
   on(a: UiAction, cb: (payload?: unknown) => void): void;
 }
-```
-
-**保存（O8）**
+// UiContext（src/ui/context.ts、すべて任意）に 2026-09-24 に足したもの（§7.5 の 6）：
+//   replayAvail?(key, rank, row: BoardRow): 'ready' | 'fetch' | null   // 同期で I/O なし。ready = 要求なしで見られる、fetch = 1 回の要求、null = ▶ なし
+//   loadReplay?(req: { key; rank; pidh; nameSeed; t120 }): Promise<{ ok: true; id } | { ok: false; reason: 'offline' | 'budget' | 'missing' | 'bad' | 'stale' }>
+//                                                                      // 取得と検証だけ（状態は変えない）。ok なら UI が 'replay' {id} を出す
+// 注入した UI（テスト、別のホスト）は、任意の attachContext(ctx) で core の UiContext を受け取れる（既定の UI は転送用の文脈で読む）。
 
 ```ts
 export interface LevelProgress { hash: string; cleared: boolean; skipped: boolean; attempts: number; fails: number;
@@ -2163,10 +2202,10 @@ export interface Api {
   boot(dayIndex: number): Promise<BootResponse | null>;       // 失敗なら null（オフライン扱い）
   flush(reason: 'menu' | 'select' | 'pagehide' | 'dailyDone' | 'rankIn', opts?: { first?: string }): Promise<SubmitResponse | null>;
   enqueue(r: PendingRun): void;
-  ghost(key: string, rank: number): Promise<GhostResponse | null>;
+  ghost(key: string, rank: number, opts?: { pidh?: string; t120?: number }): Promise<GhostResponse | null>;   // opts（任意）：表で見た行。キャッシュの答えが別人・別タイムなら取り直す
   board(key: string): Promise<BoardResponse | null>;
 }
-// 実装（NetApi）はさらに lastBoot()・readOnly・booting・soft と、submit の答えの購読
+// 実装（NetApi）はさらに lastBoot()・readOnly・booting・soft・ghostsLeft()（このセッションで残っている /api/ghost の回数）と、submit の答えの購読
 // onResults(cb: (sent: readonly PendingRun[], results: readonly SubmitResult[]) => void): () => void を持つ（core が duck typing で使う）。
 ```
 
@@ -2182,6 +2221,9 @@ export interface AiGhostJson { kind: 'ai' | 'calm' | 'research_fast' | 'research
   peakF: number; minGapMm: number; maxThetaDeg: number; pumps: number; splitSub: number[]; x: string; th: string; f: string }
 export function trackFromAiGhost(g: AiGhostJson, L: number, level: LevelDef): GhostTrack;           // 復号し、ボール位置を Math.sin/cos で求める（表示専用なので可）。splitSub と finishSub（= parSub）は JSON の値をそのまま使う
 export function trackFromReplay(level: LevelDef, replay: string, kind: GhostKind, label: string): GhostTrack; // simulateReplay と recorder
+export function trackAndHashFromReplay(level: LevelDef, replay: string, kind: GhostKind, label: string): ReplayTrack;
+  // 同じ 1 回の simulateReplay の track と stateHash・result（ReplayResult）・header・nTicks・phases（5-4 の途中のゾーンを終えた時刻）
+// src/sim/replay.ts：rankedScore(qsLen, r) = 最後のティックで成功した走りの score（それ以外は null）。Worker の受理（§7.8 の 5）とリプレイのビューアが共有する
 export function reversed(t: GhostTrack): GhostTrack;                                                     // reverse_hint
 export function poseAt(t: GhostTrack, tSec: number, out: GhostPose): void;                              // 線形補間。終了後は最後の姿勢
 ```
@@ -2247,7 +2289,9 @@ export function poseAt(t: GhostTrack, tSec: number, out: GhostPose): void;      
 | `tests/sim/invariants.test.ts` | ① F=0 の受動系でエネルギー（`ballwall.dynamics.energy` と同じ式）が単調非増加（1e-9 の許容）。② 自由台車での Snap で x 方向の運動量が 1e-12 で保存され、エネルギーは増えない。③ Taut でレール端に当たると p_θ が 1e-12 で保存される。④ 張ったままの入力（`eom_py.json` の力の列）で、120 Hz と、テスト用の 240 Hz の 10 s 後の差が 1 mm 以内。⑤ 押し付けられた台車（目標をレールの外に置いたまま）で、静止を 2 s 保つ間に `Snap` イベントが 0 回、`SlackBegin` も 0 回（§4.4 の手順 2〜3 の順番の確認）。⑥ 4-2 の端ドン：台車 2 m/s・ボールが真下を世界に対して静止して通る状態で端に当てると、そのサブステップの後の振れ幅が 0.5° 未満 |
 | `tests/sim/collide.test.ts` | 線分とスラブの距離を、既知の配置 20 件で厳密値（`geometry.py` と同じ定義）と比べる。高速のすり抜けケース、角のまたぎ |
 | `tests/sim/fuzz.test.ts` | 5 面 × ランダムな q 列 400 本 × 10 s で、NaN がないこと、Slack 中 `\|ball−pivot\|² ≤ L² + 1e-9`、エネルギーの上限 |
-| `tests/sim/replay.test.ts` | 符号化と復号の往復、6 KB の上限（2700 ティックの最悪の入力が 6 KB 以内に収まることも確かめる）、不正な入力で例外 |
+| `tests/sim/replay.test.ts` | 符号化と復号の往復、6 KB の上限（2700 ティックの最悪の入力が 6 KB 以内に収まることも確かめる）、不正な入力で例外。`rankedScore`（成功・長さの違い・クラッシュ／タイムアップ、奇数と偶数の score） |
+| `tests/core/app_replay.test.ts` | ランキングのリプレイ（§7.5 の 6）：1 位は boot の `wr` から要求 0 で、再シミュレーションの score と stateHash が Node の `simulateReplay` と一致。奇数の score でも最後の場面が Success で止まり、時計はランクのタイムで止まる。戻るとランキング（見ていた行）へ、結果カードの走りはそのまま。2 位以下は 1 行 1 回の要求で、見直しは 0 回、答えの名前とタイムで出す。検証に落ちるもの（タイム違い、別の面、壊れたもの、補助つき）は bad。オフライン・lite・回数切れ・404。boot の 1 位が古いときは静かに要求へ。自分の行は手元の自己ベスト。勝負のゴースト（AI の後ろ、リトライで残り別の面で消える、「なし」にも入る、同じ種類と入れ替わる）。日替わりの D キー |
+| `tests/ui/replay.test.ts` | ランキングの「1位のリプレイを見る」と ▶ の列（開くだけでは読み込まない、AI の行と日替わりのトップ 10 には付けない）、行のタップ → `loadReplay` → `replay`、読み込み中の ▶（1 本ずつ、全体の答えで表が替わっても続く）と理由のトースト、戻ったときのスクロールとフォーカス。ビューアの凡例・数値・止まる時計・勝負 / 戻る・キー |
 | `tests/sim/golden.test.ts` | `bots.ts` の決定的なボット（dash-brake, pump, slam-stop, slack-snap, carry, random-seeded）で 6 面のリプレイ 20 本を作り、`stateHash`（最終状態とイベント列の FNV）が `golden_replays.json` と一致 |
 | `tests/sim/bench.test.ts` | 5400 サブステップの `simulateReplay` が温まった状態で 5 ms 以下（超えたら失敗） |
 | `tests/browser/golden.browser.test.ts` | 上の golden を chromium / firefox / **webkit** で実行し、Node と一致（必須） |
@@ -2255,7 +2299,7 @@ export function poseAt(t: GhostTrack, tSec: number, out: GhostPose): void;      
 | `tests/data/*.test.ts` | ghosts_valid（§8.3）、levels_schema（validateLevel、18 面、ID の一意性、スプリットの参照の妥当性、§5.3 のプレースホルダーがすべて解決できて ja と en でそろう）、daily_pool（84 件、tier ごとに 12 件、全件 validateLevel を通る）、ghostcodec（`ghostcodec_vectors.json` と一致）、`ghosts_summary.json` の hash と TS の levelHash が一致 |
 | `tests/input/servo.test.ts` | 既定プラントで 1 m ステップが 0.6 s 以内に初めて ±2 cm に入る、行き過ぎ ≤ 7 cm、q の範囲。キーボードのランプ（全速まで 10 ティック、停止まで 5 ティック。R10 の叩きの窓があるので、静止からの押しではランプが 117 ms 遅れる。このテストは台車が動いている状態から測る）と、止まったあと位置を保持すること（ボールが 20° 揺れていても 3 s で台車が ±5 cm 以内）。叩き（150 ms 以内の押しで保持点が ±5 cm、Shift 併用で ±1 cm、動いている台車では叩かない、ポーズ中の古い叩きを捨てる）と、こわれもの面の速度上限（サーボ 2.0 / 0.5、キーボードとゲームパッドの指令も同じ上限）。デッキの px → m がカメラに依存しない、微調整帯で 1/3。wide での `screenToRailX` の誤差 ≤ 5 mm（モックのカメラで）、揺れの演出中でも同じ値 |
 | `tests/core/*.test.ts` | スプリットの計算、メダルの閾値、解放規則、日替わりの選択（固定の日付ベクトル 10 件。DAILY_EPOCH より前の日付、年をまたぐ日付を含む）、`perm12` の固定値、5 球の消費規則、挑戦状リンクの往復（壊れたリンクで例外が出ず面選択へ行く）、ヒントの開くタイミング（1 秒未満の途中リトライを数えない）、自動の手本が 1 面 1 回、技トーストの判定、`bot_1-1_success.json` を session に流すと Success とメダル |
-| `tests/store/*.test.ts` / `tests/net/*.test.ts` | localStorage が例外を投げてもメモリで動き通知が 1 回。送信待ちの集約（ランキングごとに最良 1 件、20 件上限）。バックオフの列。`VITE_NET=off` と `file:` で無効 |
+| `tests/store/*.test.ts` / `tests/net/*.test.ts` | localStorage が例外を投げてもメモリで動き通知が 1 回。送信待ちの集約（ランキングごとに最良 1 件、20 件上限）。バックオフの列。`VITE_NET=off` と `file:` で無効。`/api/ghost` の 3 回をライバルとリプレイで共有、キャッシュ（読み直しても残る、別人・別タイムなら取り直す） |
 | `tests/ui/*.test.ts` | ja と en のキーの差分が 0。共有文のスナップショット。共有カードが 1200×630 |
 | `tests/worker/abuse.test.ts` | §7.11 の悪用対策：他人の上位 100 位のリプレイの使い回し → `dup`（丸ごとの複製、デバイスバイトだけ変えた複製、時間を変えない数ティックの改変、日替わりの複製、AI 超えだけを狙った複製）と、同着の別のランが通ること。レート制限が IPv4 アドレス／IPv6 の /64 単位であること（1 つの /64 の 7 通信で 429、別の /64 は無傷）、6000 個の新しいキーの洪水で絞られている客が解放されないこと。`Content-Type` が application/json でなければ 415、`Sec-Fetch-Site` が同一オリジン／none 以外なら 403（どちらも D1 文 0）。日替らしい `prev` の偽装（20 回の再送で 1 回だけ数える、`prev` > 5341 は 400、ai_beaten ≤ cleared ≤ n）。200 以外で終わった submit もカウンターを書き出すこと。書き込みのバッチが commit してから例外になった場合に `deferred` ではなく本当の結果を返すこと |
 | `tests/worker/*.test.ts` | 受理、書き換えたリプレイ（q を 1 つ反転）→ mismatch、申告タイムのずれ → mismatch、古いハッシュ → stale、2701 ティック → tooLong、100 位圏外 → unranked で書き込みは plays の 1 行だけ（同じビンの再送は 0）、100 位圏外でも初めての AI 超え → accepted で ai_beaten +1、面の notBetter が圏外の判定より先、soft で任意の書き込みが止まる、面のヒストグラムの毎時の再構築（`tests/worker/hist.test.ts`）、ver の競合 → 再試行、2 回続けて競合 → deferred で runs が書かれていない（tok の確認）、7 回目の submit → 429、boot の形と Cache-Control、lite の安全弁、日替わりのヒストグラム更新（prev があるとき古いビンが減る）、日替わりの成功なしの参加（replay null）で n だけ増える、日替わりの圏外で runs 行が作られない、101 位へ落ちた人の replay の NULL 化、`deferred`（CPU 予算超過）、45 s のリプレイ 1 件だけのリクエストは冷えたアイソレートでも検証される、5 件のリクエスト → 400、1 リクエストの D1 文が 50 未満（D1 のモックで数える）、cron の削除 |
@@ -2543,3 +2587,7 @@ M2 の本番のゴースト（二分探索つき）は 24 コアで 1〜2 時間
   叩きは静止からの 1 回の押しで、押しの長さによらずきっかり 50 mm（Shift で 11 mm）動く。4-3 はこれと R6 で 0% → 銅 22%（キーボード）になった。
   一方 2-2 / 2-4 のキーボードは 1% 未満のままで、そこの壁は「ピタッ」ではなく壁越えである（付録 B）。4-3 のヒント③「加速し続けて傾けたまま越える」は 2.0 m/s の上限で物理的に不可能になったので書き換えた（§5.3）。
 - **公開前の門番**：`npm run deploy` が `tools/check-epoch.mjs` で `DAILY_EPOCH` の繰り上げ忘れを止める（§7.5）。
+- **2026-09-24 ランキングのリプレイ**：ランキングから 1 位（と上位 100 件の各行）の走りを AIの手本の画面で見られるようにした（§7.5 の 6、§8.4 の 6、§9.4）。
+  Worker の受理の規則を `rankedScore` として共有し、クライアントは同じ `simulateReplay` で再シミュレーションして規則を満たすものだけを流す。1 位は boot の `wr` から要求 0。
+  2 位以下の `/api/ghost` はライバルの 3 回と共有し（§7.6、§7.10 の表は変わらない）、答えは sessionStorage にも残す。「このゴーストと勝負」で次の挑戦のゴーストにできる（§7.6）。
+  手本の時計はホールドの 0.5 秒の間ゴールのタイムで止まるようにした（以前は数え続けて成功の瞬間に戻っていた）。

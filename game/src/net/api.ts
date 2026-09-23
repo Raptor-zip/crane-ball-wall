@@ -33,9 +33,17 @@ export interface Api {
   boot(dayIndex: number): Promise<BootResponse | null>;       // null on failure (treated as offline)
   flush(reason: FlushReason, opts?: { first?: string }): Promise<SubmitResponse | null>;
   enqueue(r: PendingRun): void;
-  ghost(key: string, rank: number): Promise<GhostResponse | null>;
+  /**
+   * GET /api/ghost/:key/:rank (a top-100 replay): the rival ghost and the ranking's replay viewer share one budget of
+   * GHOST_MAX_PER_SESSION requests and one cache (kept in sessionStorage). `opts`: the row the caller saw at that rank; a
+   * cached answer for another player or time is fetched again. Null when not allowed, lite, over budget or not found.
+   */
+  ghost(key: string, rank: number, opts?: GhostOpts): Promise<GhostResponse | null>;
   board(key: string): Promise<BoardResponse | null>;
 }
+
+/** The row a ghost request is for (Api.ghost): an answer cached for another player / time at that rank is stale. */
+export interface GhostOpts { pidh?: string; t120?: number }
 
 /** Gets every submit answer after it was applied to the save: the runs of the request and the server's results. */
 export type ResultsListener = (sent: readonly PendingRun[], results: readonly SubmitResult[]) => void;
@@ -55,6 +63,8 @@ export interface NetApi extends Api {
   readonly soft: boolean;
   /** Subscribes to submit answers (every flush reason); returns the unsubscribe function. */
   onResults(cb: ResultsListener): () => void;
+  /** /api/ghost requests this session may still make (0: only cached answers; rival and replay viewer share them). */
+  ghostsLeft(): number;
 }
 
 export const BOOT_TIMEOUT_MS = 3000;
@@ -64,7 +74,12 @@ export const LATE_TIMER_MS = 250;
 export const BOOT_CACHE_MS = 10 * 60 * 1000;
 export const BOOT_CACHE_KEY = 'yurapita:boot';
 export const GHOST_COUNT_KEY = 'yurapita:ghosts';
+/** The session's ghost answers (each replay <= 8 KB of base64url), so a reload does not pay for them again. */
+export const GHOST_CACHE_KEY = 'yurapita:ghostCache';
+/** /api/ghost requests per session: the rival (§7.6) and the ranking's replay viewer together (§7.10). */
 export const GHOST_MAX_PER_SESSION = 3;
+/** Ghost answers kept (memory and sessionStorage): the budget plus a few from an earlier budget of the same tab. */
+export const GHOST_CACHE_MAX = 6;
 export const BOARD_CACHE_MS = 60_000;
 export const SEND_MIN_INTERVAL_MS = 120_000;
 /** Minimum gap between two rank-in sends; a throttled one is deferred to the end of the gap, not dropped. */
@@ -222,7 +237,6 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
   const sessionStart = now();        // lazy sending applies only to runs queued after this (§7.9)
   const inFlight = new Set<string>();
   const flights = new Set<Flight>();
-  const ghostCache = new Map<string, GhostResponse>();
   const boardCache = new Map<string, { at: number; res: BoardResponse }>();
   /** Boards whose next board() skips every cache (an accepted run of mine just changed them). */
   const noStore = new Set<string>();
@@ -244,6 +258,25 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
   };
 
   let ghostCount = Number(sessionGet(GHOST_COUNT_KEY)) || 0;
+  const ghostCache = new Map<string, GhostResponse>(readGhostCache());
+
+  /** The ghost answers of this tab's session (sessionStorage), validated like a fresh answer. */
+  function readGhostCache(): [string, GhostResponse][] {
+    try {
+      const raw = JSON.parse(sessionGet(GHOST_CACHE_KEY) ?? '[]') as unknown;
+      if (!Array.isArray(raw)) return [];
+      return raw.filter((e): e is [string, GhostResponse] => Array.isArray(e) && typeof e[0] === 'string' && isGhostResponse(e[1])).slice(-GHOST_CACHE_MAX);
+    } catch {
+      return [];
+    }
+  }
+
+  function cacheGhost(ck: string, g: GhostResponse): void {
+    ghostCache.delete(ck);
+    ghostCache.set(ck, g);
+    while (ghostCache.size > GHOST_CACHE_MAX) ghostCache.delete(ghostCache.keys().next().value!);
+    sessionSet(GHOST_CACHE_KEY, JSON.stringify([...ghostCache]));
+  }
 
   const online = (): boolean => allowed && bootedOk && failures === 0;
   const retryDue = (): boolean => failures === 0 || now() >= retryAt;
@@ -740,11 +773,12 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
 
   // ---- reads ----
 
-  function ghost(key: string, rank: number): Promise<GhostResponse | null> {
+  function ghost(key: string, rank: number, opts: GhostOpts = {}): Promise<GhostResponse | null> {
     if (!allowed || isLite() || !KEY_RE.test(key) || !Number.isInteger(rank) || rank < 1 || rank > 100) return Promise.resolve(null);
     const ck = `${key}/${rank}`;
     const hit = ghostCache.get(ck);
-    if (hit) return Promise.resolve(hit);
+    // A cached answer is for the row the caller saw, unless the board moved since (another player or time at this rank).
+    if (hit && (opts.pidh === undefined || hit.pidh === opts.pidh) && (opts.t120 === undefined || hit.t120 === opts.t120)) return Promise.resolve(hit);
     if (ghostCount >= GHOST_MAX_PER_SESSION) return Promise.resolve(null);
     const go = (): Promise<GhostResponse | null> => {
       if (ghostCount >= GHOST_MAX_PER_SESSION) return Promise.resolve(null);
@@ -753,7 +787,7 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
       return request(`/api/ghost/${key}/${rank}`, { method: 'GET' }, reqTimeout).then((o) => {
         if (o.kind === 'ok' && isGhostResponse(o.json)) {
           succeed();
-          ghostCache.set(ck, o.json);
+          cacheGhost(ck, o.json);
           return o.json;
         }
         if (o.kind !== 'client') fail();
@@ -812,6 +846,7 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
       };
     },
     lastBoot: () => (bootedOk ? booted?.res ?? null : null),
+    ghostsLeft: () => (allowed ? Math.max(0, GHOST_MAX_PER_SESSION - ghostCount) : 0),
     boot,
     flush,
     enqueue,

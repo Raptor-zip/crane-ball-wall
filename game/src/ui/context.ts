@@ -5,7 +5,7 @@
 // rankings, the daily and the graphs. Every member is optional and read lazily (never cached across screens).
 import type { LevelDef } from '../sim/level';
 import type { SaveV1, Store } from '../store/save';
-import type { BoardResponse, BootResponse } from '../shared/api';
+import type { BoardResponse, BoardRow, BootResponse } from '../shared/api';
 import type { DailyView, GhostSummary, ResultsData, Screen, UiAction } from './ui';
 
 /** One entry of ghosts_summary.json "levels" (§8.2). Values can change when the ghost pipeline reruns. */
@@ -34,6 +34,28 @@ export interface CompareTracks { hz: number; me: Channels | null; ai: Channels |
 /** Data for the AI demo overlay (§7.5 item 5, §8.4 item 6). Force samples at `hz`. */
 export interface DemoInfo { hz: number; aiF: Float32Array; meF: Float32Array | null; aiGapMm: number | null; aiPeakF: number; Fmax: number }
 
+/**
+ * A ranked replay in the demo viewer (§7.5 item 6, §8.4 item 6): core re-simulated it with the Worker's simulateReplay
+ * and checked the Worker's acceptance rule. `f` is that player's force (60 Hz), `aiF` the AI par ghost's (the AI row of
+ * the ranking), `meF` your best on this board (null when none, or when the replay is yours). gapMm / peakF come from
+ * the re-simulation (gapMm null on levels without walls).
+ */
+export interface ReplayView {
+  id: string; rank: number; name: string; t120: number; kind: 'wr' | 'rival'; mine: boolean;
+  hz: number; f: Float32Array; aiF: Float32Array | null; meF: Float32Array | null; Fmax: number;
+  gapMm: number | null; peakF: number;
+}
+/** A ranking row to watch (UiContext.loadReplay): the board key, the rank and the row as the table showed it. */
+export interface ReplayReq { key: string; rank: number; pidh: string; nameSeed: number; t120: number }
+/**
+ * loadReplay's answer: the id to emit with 'replay', or why not. offline: no connection (or the server's low-quota
+ * mode); budget: this session's replay requests are used up (no request was made); missing: the server has no replay at
+ * that rank any more; bad: it did not re-simulate to the ranked time; stale: the board is not the loaded level's.
+ */
+export type ReplayLoad = { ok: true; id: string } | { ok: false; reason: 'offline' | 'budget' | 'missing' | 'bad' | 'stale' };
+/** replayAvail: 'ready' plays without a request (#1 from boot, your own best, watched before); 'fetch' costs one. */
+export type ReplayAvail = 'ready' | 'fetch' | null;
+
 export interface UiContext {
   /** Save data: settings, per-level progress, seen flags, generated name. The UI writes only `settings` and `seen.{notes,aiLostCard}`. */
   store?: Store | null;
@@ -59,6 +81,13 @@ export interface UiContext {
   aiPath?: (levelId: string) => Float32Array | null;
   /** Pause-menu flags. Missing fields are derived from the store and the events the UI saw. */
   pause?: () => Partial<PauseInfo>;
+  /**
+   * Can this ranking row be watched in the replay viewer (§7.5 item 6)? Synchronous and without a request: the ranking
+   * calls it for every row it draws. null: not watchable here (no ▶).
+   */
+  replayAvail?: (key: string, rank: number, row: BoardRow) => ReplayAvail;
+  /** Gets the row's replay (at most one /api/ghost request, cached for the session) and verifies it. No state change. */
+  loadReplay?: (req: ReplayReq) => Promise<ReplayLoad>;
   /** Share origin override (default: VITE_PUBLIC_ORIGIN, else location.origin on http(s), else none). */
   origin?: string | null;
 }

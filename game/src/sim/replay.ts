@@ -191,6 +191,17 @@ export function hashEvents(ev: SimEvents, h0: number): number {
 }
 
 /**
+ * The ranked time of a re-simulated replay, or null when the run would not be ranked (§4.6, §7.8 step 5): it must
+ * succeed on its last tick, i.e. the replay has exactly nTicks = ceil((score + 59) / 2) ticks. The Worker accepts a
+ * claimed time only when it equals this (worker/verify.ts simulateRun), and the client's replay viewer plays a ranked
+ * replay only when it equals the row's time: one rule on both sides.
+ */
+export function rankedScore(qsLen: number, r: Pick<ReplayResult, 'status' | 'score'>): number | null {
+  if (r.status !== Status.Success || r.score === null) return null;
+  return qsLen === Math.ceil((r.score + 59) / 2) ? r.score : null;
+}
+
+/**
  * Re-simulates a q sequence from the level start. Stops at the tick that ends the run
  * (Success / Crash / Timeout); `ticks` is the number of ticks simulated. `status` is Running when the
  * sequence ended before the run did (Ready for an empty sequence). stateHash = FNV-1a over every tick's

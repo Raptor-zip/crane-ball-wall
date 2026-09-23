@@ -47,6 +47,7 @@
   --ball-lip: #a3221d;
   --ai-lip: #0f8ab8;
   --wr-lip: #bc3987;      /* --wr as text on the card: 4.9:1 (--wr itself is 3.0:1) */
+  --rival-lip: #b04f0a;   /* --rival as text / a line on the card (the renderer's rival tag ink): 5.0:1 */
   --goal-lip: #16824f;
   --scrim: rgba(243, 238, 228, 0.8);
   --shadow-card: 0 2px 0 var(--ink), 0 22px 44px -22px rgba(30, 42, 68, 0.55);

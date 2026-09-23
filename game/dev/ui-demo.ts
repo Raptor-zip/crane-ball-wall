@@ -1,6 +1,10 @@
 // dev/ui-demo.html: renders every UI screen with mock data (O7). ?screen=<id>&lang=ja|en&level=2-2&world=2&still=1
 // World rank (§9.4): results &rank=<RANK_KINDS> (the rank row / stamp; &arrive=<ms> lets the answer come that late);
 // board &board=pin|pin-unsent|pin-pending|instant|partial|daily|daily-pin (pinned row, boot-only render, fetch failure).
+// Replays (§7.5 item 6): board &board=replay|replay-lite|replay-busy|replay-limit|replay-daily|replay-back (the #1 button
+// and the ▶ column; lite: only #1; busy: row 3 loading; limit: the budget toast; back: returned from the viewer, row 12
+// focused); screen=replay the viewer mid-run (&rank=1|37, &mine=1: my own run, &done=1: held on the last frame).
+// Clicking a ▶ opens the viewer and 戻る returns to the ranking, as in the game.
 // Extra: &toasts=<n> shows n trick / badge toasts right before the screen opens (results: they must avoid the card).
 // Results screens: &beat=<ms> opens the card that long after the 'success' event (core: SUCCESS_BEAT 750 ms), as in the
 // game (the crown / PB banner starts during the beat); &defer=1 waits for __UI_DEMO__.start() (tests time the beat).
@@ -15,8 +19,8 @@ import { TALL_FRAME_K } from '../src/ui/layout';
 import { tallWindowFor } from '../src/render/camera';
 import { drawShareCard } from '../src/ui/sharecard';
 import { factsOf } from '../src/ui/i18n/format';
-import { RANK_KINDS, ghostTrack, level, mockBoot, mockContext, mockDaily, mockResults, mockSave, mockStanding, pairs, pinSave } from './ui-demo-data';
-import type { BoardMock, RankKind, Track } from './ui-demo-data';
+import { RANK_KINDS, ghostTrack, level, mockBoot, mockContext, mockDaily, mockReplayView, mockResults, mockSave, mockStanding, pairs, pinSave } from './ui-demo-data';
+import type { BoardMock, RankKind, ReplayMock, Track } from './ui-demo-data';
 
 const q = new URLSearchParams(location.search);
 const screenId = q.get('screen') ?? 'title';
@@ -43,7 +47,10 @@ if (boardQ === 'pin' || boardQ === 'partial' || boardQ === 'instant') pinSave(sa
 if (boardQ === 'pin-unsent') pinSave(save, levelId, 'unsent');
 if (boardQ === 'pin-pending') pinSave(save, levelId, 'pending');
 if (boardQ === 'daily-pin') save.daily = { ...save.daily, bestSub: 396, lastSentT120: 396 };
-const ctx = mockContext(save, { offline, board: boardMock });
+const replayMock: ReplayMock | null = boardQ.startsWith('replay') || screenId === 'replay'
+  ? boardQ === 'replay-lite' ? 'lite' : boardQ === 'replay-busy' ? 'hang' : boardQ === 'replay-limit' ? 'limit' : 'on'
+  : null;
+const ctx = mockContext(save, { offline, board: boardMock, replay: replayMock });
 const ui: UI = createUI(ctx);
 const root = document.getElementById('app')!;
 let layout: Layout = ui.mount(root);
@@ -108,6 +115,32 @@ function paintScene(p: { x: number; bx: number; by: number }, ghost: { x: number
 
 let frame = 0;
 let hudState: HudState | null = null;
+let replayLoop = 0;
+
+/** The replay viewer over the mock scene (the AI track stands in for the player's run; the AI ghost beside it). */
+function showReplay(key: string, rank: number): void {
+  const rv = mockReplayView(key, rank, lang);
+  if (q.get('mine') === '1') rv.mine = true;
+  const run = track;
+  const len = run?.x.length ?? n;
+  const end = q.get('done') === '1' ? rv.t120 : Math.round(rv.t120 * 0.55);
+  const at = Math.min(len - 1, Math.round(end / 2));
+  const id = ++replayLoop;
+  const paint = (i: number): void => {
+    if (id !== replayLoop) return;
+    const k = Math.min(Math.floor(i / 2), Math.ceil((rv.t120 + 60) / 2));
+    const p = sample(run, k);
+    const g = sample(run, Math.max(0, k - 9));   // the AI ghost beside the player (a mock: the same run, a little behind)
+    paintScene(p, g);
+    const hs = baseHud();
+    hs.mode = 'demo';
+    hs.running = true;
+    hs.timeSub = Math.min(k * 2, rv.t120);
+    ui.hud(hs);
+  };
+  loop(paint, len * 2 + 120, at * 2);
+  ui.show({ id: 'demo', level: lv, replay: rv });
+}
 
 function baseHud(): HudState {
   return {
@@ -324,8 +357,16 @@ function start(): void {
       ui.show({ id: 'demo', level: lv });
       break;
     }
-    case 'board':
-      ui.show({ id: 'board', key: boardQ.startsWith('daily') ? mockBoot().daily.key : `L:${levelId}:00000000:s1` });
+    case 'board': {
+      const key = boardQ.startsWith('daily') || boardQ === 'replay-daily' ? mockBoot().daily.key : `L:${levelId}:00000000:s1`;
+      ui.show(boardQ === 'replay-back' ? { id: 'board', key, focusRank: 12 } : { id: 'board', key });
+      // replay-busy: row 3's replay is loading (the load never answers here)
+      if (boardQ === 'replay-busy') setTimeout(() => document.querySelector<HTMLElement>('tr[data-rank="3"] .b-play-btn')?.click(), 60);
+      if (boardQ === 'replay-limit') setTimeout(() => document.querySelector<HTMLElement>('tr[data-rank="3"] .b-play-btn')?.click(), 60);
+      break;
+    }
+    case 'replay':
+      showReplay(`L:${levelId}:00000000:s1`, Math.max(1, Math.min(100, Number(q.get('rank') ?? 1) || 1)));
       break;
     case 'daily':
       ui.show({ id: 'daily', data: mockDaily() });
@@ -353,7 +394,7 @@ if (toastCount && !screenId.startsWith('results')) {
 }
 
 // Log actions (useful when clicking around).
-for (const a of ['retry', 'next', 'demo', 'board', 'share', 'resume', 'practice', 'select', 'openLevel', 'openDaily', 'settingsChanged', 'skip', 'rerollName', 'assistAccept', 'ghostCycle', 'aiLine', 'notes', 'mute', 'reverseHint', 'pause', 'rewind'] as const) {
+for (const a of ['retry', 'next', 'demo', 'board', 'share', 'resume', 'practice', 'select', 'openLevel', 'openDaily', 'settingsChanged', 'skip', 'rerollName', 'assistAccept', 'ghostCycle', 'aiLine', 'notes', 'mute', 'reverseHint', 'pause', 'rewind', 'replay', 'raceGhost'] as const) {
   ui.on(a, (p) => {
     console.info('[ui-demo] action', a, p ?? '');
     const el = document.getElementById('demo-log');
@@ -368,6 +409,19 @@ for (const a of ['retry', 'next', 'demo', 'board', 'share', 'resume', 'practice'
     if (a === 'aiLine') save.settings.aiLine = !(save.settings.aiLine ?? lv.world <= 2);
     if (a === 'mute') save.settings.muted = !save.settings.muted;
     if (a === 'board') ui.show({ id: 'board', key: `L:${levelId}:00000000:s1` });
+    // The replay viewer round trip, as in core: 'replay' opens it, 戻る / any key comes back to the ranking at the row.
+    if (a === 'replay') {
+      const [key, pidh] = String((p as { id?: string } | undefined)?.id ?? '').split('|');
+      const top = key ? Array.from({ length: 100 }, (_, i) => i + 1) : [];
+      const rank = top.find((r) => mockReplayView(key!, r, lang).id.split('|')[1] === pidh) ?? 1;
+      if (key) showReplay(key, rank);
+    }
+    if (a === 'retry' && (p as { from?: string } | undefined)?.from === 'replay') {
+      replayLoop++;
+      const cur = document.querySelector('.demo-title--replay .demo-title-text')?.textContent ?? '';
+      const rank = Number(/\d+/.exec(cur)?.[0] ?? 1);
+      ui.show({ id: 'board', key: `L:${levelId}:00000000:s1`, focusRank: rank });
+    }
     if (a === 'notes') ui.show({ id: 'notes', world: (p as { world?: number } | undefined)?.world ?? 1 });
     if (a === 'openDaily') ui.show({ id: 'daily', data: mockDaily() });
   });

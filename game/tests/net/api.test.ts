@@ -1,7 +1,7 @@
 // API client: enablement, boot cache, silent offline + backoff, outbox discipline (GAME_DESIGN.md §7.7, §7.9, §7.12). Owner: O8.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  BACKOFF_MINUTES, BOOT_CACHE_KEY, BOOT_TIMEOUT_MS, GHOST_MAX_PER_SESSION, RANKIN_MIN_INTERVAL_MS, SEND_MIN_INTERVAL_MS, backoffDelayMs,
+  BACKOFF_MINUTES, BOOT_CACHE_KEY, BOOT_TIMEOUT_MS, GHOST_CACHE_KEY, GHOST_MAX_PER_SESSION, RANKIN_MIN_INTERVAL_MS, SEND_MIN_INTERVAL_MS, backoffDelayMs,
   boardHistOf, createApi, levelClass, levelHistOf, netAllowed, type ApiOptions, type NetApi,
 } from '../../src/net/api';
 import { dailyPendingRun, levelPendingRun, nTicksForScore, type PendingRun } from '../../src/net/outbox';
@@ -916,6 +916,59 @@ describe('ghost and board reads', () => {
     await api2.boot(23);
     expect(await api2.ghost(L('2-2'), 10)).toBeNull();
     expect(server.calls.filter((c) => c.url.startsWith('/api/ghost/'))).toHaveLength(GHOST_MAX_PER_SESSION);
+  });
+
+  it('the replay viewer shares the budget and the cache: a cached row is free; another player or time at that rank is fetched again', async () => {
+    const api = mkApi();
+    await api.boot(23);
+    expect(api.ghostsLeft()).toBe(GHOST_MAX_PER_SESSION);
+    const g = await api.ghost(L('2-2'), 37);                      // the rival fetch
+    expect(api.ghostsLeft()).toBe(GHOST_MAX_PER_SESSION - 1);
+    const ghosts = (): number => server.calls.filter((c) => c.url.startsWith('/api/ghost/')).length;
+    // the viewer asks for the same row: the cached answer, no request
+    expect(await api.ghost(L('2-2'), 37, { pidh: g!.pidh, t120: g!.t120 })).toEqual(g);
+    expect(ghosts()).toBe(1);
+    // the table shows someone else (or another time) at #37 now: the cached answer is stale
+    await api.ghost(L('2-2'), 37, { pidh: 'ffffffffffffffff' });
+    expect(ghosts()).toBe(2);
+    await api.ghost(L('2-2'), 37, { t120: g!.t120 + 1 });
+    expect(ghosts()).toBe(3);
+    expect(api.ghostsLeft()).toBe(0);
+    // spent: no request, only answers at hand
+    expect(await api.ghost(L('2-2'), 12)).toBeNull();
+    expect(ghosts()).toBe(3);
+    expect(await api.ghost(L('2-2'), 37)).not.toBeNull();
+  });
+
+  it('the answers of the session survive a reload (sessionStorage), like the count', async () => {
+    const api = mkApi();
+    await api.boot(23);
+    const g = await api.ghost(L('2-2'), 5);
+    expect(g).not.toBeNull();
+    const api2 = mkApi();
+    await api2.boot(23);
+    expect(await api2.ghost(L('2-2'), 5, { pidh: g!.pidh, t120: g!.t120 })).toEqual(g);
+    expect(server.calls.filter((c) => c.url.startsWith('/api/ghost/'))).toHaveLength(1);
+    expect(api2.ghostsLeft()).toBe(GHOST_MAX_PER_SESSION - 1);
+    // a damaged copy is ignored
+    session.setItem(GHOST_CACHE_KEY, '{"x":1}');
+    const api3 = mkApi();
+    await api3.boot(23);
+    await api3.ghost(L('2-2'), 5);
+    expect(server.calls.filter((c) => c.url.startsWith('/api/ghost/'))).toHaveLength(2);
+  });
+
+  it('lite, file: and VITE_NET=off: null without a request, nothing left', async () => {
+    const off = mkApi({ net: 'off' });
+    expect(off.ghostsLeft()).toBe(0);
+    expect(await off.ghost(L('2-2'), 1)).toBeNull();
+    const file = mkApi({ protocol: 'file:' });
+    expect(await file.ghost(L('2-2'), 1)).toBeNull();
+    server.handler = (c) => (c.url.startsWith('/api/boot') ? { status: 200, body: { ...bootRes(), lite: true } } : undefined);
+    const lite = mkApi();
+    await lite.boot(23);
+    expect(await lite.ghost(L('2-2'), 1)).toBeNull();
+    expect(server.calls.filter((c) => c.url.startsWith('/api/ghost/'))).toHaveLength(0);
   });
 
   it('refuses malformed keys and ranks without a request', async () => {

@@ -7,8 +7,9 @@ import { HIST_BINS, histBin } from '../src/shared/api';
 import type { Standing } from '../src/shared/rank';
 import { LEVEL_HIST_BINS, levelBin, levelPct, trimHist } from '../src/shared/rank';
 import type { DailyView, GhostSummary, ResultsData } from '../src/ui/ui';
-import type { CompareTracks, DemoInfo, UiContext } from '../src/ui/context';
+import type { CompareTracks, DemoInfo, ReplayAvail, ReplayLoad, ReplayView, UiContext } from '../src/ui/context';
 import { BUNDLED_LEVELS, BUNDLED_SUMMARY } from '../src/ui/ui';
+import { displayName } from '../src/shared/names';
 
 // ---------------------------------------------------------------- ghost decoding (same codec as §8.2, display only)
 
@@ -282,8 +283,60 @@ export function mockStanding(kind: RankKind, data: ResultsData): Standing {
   }
 }
 
-export function mockContext(save: SaveV1 | null, opts: { offline?: boolean; board?: BoardMock } = {}): UiContext {
+/**
+ * The ranking's replays (§7.5 item 6) in the demo: on = every row can be watched (#1 and my row at once, the others with
+ * a request that answers after 400 ms); lite = only #1 (offline / low-quota mode); hang = a load never answers (the ▶
+ * spins); limit = a request is refused (this session's replay budget is spent).
+ */
+export type ReplayMock = 'on' | 'lite' | 'hang' | 'limit';
+
+const ME_PIDH = 'a1b2c3d4e5f60718';
+
+/** The mock ranking's row at `rank` (the same rows as mockBoard / mockBoot). */
+export function mockRow(key: string, rank: number): BoardRow {
+  const b = mockBoard(key, 'me');
+  return b.top[rank - 1] ?? b.top[0]!;
+}
+
+/** A warped copy of a force channel (another player's run: a little slower, rougher). */
+function warpF(a: Float32Array, k: number, amp: number, phase = 0): Float32Array {
+  const n = Math.round(a.length * k);
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) out[i] = a[Math.min(a.length - 1, Math.floor(i / k))]! * (1 + amp * Math.sin(i / 13 + phase));
+  return out;
+}
+
+/** The replay viewer's data for a row of the mock ranking (the scene plays the AI track in its place). */
+export function mockReplayView(key: string, rank: number, lang: 'ja' | 'en'): ReplayView {
+  const id = key.split(':')[1] ?? '2-2';
+  const lv = level(key.startsWith('D:') ? '2-2' : id);
+  const row = mockRow(key, rank);
+  const ai = ghostTrack(lv.id, 'ai');
+  const f = ai ? warpF(ai.f, Math.max(1, row[2] / (ai.meta.parSub || row[2])), 0.18, rank) : new Float32Array(120);
+  const mine = row[0] === ME_PIDH;
   return {
+    id: `${key}|${row[0]}|${row[2]}`, rank, name: displayName(row[1], row[0], lang), t120: row[2], kind: rank === 1 ? 'wr' : 'rival', mine,
+    hz: 60, f, aiF: ai?.f ?? null, meF: !mine && ai ? warpF(ai.f, 1.22, 0.25, 2) : null, Fmax: lv.physics.Fmax,
+    gapMm: lv.physics.walls.length ? 3 + (rank % 7) * 2.3 : null, peakF: Math.min(lv.physics.Fmax, 31.4 + (rank % 5)),
+  };
+}
+
+function replayMocks(mode: ReplayMock): Pick<UiContext, 'replayAvail' | 'loadReplay'> {
+  return {
+    replayAvail: (_key, rank, row): ReplayAvail => (rank === 1 || (mode !== 'lite' && row[0] === ME_PIDH) ? 'ready' : mode === 'lite' ? null : 'fetch'),
+    loadReplay: (req): Promise<ReplayLoad> => {
+      const ok: ReplayLoad = { ok: true, id: `${req.key}|${req.pidh}|${req.t120}` };
+      if (req.rank === 1 || req.pidh === ME_PIDH) return Promise.resolve(ok);
+      if (mode === 'hang') return new Promise(() => undefined);
+      if (mode === 'limit') return Promise.resolve({ ok: false, reason: 'budget' });
+      return new Promise((res) => setTimeout(() => res(ok), 400));
+    },
+  };
+}
+
+export function mockContext(save: SaveV1 | null, opts: { offline?: boolean; board?: BoardMock; replay?: ReplayMock | null } = {}): UiContext {
+  return {
+    ...(opts.replay ? replayMocks(opts.replay) : {}),
     store: save ? mockStore(save) : null,
     boot: () => (opts.offline ? null : mockBoot()),
     fetchBoard: (key) => opts.board === 'hang' ? new Promise(() => undefined)

@@ -5,8 +5,12 @@ import { describe, expect, it } from 'vitest';
 import type { LevelDef, LevelsFile } from '../../src/sim/level';
 import { RAIL_Y } from '../../src/sim/constants';
 import {
-  ballPath, forceAt, newGhostPose, poseAt, reversed, strobe, trackDuration, trackFromAiGhost, type GhostFileJson,
+  ballPath, forceAt, newGhostPose, poseAt, reversed, strobe, trackAndHashFromReplay, trackDuration, trackFromAiGhost, type GhostFileJson,
 } from '../../src/core/ghosts';
+import { decodeReplay, rankedScore, simulateReplay } from '../../src/sim/replay';
+import { b64urlDecode } from '../../src/sim/b64';
+import { createRun, Mode, Status, stepTick } from '../../src/sim/run';
+import { SimEvents } from '../../src/sim/events';
 
 const levels = (JSON.parse(readFileSync(new URL('../../src/data/levels.json', import.meta.url), 'utf8')) as LevelsFile).levels;
 const byId = (id: string): LevelDef => levels.find((l) => l.id === id)!;
@@ -116,5 +120,65 @@ describe('reversed (2-3 reverse hint = 2-2 AI in reverse)', () => {
     // reversing twice is the trimmed track itself
     const rr = reversed(r);
     expect(rr.x[0]).toBeCloseTo(src.x[0]!, 6);
+  });
+});
+
+describe('trackAndHashFromReplay (the replay viewer, §7.5 item 6)', () => {
+  const bot = JSON.parse(readFileSync(new URL('../fixtures/bot_1-1_success.json', import.meta.url), 'utf8')) as { replay: string; score: number; stateHash: number; nTicks: number };
+  const level = byId('1-1');
+
+  it('is one simulateReplay: the same result and stateHash as without a recorder (the recorder only reads the state)', () => {
+    const built = trackAndHashFromReplay(level, bot.replay, 'wr', 'X');
+    const { qs } = decodeReplay(b64urlDecode(bot.replay));
+    const plain = simulateReplay(level.physics, qs);
+    expect(built.result).toEqual(plain);
+    expect(built.stateHash).toBe(plain.stateHash);
+    expect(built.stateHash).toBe(bot.stateHash);
+    expect(built.nTicks).toBe(bot.nTicks);
+    expect(rankedScore(built.nTicks, built.result)).toBe(bot.score);
+    expect(built.track.finishSub).toBe(bot.score);
+    expect(built.track.n).toBe(bot.nTicks + 1);
+    expect(built.header.levelHash).toBe('13e2284e');
+    expect(built.phases).toEqual([]);
+  });
+
+  it('every sample is the simulator state after that tick (poseAt at k/60 s, float32)', () => {
+    const built = trackAndHashFromReplay(level, bot.replay, 'wr', 'X');
+    const { qs } = decodeReplay(b64urlDecode(bot.replay));
+    const run = createRun(level.physics);
+    const ev = new SimEvents();
+    const pose = newGhostPose();
+    const tr = built.track;
+    for (let k = 1; k <= qs.length; k++) {
+      stepTick(run, qs[k - 1]!, ev);
+      // the samples are the sim's own doubles stored as float32
+      expect(tr.x[k]).toBe(Math.fround(run.s.x));
+      expect(tr.bx[k]).toBe(Math.fround(run.s.bx));
+      expect(tr.by[k]).toBe(Math.fround(run.s.by));
+      expect(tr.slack[k]).toBe(run.s.mode === Mode.Slack ? 1 : 0);
+      expect(tr.f[k - 1]).toBe(Math.fround(run.s.F));
+      // what the viewer draws at t = k/60 s (poseAt interpolates between ticks only)
+      poseAt(tr, k / 60, pose);
+      expect(pose.x).toBeCloseTo(run.s.x, 6);
+      expect(pose.bx).toBeCloseTo(run.s.bx, 6);
+      expect(pose.by).toBeCloseTo(run.s.by, 6);
+      expect(forceAt(tr, (k - 1 + 0.5) / 60)).toBe(Math.fround(run.s.F));
+    }
+    expect(run.s.status).toBe(Status.Success);
+  });
+
+  it('records when a phase completes (5-4 has two goal zones): the viewer moves the goal on then', () => {
+    const golden = JSON.parse(readFileSync(new URL('../fixtures/golden_replays.json', import.meta.url), 'utf8')) as {
+      levels: Record<string, LevelDef['physics']>; replays: { id: string; replay: string }[];
+    };
+    const l54: LevelDef = { ...byId('5-4'), physics: golden.levels['5-4']! };
+    const r = golden.replays.find((x) => x.id === '5-4/full-course')!;
+    const built = trackAndHashFromReplay(l54, r.replay, 'rival', 'X');
+    expect(built.result.status).toBe(Status.Success);
+    expect(built.phases).toHaveLength(1);
+    expect(built.phases[0]!.index).toBe(0);
+    // the first zone is done well before the finish (the hold of the second zone starts at score)
+    expect(built.phases[0]!.t).toBeGreaterThan(0);
+    expect(built.phases[0]!.t).toBeLessThan(built.result.score! / 120);
   });
 });
