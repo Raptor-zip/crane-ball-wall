@@ -1,14 +1,15 @@
 // API client: enablement, boot cache, silent offline + backoff, outbox discipline (GAME_DESIGN.md §7.7, §7.9, §7.12). Owner: O8.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  BACKOFF_MINUTES, BOOT_CACHE_KEY, BOOT_TIMEOUT_MS, GHOST_MAX_PER_SESSION, SEND_MIN_INTERVAL_MS, backoffDelayMs,
-  createApi, netAllowed, type ApiOptions, type NetApi,
+  BACKOFF_MINUTES, BOOT_CACHE_KEY, BOOT_TIMEOUT_MS, GHOST_MAX_PER_SESSION, RANKIN_MIN_INTERVAL_MS, SEND_MIN_INTERVAL_MS, backoffDelayMs,
+  boardHistOf, createApi, levelClass, levelHistOf, netAllowed, type ApiOptions, type NetApi,
 } from '../../src/net/api';
 import { dailyPendingRun, levelPendingRun, nTicksForScore, type PendingRun } from '../../src/net/outbox';
-import { SAVE_KEY, createStore, ensureLevel, type LocalStore, type SaveV1 } from '../../src/store/save';
+import { SAVE_KEY, createStore, defaultSave, ensureLevel, type LocalStore, type SaveV1 } from '../../src/store/save';
 import { MemStorage } from '../store/helpers';
-import { D, FakeServer, L, bootRes } from './fakeServer';
+import { D, FakeServer, L, bootRes, type Call } from './fakeServer';
 import type { BootResponse } from '../../src/shared/api';
+import { LEVEL_HIST_BINS, estimateLevelRank, levelBin, stampKind, trimHist } from '../../src/shared/rank';
 
 const MIN = 60_000;
 let t = 1_790_000_000_000;
@@ -383,12 +384,12 @@ describe('flush: timing and request shape (§7.9)', () => {
     expect(await api.flush('menu')).toBeNull();   // nothing left: no request
   });
 
-  it('at most one send per 120 s for menu / select / pagehide without a daily', async () => {
+  it('at most one send per 120 s for menu / select / pagehide without a daily or a rank-in run', async () => {
     const api = mkApi();
     await api.boot(23);
     api.enqueue(pb(300));
     await api.flush('menu');
-    api.enqueue(pb(1, '1-1', L('1-1', '11111111')));
+    api.enqueue(pb(999, '5-9', L('5-9')));                 // unknown to boot: neither rank-in nor lazy
     t += SEND_MIN_INTERVAL_MS - 1;
     expect(await api.flush('select')).toBeNull();
     expect(await api.flush('pagehide')).toBeNull();
@@ -576,14 +577,16 @@ describe('server answers', () => {
 });
 
 describe('enqueue filters (§7.9)', () => {
-  it('level PB: only when faster than the boot cutoff, or while the board has < 100 rows', async () => {
+  it('level runs: not queued when the server would write nothing for them (levelClass null)', async () => {
     const api = mkApi();
     await api.boot(23);                                   // 2-2: cutoff 402, par 318
-    store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc').playSent = true; });   // first clear already counted
-    api.enqueue(pb(402));                                 // not faster than the 100th, not below par
-    api.enqueue(pb(450));
+    store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc').sentSub = 455; });   // counted with 455 (bin 75)
+    api.enqueue(pb(452));                                 // not faster than the 100th, the same bin as 455
+    api.enqueue(pb(460));                                 // slower than the counted time
     expect(store.data().outbox).toEqual([]);
-    api.enqueue(pb(401));
+    api.enqueue(pb(449));                                 // bin 74: my histogram position moves (lazy)
+    expect(store.data().outbox.map((r) => r.t120)).toEqual([449]);
+    api.enqueue(pb(401));                                 // faster than the 100th (rank-in)
     expect(store.data().outbox.map((r) => r.t120)).toEqual([401]);
     api.enqueue(pb(999, '1-1', L('1-1', '11111111')));     // 1-1: cutoff null (fewer than 100)
     expect(store.data().outbox).toHaveLength(2);
@@ -610,15 +613,15 @@ describe('enqueue filters (§7.9)', () => {
     server.boot = boot;
     const api = mkApi();
     await api.boot(23);
-    store.update((d) => { const p = ensureLevel(d, '2-2', '9f3a12bc'); p.bestSub = 300; p.playSent = true; });
-    api.enqueue(pb(330));                                 // above par: dropped
+    store.update((d) => { const p = ensureLevel(d, '2-2', '9f3a12bc'); p.bestSub = 305; p.sentSub = 305; });
+    api.enqueue(pb(330));                                 // above par, slower than the counted time: dropped
     expect(store.data().outbox).toEqual([]);
-    api.enqueue(pb(300));                                 // below par, first time: queued
+    api.enqueue(pb(302));                                 // below par, first time (same histogram bin as 305): queued
     expect(store.data().outbox).toHaveLength(1);
-    server.submitStatus = () => ({ status: 'accepted', rank: null, aiBeaten: true });
+    server.submitStatus = () => ({ status: 'accepted', rank: 180, aiBeaten: true, counted: 302 });
     await api.flush('menu');
-    expect(store.data().levels['2-2']!.aiBeatenSent).toBe(true);
-    api.enqueue(pb(290));                                 // already counted: not again
+    expect(store.data().levels['2-2']).toMatchObject({ aiBeatenSent: true, sentSub: 302 });
+    api.enqueue(pb(301));                                 // already counted as AI-beaten, same bin: not again
     expect(store.data().outbox).toEqual([]);
   });
 
@@ -637,28 +640,31 @@ describe('enqueue filters (§7.9)', () => {
   });
 });
 
-describe('first clear (§7.9 playSent)', () => {
-  it('sends the first clear whatever the cutoff, once; a counted answer marks playSent', async () => {
+describe('first placement (§7.9 sentSub)', () => {
+  it('sends the first clear whatever the cutoff; the answer\'s counted time becomes sentSub (and playSent is set)', async () => {
     const api = mkApi();
     await api.boot(23);                                   // 2-2: cutoff 402
     store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc'); });
-    api.enqueue(pb(900));                                 // far below the 100th: still the first clear
+    api.enqueue(pb(900));                                 // far below the 100th: still the first placement (lazy)
     expect(store.data().outbox.map((r) => r.t120)).toEqual([900]);
-    server.submitStatus = () => ({ status: 'unranked' });
-    await api.flush('menu');
-    expect(store.data().levels['2-2']!.playSent).toBe(true);
+    server.submitStatus = () => ({ status: 'unranked', rank: 700, counted: 900 });
+    await api.flush('pagehide');                          // lazy runs ride the pagehide
+    expect(store.data().levels['2-2']).toMatchObject({ playSent: true, sentSub: 900 });
     expect(store.data().outbox).toEqual([]);
-    api.enqueue(pb(800));                                 // counted: back to the cutoff filter
+    api.enqueue(pb(890));                                 // counted, the same bin (97): the server would write nothing
     expect(store.data().outbox).toEqual([]);
+    api.enqueue(pb(800));                                 // another bin: queued again
+    expect(store.data().outbox.map((r) => r.t120)).toEqual([800]);
   });
 
-  it('a deferred answer keeps playSent unset', async () => {
+  it('a deferred answer keeps sentSub unset', async () => {
     const api = mkApi();
     await api.boot(23);
     store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc'); });
     api.enqueue(pb(900));
     server.submitStatus = () => ({ status: 'deferred' });
-    await api.flush('menu');
+    await api.flush('pagehide');
+    expect(store.data().levels['2-2']!.sentSub).toBeUndefined();
     expect(store.data().levels['2-2']!.playSent).toBeUndefined();
     expect(store.data().outbox).toHaveLength(1);
   });
@@ -958,5 +964,423 @@ describe('ghost and board reads', () => {
     server.handler = (c) => (c.url.startsWith('/api/board/') ? { status: 200, body: { top: 'x' } } : undefined);
     expect(await api.board(L('2-2'))).toBeNull();
     expect(api.enabled).toBe(false);
+  });
+});
+
+// ---- stage 2: level classes, rank-in, lazy sends, the answers' counted time (§7.9) ----
+
+/**
+ * 2-2 with `n` counted players (par 318): the top 100 at 303..402 (cutoff 402), the others spread over 403..999.
+ * Returns the boot answer; `server` also gets the full board for its §5.3 level rules.
+ */
+function crowdBoot(n = 500): BootResponse {
+  const boot = bootRes();
+  const times = Array.from({ length: n }, (_, i) => (i < 100 ? 303 + i : 403 + Math.floor((597 * (i - 100)) / (n - 100))));
+  const h = new Array<number>(LEVEL_HIST_BINS).fill(0);
+  for (const x of times) h[levelBin(x)]! += 1;
+  const top = times.slice(0, 100).map((x, i) => ({ pidh: `c${String(i).padStart(15, '0')}`, t120: x }));
+  boot.boards['2-2'] = {
+    ...boot.boards['2-2']!, n, cutoff: 402, hist: trimHist(h),
+    top: top.slice(0, 10).map((r) => [r.pidh, 1, r.t120, 5000, 1, 1]),
+  };
+  server.levelBoards.set(L('2-2'), { top, runs: new Map(), counted: new Map(top.map((r) => [r.pidh, r.t120])), hist: h, n, par: 318 });
+  return boot;
+}
+
+describe('levelClass (§7.9)', () => {
+  const board = (over: Partial<BootResponse['boards'][string]> = {}): BootResponse['boards'][string] =>
+    ({ key: L('2-2'), n: 812, aiBeaten: 37, par: 318, cutoff: 402, top: [], wr: null, ...over });
+  const save = (p: Partial<SaveV1['levels'][string]> = {}): SaveV1 => {
+    const d = defaultSave('ja');
+    Object.assign(ensureLevel(d, '2-2', '9f3a12bc'), p);
+    return d;
+  };
+
+  it('rankIn / urgent / lazy / null', () => {
+    expect(levelClass(pb(999), save({ sentSub: 300 }), board({ cutoff: null }))).toBe('rankIn');   // fewer than 100 rows
+    expect(levelClass(pb(401), save({ sentSub: 300 }), board())).toBe('rankIn');                  // faster than the 100th
+    expect(levelClass(pb(402), save({ sentSub: 300 }), board())).toBeNull();                      // a tie with the 100th is out
+    expect(levelClass(pb(300), save({ sentSub: 305 }), board({ cutoff: 250 }))).toBe('urgent');   // first AI-beaten
+    expect(levelClass(pb(301), save({ sentSub: 305, aiBeatenSent: true }), board({ cutoff: 250 }))).toBeNull();
+    expect(levelClass(pb(900), save(), board())).toBe('lazy');                                     // not counted yet
+    expect(levelClass(pb(900, '2-2'), defaultSave('ja'), board())).toBe('lazy');                   // no progress at all
+    expect(levelClass(pb(449), save({ sentSub: 455 }), board())).toBe('lazy');                     // another bin (74 < 75)
+    expect(levelClass(pb(451), save({ sentSub: 455 }), board())).toBeNull();                       // the same bin
+    expect(levelClass(pb(460), save({ sentSub: 455 }), board())).toBeNull();                       // slower than counted
+  });
+
+  it('lite is not a class: a top-100 run stays queued through lite (only takeBatch holds level runs back)', async () => {
+    server.boot = bootRes({ lite: true });
+    const api = mkApi();
+    await api.boot(23);
+    store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc').sentSub = 390; });
+    api.enqueue(pb(389));                                  // the same bin as 390, but faster than the 100th
+    expect(store.data().outbox.map((r) => r.t120)).toEqual([389]);
+  });
+
+  it('a queued run whose class became null is dropped before a send (not while lite or soft)', async () => {
+    const api = mkApi();
+    await api.boot(23);
+    api.enqueue(pb(900));                                  // lazy: not counted yet
+    store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc').sentSub = 890; });   // counted meanwhile (another tab)
+    expect(await api.flush('pagehide')).toBeNull();
+    expect(store.data().outbox).toEqual([]);
+    expect(server.submits()).toEqual([]);
+  });
+});
+
+describe('lazy runs (§7.9: first placements and histogram moves wait for a pagehide)', () => {
+  function lazyRuns(api: NetApi, n: number): void {
+    for (let i = 1; i <= n; i++) {
+      store.update((d) => { ensureLevel(d, `3-${i}`, '9f3a12bc'); });
+      api.enqueue(pb(900 + i, `3-${i}`, L(`3-${i}`)));
+    }
+  }
+  function boot3(): BootResponse {
+    const boot = bootRes();
+    for (let i = 1; i <= 9; i++) boot.boards[`3-${i}`] = { key: L(`3-${i}`), n: 900, aiBeaten: 3, par: 318, cutoff: 402, top: [], wr: null };
+    return boot;
+  }
+
+  it('menu / select skip a lazy-only batch of < 4 without using up the 120 s interval; 4 go at once', async () => {
+    server.boot = boot3();
+    server.submitStatus = (r) => ({ status: 'unranked', counted: r.t120 });
+    const api = mkApi();
+    await api.boot(23);
+    lazyRuns(api, 3);
+    expect(await api.flush('menu')).toBeNull();
+    expect(await api.flush('select')).toBeNull();
+    expect(server.submits()).toEqual([]);
+    // the interval was not used: a rank-in class run goes out with the next select at once, the lazy ones ride along
+    api.enqueue(pb(300));
+    expect(await api.flush('select')).not.toBeNull();
+    expect(server.submits()[0]!.runs.map((r) => r.level)).toEqual(['2-2', '3-1', '3-2', '3-3']);
+    // four lazy runs fill a request: sent
+    t += SEND_MIN_INTERVAL_MS;
+    lazyRuns(api, 7);                                      // 3-4 .. 3-7 are new; 3-1 .. 3-3 were answered
+    expect(await api.flush('menu')).not.toBeNull();
+    expect(server.submits()[1]!.runs.map((r) => r.level)).toEqual(['3-4', '3-5', '3-6', '3-7']);
+  });
+
+  it('pagehide sends lazy runs', async () => {
+    server.boot = boot3();
+    const api = mkApi();
+    await api.boot(23);
+    lazyRuns(api, 2);
+    expect(await api.flush('pagehide')).not.toBeNull();
+    expect(server.submits()[0]!.runs.map((r) => r.level)).toEqual(['3-1', '3-2']);
+  });
+
+  it('runs queued before this session are never lazy: they ride the first flush', async () => {
+    server.boot = boot3();
+    store.update((d) => {
+      ensureLevel(d, '3-1', '9f3a12bc');
+      d.outbox = [pb(901, '3-1', L('3-1'))];
+      d.outbox[0]!.queuedAt = t - 1;
+    });
+    const api = mkApi();                                   // sessionStart = t
+    await api.boot(23);
+    expect(await api.flush('menu')).not.toBeNull();
+    expect(server.submits()[0]!.runs.map((r) => r.level)).toEqual(['3-1']);
+  });
+
+  it('soft (boot or an answer, then sticky): lazy runs stay queued, others still go', async () => {
+    server.boot = { ...boot3(), soft: true };
+    const api = mkApi();
+    await api.boot(23);
+    expect(api.soft).toBe(true);
+    lazyRuns(api, 2);
+    expect(await api.flush('pagehide')).toBeNull();
+    api.enqueue(pb(300));                                  // rank-in
+    expect(await api.flush('pagehide')).not.toBeNull();
+    expect(server.submits()[0]!.runs.map((r) => r.level)).toEqual(['2-2']);
+    expect(store.data().outbox.map((r) => r.level)).toEqual(['3-1', '3-2']);
+
+    // an answer says soft: sticky for the session, whatever the (cached) boot says
+    store.update((d) => { d.outbox = []; });
+    server.boot = boot3();
+    server.submitSoft = true;
+    session = new MemStorage();
+    const api2 = mkApi();
+    await api2.boot(23);
+    expect(api2.soft).toBe(false);
+    api2.enqueue(pb(299));
+    await api2.flush('select');
+    expect(api2.soft).toBe(true);
+    lazyRuns(api2, 2);
+    t += SEND_MIN_INTERVAL_MS;
+    expect(await api2.flush('pagehide')).toBeNull();
+    expect(store.data().outbox.map((r) => r.level)).toEqual(['3-1', '3-2']);
+  });
+});
+
+describe("flush('rankIn') (§7.9: a top-100 candidate at the success tick)", () => {
+  it('is exempt from the 120 s interval and puts its board first', async () => {
+    const api = mkApi();
+    await api.boot(23);
+    api.enqueue(pb(999, '5-9', L('5-9')));
+    await api.flush('menu');
+    api.enqueue(daily({ balls: ['ok', null, null, null, null], bestSub: 455, bestReplay: 'D455' })!);
+    api.enqueue(pb(999, '5-8', L('5-8')));
+    api.enqueue(pb(300));
+    t += 1000;
+    const res = await api.flush('rankIn', { first: L('2-2') });
+    expect(res?.results[0]).toMatchObject({ board: L('2-2'), status: 'accepted' });
+    expect(server.submits()[1]!.runs.map((r) => r.board)).toEqual([L('2-2'), D(23), L('5-8')]);
+  });
+
+  it('a second rank-in within 15 s is deferred (not dropped) and goes when the gap ends; the newest board goes first', async () => {
+    vi.useFakeTimers();
+    const api = mkApi();
+    await api.boot(23);
+    api.enqueue(pb(300));
+    await api.flush('rankIn', { first: L('2-2') });
+    t += 5000;
+    api.enqueue(pb(150, '1-1', L('1-1', '11111111')));
+    const p1 = api.flush('rankIn', { first: L('1-1', '11111111') });
+    api.enqueue(pb(999, '5-9', L('5-9')));
+    const p2 = api.flush('rankIn', { first: L('5-9') });
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(server.submits()).toHaveLength(1);
+    t += 10_000;
+    await vi.advanceTimersByTimeAsync(1);
+    expect(server.submits()).toHaveLength(2);
+    expect(server.submits()[1]!.runs.map((r) => r.board)).toEqual([L('5-9'), L('1-1', '11111111')]);
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1).toEqual(r2);
+    expect(r1?.results).toHaveLength(2);
+  });
+
+  it('returns the answer of the request already carrying the same run', async () => {
+    const g = gatedFetch();
+    const api = mkApi({ fetch: g.fetch });
+    await api.boot(23);
+    api.enqueue(pb(300));
+    const p1 = api.flush('rankIn', { first: L('2-2') });
+    const p2 = api.flush('rankIn', { first: L('2-2') });
+    g.release();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(server.submits()).toHaveLength(1);
+    expect(r2).toBe(r1);
+  });
+
+  it('a faster run queued while the first one flies follows once that request is back', async () => {
+    vi.useFakeTimers();
+    const g = gatedFetch();
+    const api = mkApi({ fetch: g.fetch });
+    await api.boot(23);
+    api.enqueue(pb(300));
+    void api.flush('rankIn', { first: L('2-2') });
+    api.enqueue(pb(290));
+    const p2 = api.flush('rankIn', { first: L('2-2') });
+    g.release();
+    t += RANKIN_MIN_INTERVAL_MS;
+    await vi.advanceTimersByTimeAsync(RANKIN_MIN_INTERVAL_MS);
+    const r2 = await p2;
+    expect(server.submits().map((b) => b.runs[0]!.t120)).toEqual([300, 290]);
+    expect(r2?.results[0]?.board).toBe(L('2-2'));
+    expect(store.data().outbox).toEqual([]);
+  });
+
+  it('null when lite, READ_ONLY, offline, or the board is not queued', async () => {
+    const api = mkApi();
+    expect(await api.flush('rankIn', { first: L('2-2') })).toBeNull();          // nothing queued
+    api.enqueue(pb(300));
+    server.handler = () => 'network';
+    expect(await api.flush('rankIn', { first: L('2-2') })).toBeNull();          // offline (the lazy boot fails)
+    expect(store.data().outbox).toHaveLength(1);
+
+    for (const over of [{ lite: true }, { readOnly: true }]) {
+      server.handler = null;
+      server.boot = bootRes(over);
+      session = new MemStorage();
+      const a = mkApi();
+      await a.boot(23);
+      const n = server.submits().length;
+      expect(await a.flush('rankIn', { first: L('2-2') })).toBeNull();
+      expect(server.submits()).toHaveLength(n);
+    }
+    expect(store.data().outbox).toHaveLength(1);
+  });
+
+  it('a pagehide takes over a deferred rank-in: the run goes first in its send, the waiting caller gets that answer', async () => {
+    vi.useFakeTimers();
+    const api = mkApi();
+    await api.boot(23);
+    api.enqueue(pb(300));
+    await api.flush('rankIn', { first: L('2-2') });
+    t += 3000;
+    api.enqueue(pb(150, '1-1', L('1-1', '11111111')));
+    const waiting = api.flush('rankIn', { first: L('1-1', '11111111') });
+    expect(server.submits()).toHaveLength(1);
+    const ph = api.flush('pagehide');                     // within 120 s of the last send: exempt for the rank-in run
+    expect(server.submits()).toHaveLength(2);
+    expect(server.submits()[1]!.runs.map((r) => r.board)).toEqual([L('1-1', '11111111')]);
+    expect(await waiting).toEqual(await ph);
+    await vi.advanceTimersByTimeAsync(RANKIN_MIN_INTERVAL_MS);
+    expect(server.submits()).toHaveLength(2);             // the timer is gone
+  });
+});
+
+describe('level answers (§7.9: counted, the boot patch, no-store, onResults)', () => {
+  it('counted: a number becomes sentSub, null removes it, absent (an older server) keeps it', async () => {
+    const api = mkApi();
+    await api.boot(23);
+    store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc').sentSub = 700; });
+    const answer = async (t120: number, counted: number | null | undefined): Promise<number | undefined> => {
+      api.enqueue(pb(t120));
+      server.submitStatus = () => ({ status: 'accepted', rank: 5, ...(counted !== undefined ? { counted } : {}) });
+      t += SEND_MIN_INTERVAL_MS;
+      await api.flush('menu');
+      expect(store.data().outbox).toEqual([]);
+      return store.data().levels['2-2']!.sentSub;
+    };
+    expect(await answer(380, 380)).toBe(380);
+    expect(await answer(370, undefined)).toBe(380);       // an older server: unknown, kept
+    expect(await answer(360, null)).toBeUndefined();       // not counted
+    expect(await answer(350, 12.5)).toBeUndefined();       // malformed: ignored
+  });
+
+  it('accepted: the next board() skips both caches once (cache: no-store)', async () => {
+    const api = mkApi();
+    await api.boot(23);
+    await api.board(L('2-2'));
+    await api.board(L('2-2'));
+    const boards = (): Call[] => server.calls.filter((c) => c.url.startsWith('/api/board/'));
+    expect(boards().map((c) => c.cache)).toEqual(['default']);
+    api.enqueue(pb(300));
+    await api.flush('rankIn', { first: L('2-2') });
+    await api.board(L('2-2'));
+    await api.board(L('2-2'));                             // cached again
+    expect(boards().map((c) => c.cache)).toEqual(['default', 'no-store']);
+    // an unranked answer changes nothing
+    server.submitStatus = () => ({ status: 'unranked', rank: 300, counted: 900 });
+    store.update((d) => { ensureLevel(d, '1-2', '9f3a12bc'); });
+    api.enqueue(pb(900, '1-2', L('1-2')));
+    await api.flush('pagehide');
+    t += 61_000;
+    await api.board(L('1-2'));
+    expect(boards().at(-1)!.cache).toBe('default');
+  });
+
+  it('the boot board follows the answer (cutoff, n, my histogram bin), also in the sessionStorage copy', async () => {
+    server.boot = crowdBoot(500);
+    const api = mkApi();
+    await api.boot(23);
+    const before = levelHistOf(api.lastBoot()!.boards['2-2']!)!;
+    store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc').sentSub = 700; });
+    api.enqueue(pb(600));
+    server.submitStatus = () => ({ status: 'unranked', rank: 170, n: 520, cutoff: 398, counted: 600 });
+    await api.flush('pagehide');
+    const b = api.lastBoot()!.boards['2-2']!;
+    expect([b.cutoff, b.n]).toEqual([398, 520]);
+    const after = levelHistOf(b)!;
+    expect(after[levelBin(700)]).toBe(before[levelBin(700)]! - 1);
+    expect(after[levelBin(600)]).toBe(before[levelBin(600)]! + 1);
+    // a new page load in the same browser session reads the patched copy (same `at`: it expires as before)
+    const cached = JSON.parse(session.getItem(BOOT_CACHE_KEY)!) as { at: number; res: BootResponse };
+    expect(cached.at).toBe(1_790_000_000_000);
+    expect(cached.res.boards['2-2']).toMatchObject({ cutoff: 398, n: 520, hist: b.hist });
+    const api2 = mkApi();
+    expect((await api2.boot(23))!.boards['2-2']!.cutoff).toBe(398);
+    expect(server.paths().filter((x) => x.startsWith('GET /api/boot'))).toHaveLength(1);
+  });
+
+  it('a bad histogram in boot keeps the boot valid; levelHistOf / boardHistOf are null then', async () => {
+    const boot = bootRes();
+    (boot.boards['2-2'] as { hist?: unknown }).hist = [1, -2, 'x'];
+    (boot.boards['1-1'] as { hist?: unknown }).hist = 'nope';
+    server.boot = boot;
+    const api = mkApi();
+    const b = await api.boot(23);
+    expect(b).not.toBeNull();
+    expect(api.enabled).toBe(true);
+    expect(levelHistOf(b!.boards['2-2']!)).toBeNull();
+    expect(levelHistOf(b!.boards['1-1']!)).toBeNull();
+    expect(levelHistOf(crowdBoot(10).boards['2-2']!)).toHaveLength(LEVEL_HIST_BINS);
+    expect(boardHistOf({ key: D(23), n: 1, aiBeaten: 0, par: 1, cutoff: null, top: [], hist: [1] })).toHaveLength(150);
+    expect(boardHistOf({ key: L('2-2'), n: 1, aiBeaten: 0, par: 1, cutoff: null, top: [], hist: [1] })).toHaveLength(LEVEL_HIST_BINS);
+    expect(boardHistOf({ key: L('2-2'), n: 1, aiBeaten: 0, par: 1, cutoff: null, top: [] })).toBeNull();
+  });
+
+  it('onResults gets (sent, results) after the save was updated; unsubscribe works; a throwing listener breaks nothing', async () => {
+    const api = mkApi();
+    await api.boot(23);
+    const seen: { levels: string[]; boards: string[]; sentSub: number | undefined }[] = [];
+    api.onResults(() => { throw new Error('boom'); });
+    const stop = api.onResults((sent, results) => {
+      seen.push({ levels: sent.map((r) => r.level), boards: results.map((r) => r.board), sentSub: store.data().levels['2-2']?.sentSub });
+    });
+    store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc'); });
+    api.enqueue(pb(300));
+    server.submitStatus = () => ({ status: 'accepted', rank: 3, counted: 300 });
+    expect(await api.flush('rankIn', { first: L('2-2') })).not.toBeNull();
+    expect(seen).toEqual([{ levels: ['2-2'], boards: [L('2-2')], sentSub: 300 }]);
+    expect(store.data().outbox).toEqual([]);
+    stop();
+    api.enqueue(pb(290));
+    t += RANKIN_MIN_INTERVAL_MS;
+    await api.flush('rankIn', { first: L('2-2') });
+    expect(seen).toHaveLength(1);
+  });
+});
+
+describe('the §5.3 level rules end to end (fakeServer levelRules)', () => {
+  it('a device sends only what moves the server: first placement, a new bin, a top-100 entry; never a same-bin PB', async () => {
+    server.boot = crowdBoot(500);
+    server.levelRules = true;
+    const api = mkApi();
+    await api.boot(23);
+    store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc'); });
+    // first placement: lazy, rides the pagehide; counted = 700, rank estimated from the histogram
+    api.enqueue(pb(700));
+    const r1 = await api.flush('pagehide');
+    const want = estimateLevelRank(server.levelBoard(L('2-2'), '2-2').hist, 402, 700, null)!;
+    expect(want.rank).toBeGreaterThan(100);
+    expect(r1?.results[0]).toMatchObject({ status: 'unranked', counted: 700, rank: want.rank, n: 501, was: null });
+    expect(store.data().levels['2-2']!.sentSub).toBe(700);
+    expect(server.playWrites).toBe(1);
+    // a faster PB in the same bin: the server would write nothing, so it is never sent
+    api.enqueue(pb(698));                                 // bin 89 = [696, 720), like 700
+    expect(store.data().outbox).toEqual([]);
+    // a new bin: one row, `was` is the estimate of the old position
+    api.enqueue(pb(600));
+    t += SEND_MIN_INTERVAL_MS;
+    const r2 = await api.flush('pagehide');
+    expect(r2?.results[0]).toMatchObject({ status: 'unranked', counted: 600 });
+    expect(r2!.results[0]!.was).toBeGreaterThan(r2!.results[0]!.rank!);
+    expect(server.playWrites).toBe(2);
+    // a top-100 entry: rank-in, exact rank, accepted
+    api.enqueue(pb(401));
+    const r3 = await api.flush('rankIn', { first: L('2-2') });
+    expect(r3?.results[0]).toMatchObject({ status: 'accepted', rank: 100, counted: 401, cutoff: 401 });
+    expect(stampKind(r3!.results[0]!.status, r3!.results[0]!.rank!, r3!.results[0]!.was!)).toBe('in');
+    expect(server.playWrites).toBe(3);
+  });
+
+  it('soft: an out-of-top first placement is answered without being counted; lite: rejected and kept', async () => {
+    server.boot = crowdBoot(500);
+    server.levelRules = true;
+    server.submitSoft = true;
+    const api = mkApi();
+    await api.boot(23);
+    store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc'); });
+    api.enqueue(pb(700));
+    const r = await api.flush('pagehide');                // not soft yet on this client: it goes, the server writes 0
+    expect(r?.results[0]).toMatchObject({ status: 'unranked', counted: null });
+    expect(server.playWrites).toBe(0);
+    expect(store.data().levels['2-2']!.sentSub).toBeUndefined();
+    expect(api.soft).toBe(true);
+
+    server.submitSoft = false;
+    server.submitLite = true;
+    session = new MemStorage();
+    const api2 = mkApi();
+    await api2.boot(23);
+    api2.enqueue(pb(650));
+    await api2.flush('pagehide');
+    expect(api2.lite).toBe(true);
+    expect(store.data().outbox.map((x) => x.t120)).toEqual([650]);
+    expect(server.playWrites).toBe(0);
   });
 });

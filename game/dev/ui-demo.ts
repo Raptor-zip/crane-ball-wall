@@ -1,4 +1,6 @@
 // dev/ui-demo.html: renders every UI screen with mock data (O7). ?screen=<id>&lang=ja|en&level=2-2&world=2&still=1
+// World rank (§9.4): results &rank=<RANK_KINDS> (the rank row / stamp; &arrive=<ms> lets the answer come that late);
+// board &board=pin|pin-unsent|pin-pending|instant|partial|daily|daily-pin (pinned row, boot-only render, fetch failure).
 // Extra: &toasts=<n> shows n trick / badge toasts right before the screen opens (results: they must avoid the card).
 // Results screens: &beat=<ms> opens the card that long after the 'success' event (core: SUCCESS_BEAT 750 ms), as in the
 // game (the crown / PB banner starts during the beat); &defer=1 waits for __UI_DEMO__.start() (tests time the beat).
@@ -13,8 +15,8 @@ import { TALL_FRAME_K } from '../src/ui/layout';
 import { tallWindowFor } from '../src/render/camera';
 import { drawShareCard } from '../src/ui/sharecard';
 import { factsOf } from '../src/ui/i18n/format';
-import { ghostTrack, level, mockContext, mockDaily, mockResults, mockSave, pairs } from './ui-demo-data';
-import type { Track } from './ui-demo-data';
+import { RANK_KINDS, ghostTrack, level, mockBoot, mockContext, mockDaily, mockResults, mockSave, mockStanding, pairs, pinSave } from './ui-demo-data';
+import type { BoardMock, RankKind, Track } from './ui-demo-data';
 
 const q = new URLSearchParams(location.search);
 const screenId = q.get('screen') ?? 'title';
@@ -33,7 +35,15 @@ if (q.get('motion') === 'off') save.settings.motion = 'off';
 // results-firstcrown: the first crown on this level (not the first ever: the "why the AI lost" card stays shut).
 if (screenId === 'results-crown' || screenId === 'ailost') save.seen.aiLostCard = false;
 else save.seen.aiLostCard = true;
-const ctx = mockContext(save, { offline });
+const rankKind = (RANK_KINDS as readonly string[]).includes(q.get('rank') ?? '') ? q.get('rank') as RankKind : null;
+const arrive = Math.max(0, Number(q.get('arrive') ?? 0) || 0);
+const boardQ = q.get('board') ?? '';
+const boardMock: BoardMock = boardQ === 'instant' ? 'hang' : boardQ === 'partial' ? 'fail' : boardQ.includes('pin') ? 'pin' : 'me';
+if (boardQ === 'pin' || boardQ === 'partial' || boardQ === 'instant') pinSave(save, levelId, 'est');
+if (boardQ === 'pin-unsent') pinSave(save, levelId, 'unsent');
+if (boardQ === 'pin-pending') pinSave(save, levelId, 'pending');
+if (boardQ === 'daily-pin') save.daily = { ...save.daily, bestSub: 396, lastSentT120: 396 };
+const ctx = mockContext(save, { offline, board: boardMock });
 const ui: UI = createUI(ctx);
 const root = document.getElementById('app')!;
 let layout: Layout = ui.mount(root);
@@ -269,12 +279,20 @@ function start(): void {
       const v = screenId === 'results-fail' ? 'fail' : screenId === 'results-crown' || screenId === 'results-firstcrown' || screenId === 'ailost' ? 'crown' : screenId === 'results-practice' ? 'practice' : 'ok';
       ui.fx({ t: 'levelLoaded', level: lv });
       const data = mockResults(levelId, v);
+      // The rank row: a slower clear (nonpb) shows the PB's standing; &arrive delays the server's answer (stamp).
+      const nonPb = rankKind === 'nonpb';
+      if (nonPb) data.pbSub = data.score! - 18;
+      if (rankKind) {
+        const final = mockStanding(rankKind, data);
+        data.standing = arrive > 0 && final.phase === 'confirmed' ? { ...final, phase: 'pending', stamp: null, exact: false, was: null } : final;
+        if (arrive > 0) setTimeout(() => { data.standing = final; }, arrive);
+      }
       runFrame(n - 1, { running: false, ghost: false, timeSub: v === 'fail' ? 7200 : data.score ?? 0 });
       if (v === 'fail') ui.fx({ t: 'timeout', reason: 'swing', value: 5.2 });
       else {
         // The game's own verdict comes with the 'success' event (practice runs keep no PB or medal).
         if (v === 'practice') ui.hud({ ...hudState!, mode: 'practice' });
-        ui.fx({ t: 'success', score: data.score!, medal: data.medal, crown: data.crown, firstCrown: screenId === 'results-firstcrown', pb: v !== 'practice', badges: data.badges });
+        ui.fx({ t: 'success', score: data.score!, medal: data.medal, crown: data.crown, firstCrown: screenId === 'results-firstcrown', pb: v !== 'practice' && !nonPb, badges: data.badges });
       }
       for (let k = 0; k < toastCount; k++) {
         ui.toast(lang === 'ja' ? ['技「ブレーキ振り出し」を見つけた!', 'バッジ「パシッ」', 'ワールド 3 が開いた!'][k % 3]! : ['Trick found: Brake Fling!', 'Badge: Snap!', 'World 3 unlocked!'][k % 3]!, k === 2 ? 'info' : 'badge');
@@ -287,6 +305,8 @@ function start(): void {
       };
       if (beat > 0) setTimeout(openCard, beat);
       else openCard();
+      // The results card follows core's standing on HUD frames (the answer arriving after &arrive ms).
+      if (rankKind && arrive > 0) loop(() => ui.hud(hudState!), 1e9, 0);
       break;
     }
     case 'demo': {
@@ -305,7 +325,7 @@ function start(): void {
       break;
     }
     case 'board':
-      ui.show({ id: 'board', key: `L:${levelId}:00000000:s1` });
+      ui.show({ id: 'board', key: boardQ.startsWith('daily') ? mockBoot().daily.key : `L:${levelId}:00000000:s1` });
       break;
     case 'daily':
       ui.show({ id: 'daily', data: mockDaily() });

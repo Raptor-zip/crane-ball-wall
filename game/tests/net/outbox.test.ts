@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BATCH_MAX_BYTES, OUTBOX_MAX, REPLAY_MAX_CHARS, ballsString, ballsUsed, boardDay, dailyPendingRun, dailySendDue, enqueueRun,
-  isSendable, levelPendingRun, nTicksForScore, takeBatch, toSubmitRun, type DailySendState, type PendingRun,
+  isSendable, levelPendingRun, nTicksForScore, sendOrder, takeBatch, toSubmitRun, type DailySendState, type PendingRun,
 } from '../../src/net/outbox';
 
 const L = (id: string, h = '9f3a12bc'): string => `L:${id}:${h}:s1`;
@@ -147,6 +147,29 @@ describe('takeBatch: 4 runs, 16 KB, sum(nTicks*2) <= 5400 with the first run exe
     expect(takeBatch(o, { skipLevels: true }).map((r) => r.board)).toEqual([D(23)]);
     expect(takeBatch(o, { exclude: new Set([D(23)]) }).map((r) => r.board)).toEqual([L('2-2')]);
     expect(takeBatch([])).toEqual([]);
+  });
+
+  it('rank-in / lazy (§7.9): `first` goes first (ahead of the daily), lazy level runs last, skipLazy leaves them queued', () => {
+    const o = [
+      lv('2-2', 300, { queuedAt: 1 }),                                  // lazy
+      lv('1-1', 300, { board: L('1-1'), queuedAt: 2 }),
+      lv('3-4', 300, { board: L('3-4'), queuedAt: 3 }),                 // lazy
+      dly(23, 455, { queuedAt: 4 }),
+      lv('5-9', 300, { board: L('5-9'), queuedAt: 5 }),                 // the rank-in board
+    ];
+    const lazy = (r: PendingRun): boolean => r.level === '2-2' || r.level === '3-4';
+    expect(sendOrder(o, { first: L('5-9'), lazy }).map((r) => r.level)).toEqual(['5-9', 'd:17', '1-1', '2-2', '3-4']);
+    expect(takeBatch(o, { first: L('5-9'), lazy }).map((r) => r.level)).toEqual(['5-9', 'd:17', '1-1', '2-2']);
+    expect(takeBatch(o, { lazy, skipLazy: true }).map((r) => r.level)).toEqual(['d:17', '1-1', '5-9']);
+    // the `first` board is never held back, even when it counts as lazy
+    expect(takeBatch(o, { first: L('2-2'), lazy, skipLazy: true }).map((r) => r.level)).toEqual(['2-2', 'd:17', '1-1', '5-9']);
+    // without options: the old order (daily, then oldest first)
+    expect(takeBatch(o).map((r) => r.level)).toEqual(['d:17', '2-2', '1-1', '3-4']);
+    // lite still keeps every level run, `first` included
+    expect(takeBatch(o, { first: L('5-9'), skipLevels: true }).map((r) => r.level)).toEqual(['d:17']);
+    // the substep rule still exempts only the first run of the batch (here the `first` board)
+    const big = [lv('3-1', 100, { board: L('3-1'), queuedAt: 1, nTicks: 1500 }), lv('3-2', 100, { board: L('3-2'), queuedAt: 2, nTicks: 2700 })];
+    expect(takeBatch(big, { first: L('3-2') }).map((r) => r.level)).toEqual(['3-2']);
   });
 
   it('produces the wire form of §7.7 (no nTicks / queuedAt; prev omitted before the first send)', () => {

@@ -389,6 +389,20 @@ export function altBot11(): { replay: string; score: number; ticks: number } {
   return { replay: makeReplay('1-1', qs), score: r.score, ticks: qs.length };
 }
 
+/**
+ * Another 1-1 clear from the bang-bang family (accelerate `a` ticks, brake `b`, then hold): e.g. (18, 11) about 3 s,
+ * (19, 12) about 5.7 s. Checked against the real simulation: Success on its last tick.
+ */
+export function bangBang11(a: number, b: number): { replay: string; score: number; ticks: number } {
+  const phys = level('1-1').physics;
+  const qs = runBot(phys, bangBang(a, b)(phys), 1200);
+  const r = simulateReplay(phys, qs);
+  if (r.status !== STATUS.Success || r.score === null || r.ticks !== qs.length) {
+    throw new Error(`1-1 bang-bang (${a}, ${b}) does not clear on its last tick: ${JSON.stringify(r)}`);
+  }
+  return { replay: makeReplay('1-1', qs), score: r.score, ticks: qs.length };
+}
+
 /** Status codes of src/sim/run.ts (a const enum there). */
 export const STATUS = { Ready: 0, Running: 1, Success: 2, Crash: 3, Timeout: 4 } as const;
 

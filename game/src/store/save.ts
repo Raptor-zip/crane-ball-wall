@@ -25,6 +25,11 @@ export interface LevelProgress {
   demoShown: boolean; aiBeatenSent: boolean;
   /** A clear of this level reached the server once (§7.9: counts the player in `plays`); absent = not yet. */
   playSent?: boolean;
+  /**
+   * The time (t120) the server counts this device with in the level histogram of the level's current board
+   * (SubmitResult.counted = plays.t120, §7.9). Absent = not counted, or unknown (a save from before this field).
+   */
+  sentSub?: number;
 }
 export interface SaveV1 {
   v: 1;
@@ -173,6 +178,8 @@ function parseLevel(x: unknown): LevelProgress | null {
   p.demoShown = bool(x.demoShown, false);
   p.aiBeatenSent = bool(x.aiBeatenSent, false);
   if (x.playSent === true) p.playSent = true;
+  const ss = intOrNull(x.sentSub, 1, BIG);
+  if (ss !== null) p.sentSub = ss;
   return p;
 }
 
@@ -296,6 +303,7 @@ export function reconcileLevelHashes(d: SaveV1, hashes: Readonly<Record<string, 
       p.aiBeatenSent = false;
     }
     delete p.playSent;   // a new board key: the player is counted again there
+    delete p.sentSub;
     p.hash = h;
     changed = true;
   }

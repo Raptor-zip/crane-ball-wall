@@ -62,6 +62,23 @@ export function fmtNum(v: number, digits: number): string {
   return Number.isFinite(v) ? v.toFixed(digits) : NO_VALUE;
 }
 
+const COUNT_FMT: Partial<Record<Lang, Intl.NumberFormat>> = {};
+
+/** An integer count with the language's grouping: 1,065 (ja and en both group by thousands). Ranks and player counts. */
+export function fmtCount(n: number, lang: Lang = current): string {
+  if (!Number.isFinite(n)) return NO_VALUE;
+  let f = COUNT_FMT[lang];
+  if (!f) {
+    try {
+      f = new Intl.NumberFormat(lang === 'ja' ? 'ja-JP' : 'en-US', { maximumFractionDigits: 0 });
+    } catch {
+      return String(Math.round(n));
+    }
+    COUNT_FMT[lang] = f;
+  }
+  return f.format(Math.round(n));
+}
+
 /** Integer millimetres for display (never negative). */
 export function fmtMm(mm: number): string {
   if (!Number.isFinite(mm)) return NO_VALUE;

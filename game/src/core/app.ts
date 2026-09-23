@@ -27,10 +27,11 @@ import type { Channels, CompareTracks, DemoInfo, PauseInfo, UiContext } from '..
 import { failReasonText, getLang, levelHint, levelName, setLang, t as uiText } from '../ui/i18n/format';
 import { dailyShareText as uiDailyShareText } from '../ui/share';
 import type { LevelProgress, SaveV1, Store } from '../store/save';
-import type { Api } from '../net/api';
-import { dailySendDue, type PendingRun } from '../net/outbox';
-import type { BootResponse } from '../shared/api';
-import { dailyBoardKey, levelBoardKey } from '../shared/api';
+import type { Api, ResultsListener } from '../net/api';
+import { OUTBOX_MAX, dailySendDue, isDailyBoard, type PendingRun } from '../net/outbox';
+import type { BootResponse, SubmitResult } from '../shared/api';
+import { BOARD_TOP_N, dailyBoardKey, levelBoardKey } from '../shared/api';
+import { levelBin, levelPct, localRank, stampKind, type BoardSnapshot, type Standing, type StandingPhase } from '../shared/rank';
 import { DAILY_BALLS, dailyDayOpen, dayIndexAt, jstDayNumber, jstDayStartMs, pickDaily } from '../shared/daily';
 import { displayName, randomNameSeed } from '../shared/names';
 import { Bus, type BadgeId, type GameEvent } from './bus';
@@ -58,7 +59,7 @@ import { createInputManager } from '../input/manager';
 import { createAudioEngine } from '../audio/engine';
 import { createHaptics } from '../audio/haptics';
 import { createStore } from '../store/save';
-import { createApi } from '../net/api';
+import { createApi, levelHistOf } from '../net/api';
 
 export type AppState =
   | 'BOOT' | 'TUTORIAL' | 'TITLE' | 'LEVEL_SELECT' | 'BRIEFING' | 'READY' | 'RUNNING'
@@ -108,8 +109,14 @@ export interface App {
 
 type HapticsLike = Haptics & { fx?(e: GameEvent): void };
 type StoreLike = Store & { takeStorageNotice?(): boolean };
-/** booting: the session's first boot is still on its way (NetApi, O8): no 「オフライン」 chip meanwhile. */
-type ApiLike = Api & { lastBoot?(): BootResponse | null; readonly booting?: boolean };
+/**
+ * NetApi extras (O8, duck-typed). booting: the session's first boot is still on its way (no 「オフライン」 chip meanwhile).
+ * soft / readOnly: the valves of §7.8 (no reconcile, no rank-in). onResults: submit answers (the rank row, §7.9).
+ */
+type ApiLike = Api & {
+  lastBoot?(): BootResponse | null; readonly booting?: boolean; readonly soft?: boolean; readonly readOnly?: boolean;
+  onResults?(cb: ResultsListener): () => void;
+};
 /**
  * Optional UI hook (O7, duck-typed): runs the UI's own Escape / back behaviour for the screen it shows (pops a
  * settings / about / board / notes sub-screen, closes the briefing ...). Returns true when the UI handled it.
@@ -301,6 +308,9 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
   let pendingPb: GhostTrack | null = null;
   let dailyNet: { board: string; rank: number | null; pct: number | null } | null = null;   // from a daily submit answer (its board)
   let dailyBootAsked: string | null = null;   // daily key a boot was asked for after 00:00 JST (once per key)
+  /** Confirmed stamps nobody saw on a results card, per board: toasted on the next select / results / daily screen. */
+  const rankNews = new Map<string, { levelId: string; rank: number; kind: 'in' | 'up' | 'wr' }>();
+  let levelSendsReconciled = false;          // reconcileLevelSends ran (once per session)
   const errorsLogged = new Set<string>();
   const timeFx = createTimeFx();      // sim time: near-miss slow-mo
   const renderFx = createTimeFx();    // render-only: crash hit-stop / debris slow-down
@@ -480,6 +490,8 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
   }
 
   // ---- boot ----
+  // Submit answers (every flush) land on the results card's rank row, or become a toast later.
+  const stopResults = api?.onResults ? safe('api.onResults', () => api.onResults!(onLevelAnswers), null) ?? null : null;
   if (store.takeStorageNotice?.()) ui.toast(ct('toast.storage'), 'warn');
   const bootDay = dayNow();
   if (api) {
@@ -564,6 +576,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
   function onBootArrived(): void {
     // WR ghosts become available for the current level on the next READY.
     if (play && (state === 'READY' || state === 'RESULTS')) loadNetGhosts(play.level);
+    reconcileLevelSends();
   }
 
   // =============================================================================================== screens
@@ -614,6 +627,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     state = 'LEVEL_SELECT';
     underState = null;
     show({ id: 'select', world: world ?? currentWorld() });
+    flushRankNews();
     if (api) safe('api.flush', () => void api.flush('select'));
   }
 
@@ -626,6 +640,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     }
     state = 'DAILY_HUB';
     show({ id: 'daily', data: view });
+    flushRankNews();
     void data.loadDailyGhosts();
     bootForDay(view);
   }
@@ -1074,6 +1089,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     const replay = rankable() ? session!.replay() : null;
     const badges = session!.badges.badgesOnSuccess(session!.run.s, firstAttempt);
     const prevBest = level.world === 0 ? save().daily.bestSub : progressOf(level).bestSub;
+    const isPb = prevBest === null || score < prevBest;
     const unlockedBefore = [2, 3, 4, 5].filter((w) => worldUnlocked(w, data.levels, save().levels));
     const dailyBefore = dailyUnlocked(save().levels);
     let pb = false;
@@ -1087,15 +1103,15 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
           s.daily.balls = settleBall(s.daily.balls, pl.dailyBall, outcome);
           pb = recordDailyBest(s.daily, score, replay) && prevBest !== null;
         });
-        if (replay && (prevBest === null || score < prevBest)) pendingPb = pl.lastTrack ? { ...pl.lastTrack, kind: 'daily_pb' } : null;
+        if (replay && isPb) pendingPb = pl.lastTrack ? { ...pl.lastTrack, kind: 'daily_pb' } : null;
       }
     } else {
       const rec = updateProgress(level, (p) => applySuccess(p, score, par, replay, badges, rankable()));
       pb = rec.pb;
       firstCrown = rec.firstCrown;
-      const isPb = prevBest === null || score < prevBest;
-      // A clear that never reached the server (players from before the play count) is sent once even without a PB.
-      if (rankable() && replay && !isPb && save().levels[level.id]?.playSent !== true) enqueueLevelRun(level, replay, score, res);
+      // A clear by a player the server does not count yet (sentSub unknown): the stored best goes out, not this
+      // slower run (the server keeps the fastest time it knows; §7.9).
+      if (rankable() && replay && !isPb && progressOf(level).sentSub === undefined) enqueueStoredBest(level);
       if (rankable() && isPb) {
         if (pl.lastTrack) pendingPb = { ...pl.lastTrack, kind: 'pb', label: 'PB' };
         if (replay) enqueueLevelRun(level, replay, score, res);
@@ -1112,6 +1128,8 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     beatLeft = SUCCESS_BEAT_S;
     renderFx.sequence(SUCCESS_FX);
     freshFx = true;
+    // A top-100 candidate goes out now, 0.75 s before the card: its answer can be on the card when it opens.
+    if (level.world > 0 && isPb && replay) sendRankIn(level, pl.results);
     maybeFetchRival(level);
     if (level.world === 0 && pl.dailyOfficial && rackFull(save().daily.balls)) queueDailySubmit(true);
   }
@@ -1161,7 +1179,129 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
       aiGapMm: typeof aiGap === 'number' ? aiGap : NaN, peakF: res.peakF, aiPeakF: sum?.peakF ?? ai?.peakF ?? NaN,
       badges, failReason, rank: null, aiBeaten: bOk ? bOk.aiBeaten : null, replay,
       strobe: play!.lastTrack ? strobeOf(play!.lastTrack) : new Float32Array(0),
+      standing: ok ? levelStanding(level, res.score, pbSub, replay) : null,
     };
+  }
+
+  // ---- the rank row of the results card (GAME_DESIGN.md §9.4, §7.9) ----
+
+  /**
+   * Where this clear stands, from the boot board alone (instant; the server's answer replaces it). Null for the daily,
+   * a practice / assist run, offline without a boot, or a boot of another board key. `prevBest`: the PB before this run.
+   * A PB shows its own standing; a slower clear shows the PB's (forPb false).
+   */
+  function levelStanding(level: LevelDef, score: number | null, prevBest: number | null, replay: string | null): Standing | null {
+    if (level.world === 0 || score === null || !rankable() || !api) return null;
+    const boot = api.lastBoot?.() ?? null;
+    const key = levelBoardKey(level.id, data.hash(level));
+    const b = boot?.boards[level.id];
+    if (!b || b.key !== key) return null;
+    const p = progressOf(level);
+    const forPb = prevBest === null || score < prevBest;
+    const t = forPb ? score : p.bestSub;
+    if (t === null) return null;
+    const snap: BoardSnapshot = { top: b.top, cutoff: b.cutoff, hist: levelHistOf(b), complete: false };
+    const me = save().id.pidh;
+    const counted = p.sentSub ?? null;
+    const L = localRank(snap, t, me, counted);
+    let was: number | null = null;
+    if (forPb && prevBest !== null && L.rank !== null && L.rank > BOARD_TOP_N) {
+      const w = localRank(snap, prevBest, me, counted).rank;
+      if (w !== null && w > BOARD_TOP_N) was = w;
+    }
+    // A PB without a replay (above 6 KB) is never sent: it keeps the local estimate.
+    const phase: StandingPhase = !forPb || !L.candidate || !replay ? 'local' : api.lite || api.readOnly ? 'held' : 'queued';
+    return { runKey: `${key}:${t}`, forPb, rank: L.rank, n: L.n, pct: L.pct, was, exact: L.exact, candidate: L.candidate, phase, stamp: null };
+  }
+
+  /** A top-100 candidate PB goes out at once (flush 'rankIn', its board first); the answer comes through onResults. */
+  function sendRankIn(level: LevelDef, r: ResultsData): void {
+    const s = r.standing;
+    if (!api || !s || !s.candidate || s.phase !== 'queued' || !api.enabled || api.lite || api.readOnly) return;
+    r.standing = { ...s, phase: 'pending' };
+    const runKey = s.runKey;
+    const sent = safe('api.flush', () => api.flush('rankIn', { first: levelBoardKey(level.id, data.hash(level)) }), null);
+    if (!sent) {
+      setStandingPhase(runKey, 'queued');
+      return;
+    }
+    // null: nothing carries the run now (offline, 429 backoff): it waits in the outbox.
+    void sent.then((res) => { if (res === null) setStandingPhase(runKey, 'queued'); }, () => setStandingPhase(runKey, 'queued'));
+  }
+
+  /** Moves the card's standing out of 'pending' (only while it is still about the same time and still pending). */
+  function setStandingPhase(runKey: string, phase: StandingPhase): void {
+    const r = play?.results;
+    const s = r?.standing;
+    if (disposed || !r || !s || s.runKey !== runKey || s.phase !== 'pending') return;
+    r.standing = { ...s, phase };
+  }
+
+  const numOrNull = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : null);
+
+  /** The card's standing after the server's answer for its run (a missing answer keeps the run queued). */
+  function fromAnswer(s: Standing, r: SubmitResult | undefined): Standing {
+    if (!r || r.status === 'deferred') return { ...s, phase: 'queued' };
+    if (r.status === 'rejected') return { ...s, phase: r.reason === 'lite' ? 'held' : 'local' };
+    const srvRank = numOrNull(r.rank);
+    let rank = srvRank ?? s.rank;
+    // A counted run inside the top 100 always gets its exact rank back, so an answer without one (unranked, or an
+    // accepted / notBetter run outside the top with no usable histogram) means the local top-100 guess was wrong.
+    if (srvRank === null && rank !== null && rank <= BOARD_TOP_N) rank = null;
+    const nSrv = numOrNull(r.n) ?? s.n;
+    const n = nSrv === null ? rank : Math.max(nSrv, rank ?? 0);
+    const pct = rank !== null && rank > BOARD_TOP_N ? numOrNull(r.pct) ?? (n !== null ? levelPct(rank, n) : null) : null;
+    const was = numOrNull(r.was) ?? s.was;
+    // Honesty rule (§9.4): exact and stamped only with the server's own rank <= 100, never from a local number.
+    const exact = srvRank !== null && srvRank <= BOARD_TOP_N;
+    const stamp = srvRank !== null ? stampKind(r.status, srvRank, was) : null;
+    return { ...s, rank, n, pct, was, exact, candidate: rank !== null && rank <= BOARD_TOP_N, phase: 'confirmed', stamp };
+  }
+
+  /**
+   * Submit answers (any flush): the card's standing follows the answer for its run. A confirmed stamp that is not on
+   * screen becomes a toast: at once on the level select / daily hub, else on the next select / results / daily screen
+   * (never over READY / RUNNING).
+   */
+  function onLevelAnswers(sent: readonly PendingRun[], results: readonly SubmitResult[]): void {
+    if (disposed) return;
+    const byBoard = new Map(results.map((r) => [r.board, r]));
+    for (const run of sent) {
+      if (isDailyBoard(run.board) || run.t120 === null) continue;
+      const key = `${run.board}:${run.t120}`;
+      const r = byBoard.get(run.board);
+      const card = play?.results ?? null;
+      const s = card?.standing ?? null;
+      const onCard = !!card && !!s && s.runKey === key;
+      if (onCard) card.standing = fromAnswer(s, r);
+      const rank = numOrNull(r?.rank);
+      if (!r || rank === null) continue;
+      const kind = onCard ? card.standing!.stamp : stampKind(r.status, rank, numOrNull(r.was));
+      if (kind && !(onCard && (state === 'SUCCESS_BEAT' || state === 'RESULTS'))) {
+        rankNews.set(run.board, { levelId: run.level, rank, kind });
+      }
+    }
+    // Already on a calm menu (the answer came after the player left the card): say it now.
+    if (state === 'LEVEL_SELECT' || state === 'DAILY_HUB') flushRankNews();
+  }
+
+  /** Toasts the stamps the player did not see on a card (right after a select / results / daily screen is shown). */
+  function flushRankNews(): void {
+    if (rankNews.size === 0) return;
+    const card = state === 'RESULTS' ? play?.results?.standing ?? null : null;
+    for (const [board, n] of rankNews) {
+      if (card && card.phase === 'confirmed' && card.runKey.startsWith(`${board}:`)) continue;   // on the card already
+      const k = n.kind === 'wr' ? 'toast.rankWr' : n.kind === 'up' ? 'toast.rankUp' : 'toast.rankIn';
+      ui.toast(ct(k, { id: n.levelId, n: n.rank }), 'badge');
+    }
+    rankNews.clear();
+  }
+
+  /** The results card is skipped (the 1-1 tutorial goes straight on): a stamp it already holds becomes a toast. */
+  function cardStampToNews(): void {
+    const s = play?.results?.standing;
+    if (!play || !s || s.phase !== 'confirmed' || s.stamp === null || s.rank === null) return;
+    rankNews.set(s.runKey.slice(0, s.runKey.lastIndexOf(':')), { levelId: play.level.id, rank: s.rank, kind: s.stamp });
   }
 
   function goResults(): void {
@@ -1171,6 +1311,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     }
     state = 'RESULTS';
     show({ id: 'results', data: play.results });
+    flushRankNews();
   }
 
   function retry(): void {
@@ -1509,6 +1650,48 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
   }
 
   // =============================================================================================== net
+
+  /**
+   * The stored best of a level into the outbox (a non-PB clear or the boot reconcile, §7.9): the server keeps the
+   * fastest time it knows, so the best is what counts the player. Needs a replay of the current board and simulation.
+   */
+  function enqueueStoredBest(level: LevelDef): void {
+    if (!api) return;
+    safe('enqueueStoredBest', () => {
+      const p = progressOf(level);
+      if (!p.bestReplay || p.bestSub === null || p.hash !== pbHash(level)) return;
+      const h = decodeReplay(b64urlDecode(p.bestReplay)).h;
+      if (h.sim !== SIM_VERSION) return;
+      api.enqueue({
+        board: levelBoardKey(level.id, data.hash(level)), level: level.id, replay: p.bestReplay, t120: p.bestSub,
+        device: h.device, nTicks: h.nTicks, queuedAt: now(),
+      });
+    });
+  }
+
+  /**
+   * Once per session, after the first boot: levels whose stored best the server does not count (yet), counts in
+   * another histogram bin, or has not counted as AI-beaten are queued (lazy: they ride the next pagehide). Nothing is
+   * sent here, and the api drops what the server would ignore. Never under lite / soft / READ_ONLY, and it never
+   * fills the outbox so far that a queued run would be evicted.
+   */
+  function reconcileLevelSends(): void {
+    if (levelSendsReconciled || !api?.enabled || api.lite || api.soft || api.readOnly) return;
+    const boot = api.lastBoot?.() ?? null;
+    if (!boot) return;
+    levelSendsReconciled = true;
+    for (const level of data.levels) {
+      if (level.world === 0) continue;
+      if (save().outbox.length >= OUTBOX_MAX - 2) break;
+      const p = save().levels[level.id];
+      if (!p || p.bestSub === null || !p.bestReplay || p.hash !== pbHash(level)) continue;
+      const b = boot.boards[level.id];
+      if (!b || b.key !== levelBoardKey(level.id, data.hash(level))) continue;
+      const best = p.bestSub;
+      const due = p.sentSub === undefined || (best < p.sentSub && levelBin(best) !== levelBin(p.sentSub)) || (best < b.par && !p.aiBeatenSent);
+      if (due) enqueueStoredBest(level);
+    }
+  }
 
   function enqueueLevelRun(level: LevelDef, replay: string, score: number, res: RunResult): void {
     if (!api) return;
@@ -2022,6 +2205,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
       beatLeft -= age;
       if (beatLeft <= 0) {
         if (play?.tutorialNext && play.level.id === '1-1') {
+          cardStampToNews();
           const k = play.tutorialNext.kind;
           ui.toast(ct(k === 'daily' ? 'toast.tutorialDoneDaily' : k === 'level' ? 'toast.tutorialDoneLevel' : 'toast.tutorialDone'), 'info');
           goNext();
@@ -2300,6 +2484,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     },
     dispose() {
       disposed = true;
+      safe('api.onResults', () => stopResults?.());
       loop.stop();
       try {
         document.removeEventListener('visibilitychange', onVisibility);
