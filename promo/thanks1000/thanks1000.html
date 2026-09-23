@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<title>プレイ人口1000人突破</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;800&display=swap" />
+<style>
+  /* Palette = game/src/ui/tokens.css */
+  :root {
+    --paper-1: #f3eee4; --paper-2: #e6dccb; --floor: #d9d4cb; --gantry: #f2b705; --hazard: #1e1e1e;
+    --rail: #6b7280; --ball: #e0312b; --string: #2b2b2b; --ink: #1e2a44; --ink-2: #4b5670;
+    --goal: #22b573; --ai: #19c3ff; --pb: #ffc23d; --card: #fbf8f1;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1600px; height: 900px; overflow: hidden; }
+  body {
+    font-family: "M PLUS Rounded 1c", sans-serif; color: var(--ink);
+    background:
+      linear-gradient(rgba(201,194,182,.55) 1px, transparent 1px) 0 0 / 80px 80px,
+      linear-gradient(90deg, rgba(201,194,182,.55) 1px, transparent 1px) 0 0 / 80px 80px,
+      linear-gradient(rgba(201,194,182,.24) 1px, transparent 1px) 0 0 / 16px 16px,
+      linear-gradient(90deg, rgba(201,194,182,.24) 1px, transparent 1px) 0 0 / 16px 16px,
+      var(--paper-1);
+    position: relative;
+  }
+  .floor { position: absolute; left: 0; right: 0; bottom: 0; height: 130px; background: var(--floor); border-top: 4px solid #c9c2b6; }
+  .floor::before { content: ""; position: absolute; inset: 0;
+    background: repeating-linear-gradient(90deg, transparent 0 79px, rgba(30,42,68,.28) 79px 81px); height: 22px; }
+
+  /* Crane */
+  .beam { position: absolute; left: 90px; right: 90px; top: 150px; height: 46px; border-radius: 4px;
+    background: linear-gradient(#ffd84d, var(--gantry) 55%, #d99f00); box-shadow: 0 4px 0 rgba(0,0,0,.12); }
+  .beam::after { content: ""; position: absolute; inset: 0;
+    background: repeating-linear-gradient(90deg, transparent 0 158px, rgba(120,80,0,.35) 158px 161px); }
+  .leg { position: absolute; top: 196px; bottom: 126px; width: 34px; background: linear-gradient(90deg, #ffd84d, var(--gantry) 50%, #d99f00); }
+  .leg.l { left: 130px; } .leg.r { right: 130px; }
+  .hz { position: absolute; top: 196px; width: 70px; height: 30px;
+    background: repeating-linear-gradient(-45deg, var(--hazard) 0 10px, var(--gantry) 10px 20px); }
+  .hz.l { left: 90px; } .hz.r { right: 90px; }
+  .foot { position: absolute; bottom: 118px; width: 90px; height: 14px; background: var(--rail); border-radius: 3px; }
+  .foot.l { left: 102px; } .foot.r { right: 102px; }
+
+  /* Headline area */
+  .logo { position: absolute; top: 44px; left: 0; right: 0; display: flex; justify-content: center; align-items: baseline;
+    font: 800 64px/1 "M PLUS Rounded 1c"; letter-spacing: -.01em; }
+  .logo b { color: var(--ball); display: inline-block; transform: rotate(-4deg); margin-left: .04em; position: relative; }
+  .logo b::after { content: ""; position: absolute; left: 4%; right: 4%; bottom: -.14em; height: .09em; background: var(--ink); border-radius: 99px; transform: rotate(-2deg); }
+
+  .lead { position: absolute; top: 270px; left: 250px; font: 800 58px/1 "M PLUS Rounded 1c"; color: var(--ink-2); letter-spacing: .08em; }
+
+  /* 1000 : "1" + three hanging balls as "000" */
+  .num { position: absolute; top: 196px; left: 0; right: 0; height: 520px; }
+  .one { position: absolute; left: 300px; top: 150px; font: 800 380px/1 "M PLUS Rounded 1c"; color: var(--ink); letter-spacing: -.02em; }
+  .pend { position: absolute; top: 0; width: 220px; }
+  .pend .trolley { position: absolute; top: -4px; left: 60px; width: 100px; height: 30px; border-radius: 4px; background: #5b6272; box-shadow: inset 0 -6px 0 #474d5b; }
+  .pend .trolley::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: 7px; height: 3px; background: var(--ball); }
+  .pend .str { position: absolute; top: 26px; left: 109px; width: 3px; background: var(--string); transform-origin: top center; }
+  .pend .ball { position: absolute; width: 220px; height: 220px; border-radius: 50%;
+    background: radial-gradient(circle at 34% 30%, #ff9a8f 0 8%, #f2524a 26%, var(--ball) 55%, #9d1a16 100%);
+    box-shadow: 0 16px 0 -6px rgba(0,0,0,.08); display: grid; place-items: center; }
+  .pend .ball::before { content: ""; width: 94px; height: 94px; border-radius: 50%; background: var(--paper-1);
+    box-shadow: inset 0 8px 14px rgba(0,0,0,.18); }
+  .pend .str { height: 212px; } .pend .ball { top: 234px; left: 0; }
+  .p1 { left: 520px; } .p2 { left: 756px; } .p3 { left: 992px; }
+  .nin { position: absolute; left: 1226px; top: 440px; font: 800 120px/1 "M PLUS Rounded 1c"; }
+
+  .badge { position: absolute; left: 1190px; top: 262px; transform: rotate(8deg);
+    background: var(--ball); color: #fff; font: 800 52px/1 "M PLUS Rounded 1c"; padding: 16px 26px 20px; border-radius: 18px;
+    box-shadow: 0 6px 0 #9d1a16; letter-spacing: .06em; }
+  .badge::after { content: ""; position: absolute; left: 30px; bottom: -18px; border: 12px solid transparent; border-top: 14px solid var(--ball); }
+
+  .thanks { position: absolute; left: 0; right: 0; bottom: 30px; text-align: center; font: 800 54px/1 "M PLUS Rounded 1c"; color: var(--ink); letter-spacing: .04em; }
+  .thanks span { background: var(--card); border: 4px solid var(--ink); border-radius: 999px; padding: 12px 44px 16px; box-shadow: 0 6px 0 var(--ink); display: inline-block; }
+  .thanks em { font-style: normal; color: var(--ball); }
+</style>
+</head>
+<body>
+  <div class="floor"></div>
+  <div class="leg l"></div><div class="leg r"></div>
+  <div class="foot l"></div><div class="foot r"></div>
+  <div class="beam"></div>
+  <div class="hz l"></div><div class="hz r"></div>
+
+  <h1 class="logo">ゆらして<b>ピタッ</b></h1>
+  <p class="lead">プレイ人口</p>
+
+
+  <div class="num">
+    <div class="one">1</div>
+    <div class="pend p1"><div class="trolley"></div><div class="str"></div><div class="ball"></div></div>
+    <div class="pend p2"><div class="trolley"></div><div class="str"></div><div class="ball"></div></div>
+    <div class="pend p3"><div class="trolley"></div><div class="str"></div><div class="ball"></div></div>
+    <div class="nin">人</div>
+  </div>
+  <div class="badge">突破！</div>
+
+  <p class="thanks"><span>遊んでくれて<em>ありがとう！</em></span></p>
+</body>
+</html>
