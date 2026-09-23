@@ -61,7 +61,7 @@ import { createHaptics } from '../audio/haptics';
 import { createStore } from '../store/save';
 import { createApi, levelHistOf } from '../net/api';
 import { noteBestStreak } from '../store/cosmetic';
-import { createSkinState } from './skinState';
+import { createSkinState, skinsSheetLayout } from './skinState';
 
 export type AppState =
   | 'BOOT' | 'TUTORIAL' | 'TITLE' | 'LEVEL_SELECT' | 'BRIEFING' | 'READY' | 'RUNNING'
@@ -344,11 +344,15 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
 
   // ---- skins (GAME_DESIGN.md §7.14, cosmetic only): look, unlocks and toasts live in skinState.ts ----
   const skins = createSkinState({
-    store, levels: data.levels, renderer, toast: (text, kind) => ui.toast(text, kind),
+    store, levels: data.levels, renderer, toast: (text, kind) => ui.toast(text, kind), now: () => now(),
     canApply: () => state !== 'RUNNING' && state !== 'CRASH_BEAT' && state !== 'SUCCESS_BEAT' && !(state === 'PAUSED' && underState === 'RUNNING'),
   });
   /** The skins sheet opened from a menu page: that page's state while the title attract runs behind the sheet. */
   let skinsHost: AppState | null = null;
+  /** The skins sheet is open (the title behind it does not start on confirm / any key or button). */
+  let skinsOpen = false;
+  /** tall, the skins sheet open: its top edge (root px), above which the renderer frames the attract (skinsSheetLayout). */
+  let skinsTop: number | null = null;
 
   /** LevelProgress.hash of a level: its physics hash and the sim version (progressHash). */
   const pbHash = (level: LevelDef): string => progressHash(data.hash(level));
@@ -418,7 +422,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     pause: () => pauseInfo(),
     skins: () => skins.view(),
     skinPreview: (ids) => skins.preview(ids),
-    skinsShown: (open) => skinsAttract(open),
+    skinsShown: (open, sheetTop) => skinsAttract(open, sheetTop),
     origin: shareOrigin(d.publicOrigin ?? import.meta.env.VITE_PUBLIC_ORIGIN, d.location === undefined ? safeLocation() : d.location),
   };
   sink.current = uiContext;
@@ -436,7 +440,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     // A rotation keeps the run going: only the layout changes. attach() resets the clutch and keeps the
     // target (§3.3 "目標はそのまま、クラッチはリセット"), so resetForRun must not be called here.
     layout = l;
-    safe('renderer.setLayout', () => renderer.setLayout(l));
+    safe('renderer.setLayout', () => renderer.setLayout(skinsSheetLayout(l, skinsTop)));
     const e = ui.elements();
     safe('input.attach', () => input.attach(e.sceneEl, e.deckEl, renderer.mapper, l));
   });
@@ -601,7 +605,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     setInputPractice(!!play?.practice && (s.id === 'hud' || s.id === 'pause'));
     // New skins (§7.14) after progress changed: at boot, after a run, on the menus (before the screen is built, so that
     // the title's NEW dot is there). Never while a run is on or paused (a trick found mid-run shows at the results).
-    if (state !== 'RUNNING' && state !== 'PAUSED') safe('skins.check', () => skins.check());
+    if (state !== 'RUNNING' && state !== 'PAUSED') safe('skins.check', () => skins.check(s.id === 'results' ? s.data : null));
     safe('ui.show', () => ui.show(s));
   }
 
@@ -1801,7 +1805,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     if ((c === 'back' || c === 'pause') && SUBSCREEN_HOSTS.has(state) && uiBack()) return;
     switch (state) {
       case 'TITLE':
-        if (c === 'any' || c === 'confirm') titleStart();
+        if ((c === 'any' || c === 'confirm') && !skinsOpen) titleStart();
         return;
       case 'BRIEFING':
         if (c === 'any' || c === 'confirm' || c === 'back') closeBriefing();
@@ -2129,7 +2133,13 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
    * a menu page (the settings over the level select or the daily hub) the attract runs behind the sheet and the page's
    * state comes back when the sheet closes. The UI never offers the sheet over a run, the pause menu or a results card.
    */
-  function skinsAttract(open: boolean): void {
+  function skinsAttract(open: boolean, sheetTop?: number): void {
+    skinsOpen = open;
+    const top = open && typeof sheetTop === 'number' && Number.isFinite(sheetTop) ? Math.round(sheetTop) : null;
+    if (top !== skinsTop) {
+      skinsTop = top;
+      if (layout) safe('renderer.setLayout', () => renderer.setLayout(skinsSheetLayout(layout!, skinsTop)));
+    }
     if (open) {
       if (skinsHost || (state !== 'LEVEL_SELECT' && state !== 'DAILY_HUB')) return;
       const lvl = data.level(TITLE_LEVEL) ?? data.levels[0];

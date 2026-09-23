@@ -109,9 +109,10 @@ describe('after a run', () => {
     expect(res.state).toBe('RESULTS');
     expect(r.store.d.skins!.owned).toContain('trail.pencil');
     expect(toastsAt()).toContain(t('skin.toast', { name: t('skin.trail.pencil.name') }));
-    const shown = r.ui!.last as { id: string; data: { ballFill?: string } };
+    const shown = r.ui!.last as { id: string; data: { ballFill?: string; skins?: string[] } };
     expect(shown.id).toBe('results');
     expect(shown.data.ballFill).toBeUndefined();
+    expect(shown.data.skins).toEqual(['trail.pencil']);   // also on the card (a small phone's toast can miss)
   });
 
   it('the results card carries the equipped ball colour for the share card', async () => {
@@ -172,10 +173,19 @@ describe('the スキン sheet (real UI)', () => {
     expect(r.renderer.last).toEqual(['ball.steel', 'crane.yellow', 'trail.ink', 'stage.castle']);
     expect(store.d.settings.skin).toEqual({ ball: 'ball.steel' });   // a try-on is never stored
 
+    // Stray confirm / any (a key off the controls, a gamepad button) keep the sheet: the title does not start.
+    r.input.command('confirm');
+    r.input.command('any');
+    expect(r.app.state()).toBe('TITLE');
+    expect(yp(r).dataset.screen).toBe('skins');
+
     click(r, '.skins-close');
     expect(yp(r).dataset.screen).toBe('title');
     expect(r.renderer.last).toEqual(['ball.steel', 'crane.yellow', 'trail.ink', 'stage.note']);
     expect(r.root.querySelector('.title-skins .skin-dot')).toBeNull();
+    // Closed: the title starts again on any key.
+    r.input.command('any');
+    expect(r.app.state()).not.toBe('TITLE');
   });
 
   it('from the settings over the level select: the attract runs behind the sheet, the select comes back on close', () => {
@@ -184,7 +194,10 @@ describe('the スキン sheet (real UI)', () => {
     const r = rig(store, false);
     r.input.command('any');
     expect(r.app.state()).toBe('LEVEL_SELECT');
-    click(r, '.page-head .btn--icon[aria-label="設定"]');
+    // 鉛筆と消しカス (1-1 cleared) waits unseen: the select's gear carries the NEW dot to the settings' skins row.
+    expect(r.root.querySelector('.page-head .has-skin-dot .skin-dot')).not.toBeNull();
+    expect(r.root.querySelector('.page-head .has-skin-dot')!.getAttribute('aria-label')).toBe(t('select.settingsNew'));
+    click(r, '.page-head .btn--icon[title="設定"]');
     expect(yp(r).dataset.screen).toBe('settings');
     click(r, '.set-skins');
     expect(yp(r).dataset.screen).toBe('skins');
@@ -192,6 +205,11 @@ describe('the スキン sheet (real UI)', () => {
     expect(r.renderer.loaded.at(-1)).toBe('2-2');
     r.app.advance(0.5);
     expect(r.renderer.lastFrame!.ghosts.map((g) => g.kind)).toEqual(['ai']);
+    // The title attract behind the sheet never starts: confirm / any key or gamepad button do nothing.
+    r.input.command('confirm');
+    r.input.command('any');
+    expect(r.app.state()).toBe('TITLE');
+    expect(yp(r).dataset.screen).toBe('skins');
     click(r, '.skins-close');
     expect(yp(r).dataset.screen).toBe('settings');
     expect(r.app.state()).toBe('LEVEL_SELECT');

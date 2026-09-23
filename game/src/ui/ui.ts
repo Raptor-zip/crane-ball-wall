@@ -72,6 +72,7 @@ export interface ResultsData {
   replay: string | null /* null above 6 KB */; strobe: Float32Array /* bx,by every 0.1 s */;
   standing?: Standing | null /* level success: the world rank row under the time (GAME_DESIGN.md §9.4); core replaces it as answers come */;
   ballFill?: string /* the equipped ball's colour for the share card (§7.14); absent: the default red, and on egg levels */;
+  skins?: string[] /* skin ids this run unlocked (§7.14): listed on the card, which a small phone's toast may miss */;
 }
 export interface DailyView {
   dayIndex: number; n: number; level: LevelDef; balls: ('ok' | 'gold' | 'crown' | 'fail' | null)[];

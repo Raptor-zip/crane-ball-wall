@@ -78,8 +78,11 @@ export interface UiContext {
   skins?: () => SkinsView;
   /** Try-on on the live scene behind the skins sheet (locked skins too); null goes back to the equipped look. */
   skinPreview?: (ids: Partial<Record<SkinPart, string>> | null) => void;
-  /** The skins sheet opened (true) / closed (false): core runs the title attract behind it when a menu page opened it. */
-  skinsShown?: (open: boolean) => void;
+  /**
+   * The skins sheet opened (true) / closed (false): core runs the title attract behind it when a menu page opened it.
+   * tall: `sheetTop` is the sheet's top edge (root px), sent again when it moves; core frames the attract above it.
+   */
+  skinsShown?: (open: boolean, sheetTop?: number) => void;
 }
 
 /** Handed to every screen renderer by ui.ts. */

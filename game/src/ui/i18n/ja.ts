@@ -485,8 +485,8 @@ export const ja = {
   'skins.trying': '試着中',
   'skins.tryHint': 'まだのスキンもタップで試着できます',
   'skins.setDone': 'そろった',
-  'skin.toast': 'スキン「{name}」が開いた!',
-  'skin.toastMany': 'スキンが{n}個開いた! タイトルの「スキン」から着せ替え',
+  'skin.toast': 'スキンが開いた!\n「{name}」',
+  'skin.toastMany': 'スキンが{n}個開いた!\n「スキン」から着せ替え',
   'skin.set.original': '原典',
   'skin.set.lab': '研究室',
   'skin.set.site': '工事現場',
@@ -548,12 +548,19 @@ export const ja = {
   'skin.stage.note.blurb': '研究の実験ノート。',
   'skin.stage.diazo.name': '青焼き図面',
   'skin.stage.diazo.blurb': '設計室の青焼き。壁は図面の青。',
-  'skin.stage.site.name': '工事現場',
-  'skin.stage.site.blurb': '合板の仮囲いとコンクリートブロック。安全第一。',
+  'skin.stage.site.name': '仮囲い',
+  'skin.stage.site.blurb': '合板の囲いとコンクリートブロック。安全第一。',
   'skin.stage.textbook.name': '教科書の図',
   'skin.stage.textbook.blurb': '図のように、質量 m の小球を長さ L の糸でつるす。',
   'skin.stage.castle.name': '鶴の城',
   'skin.stage.castle.blurb': '鶴の城の石垣。丸く見えても当たり判定は四角いまま。',
+  // skins review fixes: the gentle badge's levels, the results card's line, the settings / select buttons' names
+  'skin.rule.gentle': 'バッジ「{name}」をとる（{levels}を{n}\u00a0N以下でクリア）',
+  'skin.rule.or': 'か',
+  'results.skins': '新しいスキン',
+  'settings.skinsOpenLabel': 'えらぶ（スキンの着せ替え）',
+  'settings.skinsOpenNew': 'えらぶ（スキンの着せ替え、新しいスキンあり）',
+  'select.settingsNew': '設定（新しいスキンあり）',
 } as const;
 
 export type I18nKey = keyof typeof ja;

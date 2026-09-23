@@ -9,8 +9,11 @@ import { defaultLevelProgress, defaultSave } from '../../src/store/save';
 import type { Renderer } from '../../src/render/renderer';
 import type { SkinLook } from '../../src/render/skinLooks';
 import { SKINS } from '../../src/core/skins';
-import { SKIN_TOAST_EACH, buildSkinsView, createSkinState } from '../../src/core/skinState';
+import { SKINS_SHEET_GAP, SKIN_TOAST_EACH, buildSkinsView, createSkinState, skinsSheetLayout } from '../../src/core/skinState';
+import type { Layout } from '../../src/render/renderer';
 import { t } from '../../src/ui/i18n/format';
+import type { ResultsData } from '../../src/ui/ui';
+import { dayIndexAt, jstDayNumber } from '../../src/shared/daily';
 
 const levels = (JSON.parse(readFileSync(new URL('../../src/data/levels.json', import.meta.url), 'utf8')) as LevelsFile).levels;
 const L = (id: string): LevelDef => levels.find((l) => l.id === id)!;
@@ -132,6 +135,45 @@ describe('check(): unlocks and toasts', () => {
     expect(buildSkinsView(s, levels).items.find((i) => i.id === 'ball.moss')!.have).toBe(7);
   });
 
+  it('a locked streak skin shows the streak as it stands today (0 once a day was missed), never the best one', () => {
+    const now = Date.UTC(2026, 8, 24, 3);   // 12:00 JST
+    const today = jstDayNumber(now);
+    const s = defaultSave('ja');
+    s.skins = { owned: [], seen: [], bestStreak: 5 };
+    const played = (daysAgo: number, streak: number): void => {
+      s.daily.streak = streak;
+      s.daily.lastPlayedJst = today - daysAgo;
+      s.daily.lastPlayedDay = Math.max(0, dayIndexAt(now) - daysAgo);
+    };
+    const moss = (): { have: number; need: number } => buildSkinsView(s, levels, undefined, now).items.find((i) => i.id === 'ball.moss')!;
+    const primer = (): { have: number; need: number; owned: boolean } => buildSkinsView(s, levels, undefined, now).items.find((i) => i.id === 'crane.primer')!;
+    played(3, 5);   // a best of 5, then three days missed: the hub says 0, and so does the card
+    expect(moss()).toMatchObject({ have: 0, need: 7 });
+    expect(primer()).toMatchObject({ have: 0, need: 3 });
+    played(1, 2);   // played yesterday, two days in a row: still on
+    expect(moss().have).toBe(2);
+    played(0, 3);
+    expect(moss().have).toBe(3);
+    s.daily.lastPlayedDay = -1;   // never played: 0
+    expect(moss().have).toBe(0);
+    // Owned streak skins show their rule met (the unlock itself counts the best streak).
+    s.skins.owned.push('crane.primer');
+    expect(primer()).toMatchObject({ owned: true, have: 3, need: 3 });
+  });
+
+  it('check(results): the unlocks of a run are also listed on its results card', () => {
+    const s = defaultSave('ja');
+    s.skins = { owned: [], seen: [], bestStreak: 0 };
+    const r = rig(s);
+    r.st.check();
+    clear(s, '1-1');
+    const res = { skins: undefined } as unknown as ResultsData;
+    r.st.check(res);
+    expect(res.skins).toEqual(['trail.pencil']);
+    r.st.check(res);   // nothing new: the list stays
+    expect(res.skins).toEqual(['trail.pencil']);
+  });
+
   it('an unlock re-resolves the selection (an id stored before it was owned now applies)', () => {
     const s = defaultSave('ja');
     s.settings.skin = { trail: 'trail.pencil' };
@@ -173,5 +215,20 @@ describe('the share card and the screen data', () => {
     // Not owned yet although the rule is met (core adds it on the next check): the card still says what it needs.
     expect(by('ball.wrecker')).toMatchObject({ owned: false, have: 50, need: 50 });
     expect(by('stage.site')).toMatchObject({ owned: false, have: 4, need: 300 });
+  });
+});
+
+describe('skinsSheetLayout: tall, the attract is framed above a sheet that covers the floor', () => {
+  const tall: Layout = { kind: 'tall', w: 320, h: 568, dpr: 2, scene: { x: 0, y: 0, w: 320, h: 380 }, deck: { x: 0, y: 380, w: 320, h: 188 }, hudTop: 40, bench: 30 };
+  it('a sheet top above the floor edge becomes the bench band (at most 60 % of the scene)', () => {
+    expect(skinsSheetLayout(tall, 272).bench).toBe(380 - 272 + SKINS_SHEET_GAP);
+    expect(skinsSheetLayout(tall, 100).bench).toBe(380 * 0.6);
+  });
+  it('a sheet below the floor edge, no sheet, or wide: the layout itself', () => {
+    expect(skinsSheetLayout(tall, 360)).toBe(tall);
+    expect(skinsSheetLayout(tall, null)).toBe(tall);
+    expect(skinsSheetLayout(tall, Number.NaN)).toBe(tall);
+    const wide: Layout = { ...tall, kind: 'wide', bench: undefined };
+    expect(skinsSheetLayout(wide, 100)).toBe(wide);
   });
 });

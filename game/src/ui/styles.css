@@ -4045,11 +4045,13 @@ input {
 }
 
 /* ================================================================ skins (GAME_DESIGN.md §7.14) — begin
-   The スキン sheet over the live title attract: tall = a card at the bottom (56 % of the height), wide = a panel on the
-   right. It reuses the card, tab, button and NEW styles; only its layout and the skin cards are new. The scene above /
-   beside it is the preview, so the sheet paints no page background. */
+   The スキン sheet over the live title attract: tall = a card at the bottom (the attract is framed above it), wide = a
+   panel on the side away from the attract's goal (data-side, as the results card). It reuses the card, tab, button and
+   NEW styles; only its layout and the skin cards are new. The scene above / beside it is the preview, so the sheet
+   paints no page background. */
 
 .skins {
+  --skins-w: min(380px, 46%);
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
@@ -4062,7 +4064,8 @@ input {
   overflow: hidden;
 }
 /* tall: the sheet takes the control deck and the bench band, so its top edge is the floor's front edge and the whole
-   play area of the attract stays in view (the preview); on short phones it keeps room for the tabs and a card or two. */
+   play area of the attract stays in view (the preview); on short phones it keeps room for the tabs and a card or two,
+   and core frames the attract above its top edge instead (app.ts sceneLayout). */
 .yp[data-layout="tall"] .skins-sheet {
   left: calc(var(--safe-l) + 8px);
   right: calc(var(--safe-r) + 8px);
@@ -4071,9 +4074,14 @@ input {
 }
 .yp[data-layout="wide"] .skins-sheet {
   top: calc(var(--safe-t) + 12px);
-  right: calc(var(--safe-r) + 12px);
   bottom: calc(var(--safe-b) + 12px);
-  width: min(380px, 46%);
+  width: var(--skins-w);
+}
+.yp[data-layout="wide"] .skins[data-side="left"] .skins-sheet {
+  left: calc(var(--safe-l) + 12px);
+}
+.yp[data-layout="wide"] .skins[data-side="right"] .skins-sheet {
+  right: calc(var(--safe-r) + 12px);
 }
 .skins-head {
   flex: 0 0 auto;
@@ -4119,7 +4127,8 @@ input {
   padding: 4px 4px;
   gap: 3px;
 }
-/* 「軌跡・演出」 at 125 % text: two lines (after the ・), never cut. */
+/* One line at 100 % text (landscape phones: see the short rules); at 125 % 「軌跡・演出」 goes on two lines after the ・,
+   and a word is cut only as the last resort (never wider than its tab). */
 .skins-tab-label {
   max-width: 100%;
   text-align: center;
@@ -4363,9 +4372,19 @@ input {
 .skins-try-text b {
   color: var(--stamp);
 }
-.skins-try-text span {
+.skins-try-text > span {
   color: var(--ink-2);
   font-size: 0.72rem;
+}
+.skins-try-short {
+  display: none;
+}
+/* Landscape phones: the banner beside the panel is narrow; its heading is the short 「試着中」. */
+.yp[data-short="1"] .skins-try-long {
+  display: none;
+}
+.yp[data-short="1"] .skins-try-short {
+  display: inline;
 }
 .skins-try-stop {
   flex: 0 0 auto;
@@ -4383,9 +4402,15 @@ input {
 }
 .yp[data-layout="wide"] .skins-try {
   top: calc(var(--safe-t) + 12px);
-  left: calc(var(--safe-l) + 12px);
-  right: calc(var(--safe-r) + min(380px, 46%) + 24px);
   max-width: none;
+}
+.yp[data-layout="wide"] .skins[data-side="left"] .skins-try {
+  left: calc(var(--safe-l) + var(--skins-w) + 24px);
+  right: calc(var(--safe-r) + 12px);
+}
+.yp[data-layout="wide"] .skins[data-side="right"] .skins-try {
+  left: calc(var(--safe-l) + 12px);
+  right: calc(var(--safe-r) + var(--skins-w) + 24px);
 }
 
 /* The NEW dot of the entry points (title, settings, tabs): a red dot with a card-coloured rim. */
@@ -4400,20 +4425,27 @@ input {
   box-sizing: content-box;
 }
 .title-skins,
-.set-skins {
+.set-skins,
+.has-skin-dot {
   position: relative;
 }
 .title-skins .skin-dot,
-.set-skins .skin-dot {
+.set-skins .skin-dot,
+.has-skin-dot .skin-dot {
   position: absolute;
   top: -5px;
   right: -5px;
 }
-/* tall: the pill over the scene's lower right corner, just above the footer. */
+/* The pill: tall, over the scene's lower left corner just above the footer (the attract's walls, goal and landing are
+   in the middle); wide, the top-left corner, inside the 124 px the logo row keeps free for the corner buttons. */
 .title-float {
   position: absolute;
-  right: calc(var(--safe-r) + 12px);
+  left: calc(var(--safe-l) + 12px);
   bottom: calc(100% + 12px);
+}
+.title-corner--left {
+  left: calc(var(--safe-l) + 12px);
+  right: auto;
 }
 .title-skins--pill {
   min-height: 44px;
@@ -4427,16 +4459,18 @@ input {
   width: 20px;
   height: 20px;
 }
-/* wide: three corner buttons now; keep the logo row clear of them (landscape phones: only on the right, so that the
-   tagline stays beside the logo as before). */
-.yp[data-layout="wide"] .title.has-skins .title-logo {
-  padding: 0 calc(var(--safe-r) + 180px) 0 calc(var(--safe-l) + 180px);
+/* Landscape phones: denser cards so three fit beside the scene; a wider panel and tighter tabs so that every tab label
+   (「クレーン」, 「軌跡・演出」) stays on one line at 100 % text. */
+.yp[data-short="1"] .skins {
+  --skins-w: min(380px, 50%);
 }
-.yp[data-layout="wide"][data-short="1"] .title.has-skins .title-logo {
-  padding: 0 calc(var(--safe-r) + 176px) 0 calc(var(--safe-l) + 100px);
+.yp[data-short="1"] .skins-tabs {
+  gap: 4px;
 }
-
-/* Landscape phones: denser cards so three fit beside the scene. */
+.yp[data-short="1"] .skins-tab {
+  padding: 4px 2px;
+  font-size: 0.64rem;
+}
 .yp[data-short="1"] .skins-sheet {
   padding: 8px 12px 6px;
 }
@@ -4446,6 +4480,9 @@ input {
 .yp[data-short="1"] .skins-tabs {
   padding-bottom: 8px;
 }
+.yp[data-short="1"] .skins-tab b {
+  font-size: 0.7rem;
+}
 .yp[data-short="1"] .skin-card {
   min-height: 64px;
   padding-top: 6px;
@@ -4454,5 +4491,22 @@ input {
 .yp[data-short="1"] .skin-thumb {
   width: 52px;
   height: 52px;
+}
+
+/* The summary unlock toast has two lines (「スキンが9個開いた!」 / where to find them): its line break is in the text. */
+.toast > span {
+  white-space: pre-line;
+}
+
+/* The results card's line of new skins (like its badges): a toast can miss a small phone, this stays on the card. */
+.res-skins .badge {
+  background: var(--card);
+}
+.res-skins .badge-dot {
+  color: var(--ball-lip);
+}
+.res-skins .badge-dot .ico {
+  width: 12px;
+  height: 12px;
 }
 /* ================================================================ skins — end */

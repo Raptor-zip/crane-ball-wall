@@ -1,5 +1,5 @@
-// Skins (スキン, GAME_DESIGN.md §7.14): a sheet over the live title attract (tall: a bottom sheet, wide: a right-side
-// panel) with one tab per part. Tapping an unlocked card equips it (settings.skin, applied by core outside a run);
+// Skins (スキン, GAME_DESIGN.md §7.14): a sheet over the live title attract (tall: a bottom sheet, wide: a side panel
+// away from the attract's goal) with one tab per part. Tapping an unlocked card equips it (settings.skin, applied by core outside a run);
 // tapping a locked card tries it on the attract behind the sheet until another tap or close. Locked cards keep their
 // true colours and show the unlock condition and progress. Opening a tab marks its new skins as seen. Owner: O7.
 import type { Screen, ScreenHandle } from '../ui';
@@ -13,12 +13,22 @@ import { h } from '../dom';
 import { icon } from '../icons';
 import { getLang, levelName, t } from '../i18n/format';
 import { skinThumb } from '../skinthumb';
+import { resultsSide } from '../results';
 
 const PARTS: readonly SkinPart[] = ['ball', 'crane', 'trail', 'stage'];
-/** Try-on repaints (a board repaint is 20-60 ms on a phone) wait for the taps / arrow presses to settle. */
+/**
+ * Repaints (a board repaint is 20-60 ms on a phone) wait for the input to settle: every try-on, and an equip picked
+ * with the arrow keys (holding ↓ runs through the cards; only the card it stops on is painted and stored).
+ */
 export const TRY_ON_DEBOUNCE_MS = 150;
+/** The level of the title attract behind the sheet (core/app.ts TITLE_LEVEL). */
+const ATTRACT_LEVEL = '2-2';
+/** Enter / Space on these activate them; anywhere else on the sheet (or the scene around it) they do nothing. */
+const CONTROLS = 'button, a, input, select, textarea, [role="tab"], [role="radio"]';
 
 const nameOf = (id: string): string => t(`skin.${id}.name` as I18nKey);
+/** A level id that never breaks at its hyphen (「2-」 / 「2」 on two lines): word joiners around it. */
+const levelId = (id: string): string => id.replace(/-/g, '\u2060-\u2060');
 
 /** The unlock condition of a locked card (§7.14 table), with {have}/{need} filled in. */
 export function conditionText(rule: UnlockRule, have: number, need: number, env: Pick<ScreenEnv, 'levels'>): string {
@@ -28,12 +38,22 @@ export function conditionText(rule: UnlockRule, have: number, need: number, env:
     case 'clears': return rule.n === 'all' ? t('skin.rule.clearsAll', v) : need === 1 ? t('skin.rule.clears1') : t('skin.rule.clears', v);
     case 'level': {
       const lv = env.levels().find((l) => l.id === rule.id);
-      return t('skin.rule.level', { id: rule.id, name: lv ? levelName(lv) : rule.id });
+      return t('skin.rule.level', { id: levelId(rule.id), name: lv ? levelName(lv) : rule.id });
     }
     case 'world': return t('skin.rule.world', { ...v, w: rule.w });
     case 'notes': return t('skin.rule.notes', v);
     case 'tricks': return t(rule.n === 'all' ? 'skin.rule.tricksAll' : 'skin.rule.tricks', v);
-    case 'badge': return t('skin.rule.badge', { name: t(`badge.${rule.id as BadgeId}`), desc: t(`badge.${rule.id as BadgeId}.desc`) });
+    case 'badge': {
+      const name = t(`badge.${rule.id as BadgeId}`);
+      // やさしさ exists only on the levels with a gentle limit (2-2, 3-2): the condition names them.
+      const gentle = rule.id === 'yasashisa' ? env.levels().filter((l) => l.world >= 1 && typeof l.badges?.gentleN === 'number') : [];
+      if (gentle.length) {
+        const n = Math.min(...gentle.map((l) => l.badges!.gentleN!));
+        const levels = gentle.map((l) => levelId(l.id)).join(t('skin.rule.or'));
+        return t('skin.rule.gentle', { name, levels, n: String(n) });
+      }
+      return t('skin.rule.badge', { name, desc: t(`badge.${rule.id as BadgeId}.desc`) });
+    }
     case 'fails': return t('skin.rule.fails', v);
     case 'attempts': return t('skin.rule.attempts', v);
     case 'golds': return t('skin.rule.golds', v);
@@ -65,7 +85,10 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
   const tryText = h('div', { class: 'skins-try-text' });
   const tryStop = h('button', { class: 'btn btn--icon skins-try-stop', type: 'button', 'aria-label': t('skins.tryEnd'), title: t('skins.tryEnd') }, icon('close'));
   const tryBanner = h('div', { class: 'skins-try', role: 'status', hidden: true }, icon('brush'), tryText, tryStop);
-  const el = h('div', { class: 'skins' }, tryBanner, sheet);
+  // wide: the panel takes the side away from the attract's goal (as the results card does), so the walls, the goal and
+  // the ball's last swing stay in view beside it.
+  const attract = env.levels().find((l) => l.id === ATTRACT_LEVEL);
+  const el = h('div', { class: 'skins', 'data-side': attract ? resultsSide(attract) : 'left' }, tryBanner, sheet);
   root.appendChild(el);
 
   if (!view) {
@@ -78,20 +101,45 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
   const visited = new Set<SkinPart>();
   let part: SkinPart = screen.part ?? view.items.find((i) => fresh.has(i.id))?.part ?? 'ball';
   let trying: SkinItem | null = null;
+  /** An equip picked with the arrow keys, stored when the keys settle (or on close). */
+  let pending: SkinItem | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
   /** A try-on reached core (closing must end it even when its "end" was still waiting for the debounce). */
   let previewed = false;
 
+  // tall: core frames the attract above the sheet (the sheet can be taller than the control deck on a small phone or at
+  // 125 % text); its top edge goes along now and whenever the sheet changes size.
+  const sheetTop = (): number | undefined => {
+    if (env.layoutKind() !== 'tall') return undefined;
+    const yp = el.closest('.yp');
+    if (!yp || !el.isConnected) return undefined;
+    const top = el.getBoundingClientRect().top - yp.getBoundingClientRect().top + sheet.offsetTop;
+    return sheet.offsetHeight > 0 && Number.isFinite(top) ? top : undefined;
+  };
+  const shown = (): void => {
+    try {
+      env.ctx.skinsShown?.(true, sheetTop());
+    } catch {
+      /* core's business */
+    }
+  };
+  shown();
+  let resize: ResizeObserver | null = null;
   try {
-    env.ctx.skinsShown?.(true);
+    resize = new ResizeObserver(() => {
+      if (!disposed) shown();
+    });
+    resize.observe(sheet);
   } catch {
-    /* core's business */
+    resize = null;   // no ResizeObserver: the top edge of the first layout stays
   }
 
   const partItems = (p: SkinPart): SkinItem[] => view!.items.filter((i) => i.part === p);
+  /** The equipped id of a part, an arrow-key pick waiting for the keys to settle included. */
+  const equippedId = (p: SkinPart): string => (pending?.part === p ? pending.id : view!.equipped[p]);
   const lookOf = <P extends SkinPart>(p: P): SkinLook[P] => {
-    const id = trying?.part === p ? trying.id : view!.equipped[p];
+    const id = trying?.part === p ? trying.id : equippedId(p);
     return (view!.items.find((i) => i.id === id) ?? partItems(p)[0]!).look as SkinLook[P];
   };
   const setDone = (set: SkinItem['set']): boolean => set !== 'original' && view!.items.filter((i) => i.set === set).every((i) => i.owned);
@@ -145,7 +193,7 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
 
   // ---- cards
   function card(it: SkinItem): HTMLButtonElement {
-    const on = view!.equipped[it.part] === it.id;
+    const on = equippedId(it.part) === it.id;
     const tryingThis = trying?.id === it.id;
     const ctxLooks = { ball: lookOf('ball'), crane: lookOf('crane'), trail: lookOf('trail'), stage: lookOf('stage') };
     const cls = `skin-card${on ? ' is-on' : ''}${it.owned ? '' : ' is-locked'}${tryingThis ? ' is-trying' : ''}`;
@@ -194,48 +242,58 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
     tryBanner.hidden = !trying;
     if (!trying) return;
     tryText.replaceChildren(
-      h('b', null, `${t('skins.try')}`),
+      // Landscape phones: the short heading (「試着中」; the lock and the condition say the rest), see styles.css.
+      h('b', null, h('span', { class: 'skins-try-long' }, t('skins.try')), h('span', { class: 'skins-try-short' }, t('skins.trying'))),
       h('span', null, `${nameOf(trying.id)} — ${conditionText(trying.rule, trying.have, trying.need, env)}`));
   }
 
-  function preview(ids: Partial<Record<SkinPart, string>> | null, now = false): void {
+  /** Stores a waiting equip (settings.skin; core applies it) and hands the try-on state to core. */
+  function settle(): void {
     if (timer !== null) clearTimeout(timer);
     timer = null;
-    const run = (): void => {
+    if (pending) {
+      const it = pending;
+      pending = null;
+      const st = env.settings();
+      env.applySettings({ ...st, skin: { ...(st.skin ?? {}), [it.part]: it.id } });
+      view = readView(env) ?? view;
+    }
+    const ids = trying ? { [trying.part]: trying.id } : null;
+    if (!ids && !previewed) return;
+    previewed = ids !== null;
+    try {
+      env.ctx.skinPreview?.(ids);
+    } catch {
+      /* core's business */
+    }
+  }
+
+  /** Settle now (a tap on an unlocked card equips at once) or after TRY_ON_DEBOUNCE_MS (try-ons, arrow keys). */
+  function schedule(now: boolean): void {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    if (now) settle();
+    else timer = setTimeout(() => {
       timer = null;
-      if (disposed) return;
-      previewed = ids !== null;
-      try {
-        env.ctx.skinPreview?.(ids);
-      } catch {
-        /* core's business */
-      }
-    };
-    if (now) run();
-    else timer = setTimeout(run, TRY_ON_DEBOUNCE_MS);
+      if (!disposed) settle();
+    }, TRY_ON_DEBOUNCE_MS);
   }
 
   function refocus(id: string): void {
     panel.querySelector<HTMLElement>(`[data-skin="${id}"]`)?.focus({ preventScroll: true });
   }
 
-  function pick(it: SkinItem): void {
+  function pick(it: SkinItem, byKey = false): void {
     const hadFocus = el.contains(document.activeElement);
     if (it.owned) {
-      // Equip: settings.skin, applied by core; then the try-on (if any) ends in the same look.
-      const st = env.settings();
-      env.applySettings({ ...st, skin: { ...(st.skin ?? {}), [it.part]: it.id } });
-      if (trying) {
-        trying = null;
-        preview(null, true);
-      }
-      view = readView(env) ?? view;
-    } else if (trying?.id === it.id) {
+      // Equip: settings.skin, applied by core; a try-on ends in the same step.
+      if (pending && pending.part !== it.part) settle();   // another part's arrow-key pick is stored first
       trying = null;
-      preview(null);
+      pending = it;
+      schedule(!byKey);
     } else {
-      trying = it;
-      preview({ [it.part]: it.id });
+      trying = trying?.id === it.id ? null : it;
+      schedule(false);
     }
     paintTry();
     paintPanel();
@@ -246,7 +304,7 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
     if (!trying) return;
     const id = trying.id;
     trying = null;
-    preview(null);
+    schedule(false);
     paintTry();
     paintPanel();
     refocus(id);
@@ -268,15 +326,30 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
         return true;
       }
       if (nav && tgt.closest('.skin-card')) {
-        // A radio group: the arrows move to the next card and pick it (equip, or try a locked one on).
+        // A radio group: the arrows move to the next card and pick it (equip, or try a locked one on). The pick is
+        // painted at once and reaches the scene when the keys settle (holding ↓ runs through the cards).
         const cards = [...panel.querySelectorAll<HTMLButtonElement>('.skin-card')];
         const i = cards.indexOf(tgt.closest('.skin-card') as HTMLButtonElement);
         const back = e.key === 'ArrowUp' || e.key === 'ArrowLeft';
         const n = e.key === 'Home' ? 0 : e.key === 'End' ? cards.length - 1 : (i + (back ? -1 : 1) + cards.length) % cards.length;
-        cards[n]?.click();
+        const it = partItems(part).find((x) => x.id === cards[n]?.dataset.skin);
+        // The arrows check the next card; they never uncheck the one that is on (a locked card on trial stays on trial).
+        if (it && !(trying?.id === it.id)) pick(it, true);
+        else if (it) refocus(it.id);
         return true;
       }
-      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Tab' || e.key === 'Escape') return false;
+      if (e.key === 'Enter' || e.key === ' ') {
+        // A control (card, tab, button) activates itself (ui.ts keeps the key from the game). Anywhere else (the list's
+        // background, the notes, the scene around the sheet) nothing happens: the title behind it must not start.
+        // Space still scrolls the list it is pressed in.
+        if (tgt.closest(CONTROLS)) return false;
+        if (e.key === ' ' && tgt.closest('.skins-panel')) {
+          e.stopPropagation();
+          return false;
+        }
+        return true;
+      }
+      if (e.key === 'Tab' || e.key === 'Escape') return false;
       // Everything else stays on the sheet: a stray key must not start the game on the title behind it.
       return e.key.length === 1 || nav || e.key === 'Backspace';
     },
@@ -285,10 +358,16 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
     },
     dispose() {
       disposed = true;
-      if (timer !== null) clearTimeout(timer);
-      timer = null;
+      resize?.disconnect();
+      // An arrow-key pick still waiting is stored; a try-on ends (closing goes back to the equipped look).
+      trying = null;
       try {
-        if (trying || previewed) env.ctx.skinPreview?.(null);
+        settle();
+      } catch {
+        /* the store reports its own failures */
+      }
+      try {
+        if (previewed) env.ctx.skinPreview?.(null);
         env.ctx.skinsShown?.(false);
       } catch {
         /* core's business */

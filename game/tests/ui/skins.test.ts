@@ -43,8 +43,13 @@ describe('i18n (§7.14)', () => {
     }
     setLang('ja');
     expect(conditionText({ k: 'fails', n: 50 }, 12, 50, env)).toBe('しくじり 50回（12/50）');
-    expect(conditionText({ k: 'level', id: '2-2' }, 0, 1, env)).toBe('2-2「原典：いれる」をクリア');
-    expect(conditionText({ k: 'badge', id: 'yasashisa' }, 0, 1, env)).toBe('バッジ「やさしさ」をとる（ピーク力 12.34 N 以下でクリア）');
+    expect(conditionText({ k: 'level', id: '2-2' }, 0, 1, env)).toBe('2\u2060-\u20602「原典：いれる」をクリア');   // no break at the hyphen
+    // やさしさ exists only on 2-2 and 3-2: the condition names them (and keeps 12.34 N on one line).
+    expect(conditionText({ k: 'badge', id: 'yasashisa' }, 0, 1, env)).toBe('バッジ「やさしさ」をとる（2\u2060-\u20602か3\u2060-\u20602を12.34\u00a0N以下でクリア）');
+    expect(conditionText({ k: 'badge', id: 'hashidon' }, 0, 1, env)).toBe(`バッジ「${t('badge.hashidon')}」をとる（${t('badge.hashidon.desc')}）`);
+    setLang('en');
+    expect(conditionText({ k: 'badge', id: 'yasashisa' }, 0, 1, env)).toBe('Earn the "Gentle" badge (clear 2\u2060-\u20602 or 3\u2060-\u20602 at 12.34\u00a0N or less)');
+    setLang('ja');
     expect(conditionText({ k: 'crowns', n: 1 }, 0, 1, env)).toBe('王冠を1個とる（AIに勝つ）');
     expect(conditionText({ k: 'streak', n: 7 }, 3, 7, env)).toBe('今日の5球を7日連続（いま3日）');
   });
@@ -231,14 +236,76 @@ describe('the sheet', () => {
     expect(cards.filter((c) => c.tabIndex === 0).map((c) => c.dataset.skin)).toEqual(['ball.red']);
     cards[0]!.focus();
     key(cards[0]!, 'ArrowDown');
-    expect(save.settings.skin).toEqual({ ball: 'ball.steel' });
+    // The pick shows at once; it is stored (and repainted in core) once the keys settle.
+    expect(q('[data-skin="ball.steel"]')!.getAttribute('aria-checked')).toBe('true');
     expect(document.activeElement).toBe(q('[data-skin="ball.steel"]'));
+    expect(save.settings.skin).toBeUndefined();
+    vi.advanceTimersByTime(160);
+    expect(save.settings.skin).toEqual({ ball: 'ball.steel' });
     key(q('[data-skin="ball.steel"]')!, 'ArrowDown');
     vi.advanceTimersByTime(160);
     expect(previews.at(-1)).toEqual({ ball: 'ball.wrecker' });
     const stray = key(q('[data-skin="ball.wrecker"]')!, 'a');
     expect(stray.defaultPrevented).toBe(true);
     expect(key(q('[data-skin="ball.wrecker"]')!, 'F5').defaultPrevented).toBe(false);
+  });
+
+  it('holding an arrow key runs through the cards; only the card it stops on is stored and repainted', () => {
+    vi.useFakeTimers();
+    save.skins!.owned.push('stage.diazo', 'stage.site');
+    mount();
+    ui.show({ id: 'title' });
+    ui.show({ id: 'skins', part: 'stage' });
+    const n0 = got.filter((g) => g.a === 'settingsChanged').length;
+    q('[data-skin="stage.note"]')!.focus();
+    for (let i = 0; i < 6; i++) {
+      key(document.activeElement!, 'ArrowDown');
+      vi.advanceTimersByTime(40);   // key repeat
+    }
+    expect(got.filter((g) => g.a === 'settingsChanged').length).toBe(n0);
+    const stop = (document.activeElement as HTMLElement).dataset.skin!;
+    vi.advanceTimersByTime(160);
+    const it = SKINS.find((x) => x.id === stop)!;
+    const changes = got.filter((g) => g.a === 'settingsChanged');
+    if (save.skins!.owned.includes(stop) || stop === 'stage.note') {
+      expect(changes.length).toBe(n0 + 1);
+      expect(save.settings.skin).toEqual({ stage: stop });
+    } else {
+      expect(it.part).toBe('stage');
+      expect(previews.at(-1)).toEqual({ stage: stop });
+    }
+    // Closing with a pick still waiting stores it.
+    q('[data-skin="stage.note"]')!.focus();
+    key(q('[data-skin="stage.note"]')!, 'Home');
+    key(q('[data-skin="stage.note"]')!, 'ArrowDown');
+    q('.skins-close')!.click();
+    expect(save.settings.skin).toEqual({ stage: 'stage.diazo' });
+  });
+
+  it('Enter / Space away from a control do nothing (the title behind the sheet never starts)', () => {
+    mount();
+    ui.show({ id: 'title' });
+    ui.show({ id: 'skins' });
+    const reached: string[] = [];
+    const spy = (e: KeyboardEvent): void => { reached.push(e.key); };
+    window.addEventListener('keydown', spy);
+    try {
+      const panel = q('.skins-panel')!;
+      const enter = key(panel, 'Enter');
+      expect(enter.defaultPrevented).toBe(true);
+      const space = key(panel, ' ');
+      expect(space.defaultPrevented).toBe(false);   // the list still scrolls
+      key(q('.yp-layer') ?? panel, 'Enter');
+      key(q('.skins-note')!, ' ');
+      expect(reached).toEqual([]);
+      expect(got.some((g) => g.a === 'select')).toBe(false);
+      expect(screenId()).toBe('skins');
+      // On a card, Enter / Space are the card's own (native activation), kept from the game too.
+      key(q('[data-skin="ball.steel"]')!, 'Enter');
+      expect(reached).toEqual([]);
+    } finally {
+      window.removeEventListener('keydown', spy);
+    }
   });
 
   it('a finished set gets the そろった stamp; the tab shows owned / total', () => {

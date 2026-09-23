@@ -153,6 +153,39 @@ function drawTrail(tr: TrailLook, c: ThumbContext): string {
   return out;
 }
 
+/** rgba(r,g,b,a) with its alpha scaled (the board's fibres are drawn for a 512 px tile; a 64 px card needs more). */
+function boost(css: string, k: number): string {
+  const m = /^rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)$/.exec(css);
+  return m ? `rgba(${m[1]},${m[2]},${m[3]},${Math.round(Math.min(1, Number(m[4]) * k) * 100) / 100})` : css;
+}
+
+/**
+ * The board's paper fibres, the few that tell two boards of the same greys apart at card size (textures.ts drawPaper):
+ * plywood grain (long wavy streaks across the board), kozo (long bent washi fibres). Short fibres and none: nothing.
+ */
+function fibres(st: StageLook): string {
+  const t = st.paperTex;
+  let out = '';
+  if (t.fibre === 'grain') {
+    const rnd = rng(5);
+    for (let i = 0; i < 9; i++) {
+      const y = 3 + i * 5.2 + rnd() * 2, amp = 0.4 + rnd() * 0.6, ph = rnd() * 6.28;
+      let d = '';
+      for (let k = 0; k <= 8; k++) d += `${k ? 'L' : 'M'}${f(-2 + k * 8.5)} ${f(y + Math.sin(ph + k * 0.9) * amp)}`;
+      out += `<path d="${d}" fill="none" stroke="${boost(i % 3 === 2 ? t.fibreLight : t.fibreDark, i % 3 === 2 ? 1.4 : 3.2)}" stroke-width="${i % 2 ? 0.9 : 0.6}"/>`;
+    }
+  } else if (t.fibre === 'kozo') {
+    const rnd = rng(9);
+    for (let i = 0; i < 11; i++) {
+      const x = rnd() * 64, y = rnd() * 46, a = rnd() * Math.PI, l = 9 + rnd() * 12, bend = (rnd() - 0.5) * 0.6 * l;
+      const ex = x + Math.cos(a) * l, ey = y + Math.sin(a) * l;
+      const cx = (x + ex) / 2 - Math.sin(a) * bend, cy = (y + ey) / 2 + Math.cos(a) * bend;
+      out += `<path d="M${f(x)} ${f(y)}Q${f(cx)} ${f(cy)} ${f(ex)} ${f(ey)}" fill="none" stroke="${boost(i % 3 === 2 ? t.fibreLight : t.fibreDark, i % 3 === 2 ? 1.6 : 5)}" stroke-width="${i % 2 ? 0.95 : 0.7}" stroke-linecap="round"/>`;
+    }
+  }
+  return out;
+}
+
 /** One wall of bricks in (x0..x1) from y0 down to the floor at y1, in the stage's row height and texture style. */
 function wall(st: StageLook, x0: number, x1: number, y0: number, y1: number, seed: number): string {
   const rh = st.rowH >= 0.09 ? 6.4 : 3.9;
@@ -171,8 +204,18 @@ function wall(st: StageLook, x0: number, x1: number, y0: number, y1: number, see
       const rx = st.brickTex === 'stone' ? 1.6 : st.brickTex === 'block' ? 0.3 : 0.5;
       const ink = st.brickTex === 'print' ? ` stroke="rgba(38,42,52,0.9)" stroke-width="0.6"` : '';
       out += `<rect x="${f(a)}" y="${f(top)}" width="${f(b - a)}" height="${f(y - 0.35 - top)}" rx="${rx}" fill="${col}"${ink}/>`;
-      if (st.brickTex === 'stone') out += `<path d="M${f(a + 1)} ${f(top + 1)}h${f(Math.max(0, b - a - 2))}" stroke="#fff" stroke-opacity=".3" stroke-width=".8"/>`;
-      else if (st.brickTex === 'block') out += `<path d="M${f(a)} ${f(top + 0.4)}h${f(b - a)}" stroke="#fff" stroke-opacity=".28" stroke-width=".6"/>`;
+      const bot = y - 0.35;
+      if (st.brickTex === 'stone') {
+        // Dressed granite: a rounded look from the shading (light top-left, dark bottom-right), a chisel stroke.
+        out += `<path d="M${f(a + 0.9)} ${f(bot - 0.6)}H${f(b - 1.1)}Q${f(b - 0.5)} ${f(bot - 0.6)} ${f(b - 0.5)} ${f(bot - 1.4)}V${f(top + 1.4)}" fill="none" stroke="rgb(40,32,36)" stroke-opacity=".45" stroke-width=".9"/>`;
+        out += `<path d="M${f(a + 0.6)} ${f(bot - 1.4)}V${f(top + 1.4)}Q${f(a + 0.6)} ${f(top + 0.6)} ${f(a + 1.4)} ${f(top + 0.6)}H${f(b - 1.4)}" fill="none" stroke="#fff" stroke-opacity=".42" stroke-width=".8"/>`;
+        if (b - a > 4) out += `<path d="M${f(a + (b - a) * (0.3 + rnd() * 0.3))} ${f(top + (bot - top) * 0.45)}l${f(1.6 + rnd())} ${f(0.6 - rnd() * 1.2)}" stroke="rgb(45,38,40)" stroke-opacity=".35" stroke-width=".5" stroke-linecap="round"/>`;
+      } else if (st.brickTex === 'block') {
+        // Cast concrete block: square corners, a crisp light top, a dark bottom band and a few pores.
+        out += `<path d="M${f(a)} ${f(top + 0.4)}h${f(b - a)}" stroke="#fff" stroke-opacity=".32" stroke-width=".6"/>`;
+        out += `<path d="M${f(a)} ${f(bot - 0.45)}h${f(b - a)}" stroke="rgb(30,25,20)" stroke-opacity=".45" stroke-width=".9"/>`;
+        for (let k = 0; k < 2; k++) out += `<circle cx="${f(a + 1 + rnd() * Math.max(0, b - a - 2))}" cy="${f(top + 1 + rnd() * Math.max(0, bot - top - 2.4))}" r=".35" fill="rgb(50,45,40)" fill-opacity=".45"/>`;
+      }
     }
   }
   // The wall's top face (mortar) and its outline.
@@ -189,6 +232,7 @@ function drawStage(st: StageLook, c: ThumbContext): string {
     const a = k % 16 === 0 ? a1 : k % 8 === 0 ? a2 : a3;
     if (a > 0) out += `<path d="M${k} 0V49M0 ${k}H64" stroke="rgb(${r},${g},${b})" stroke-opacity="${f(Math.min(1, a * 1.1))}" stroke-width="${k % 16 === 0 ? 0.9 : 0.55}"/>`;
   }
+  out += fibres(st);
   // Floor with its front edge and grid lines.
   out += `<rect x="0" y="49" width="64" height="15" fill="${st.floor}"/><path d="M0 49.5H64" stroke="${st.floorTex.edge}" stroke-width="1.2"/>`;
   for (let x = 6; x < 64; x += st.floorTex.minor ? 10 : 20) out += `<path d="M${x} 50 ${x - 3} 64" stroke="${st.floorTex.grid}" stroke-width=".8"/>`;

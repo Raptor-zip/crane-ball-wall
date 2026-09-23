@@ -30,7 +30,8 @@ const defer = q.has('defer');
 const world = Number(q.get('world') ?? 1);
 
 const save = mockSave(lang, q.get('save') === 'fresh' ? 'fresh' : 'mid');
-// Skins (§7.14): &skins=none drops the skins data (no entry points), &skins=seen has no NEW skins.
+// Skins (§7.14): &skins=none drops the skins data (no entry points), &skins=seen has no NEW skins; results: &newskins=
+// trail.pencil,ball.steel lists a run's unlocks on the card.
 if (q.get('skins') !== 'none') mockSkins(save);
 if (q.get('skins') === 'seen' && save.skins) save.skins.seen = [...save.skins.owned];
 if (q.get('ts') === '125') save.settings.textScale = 125;
@@ -286,6 +287,8 @@ function start(): void {
       const v = screenId === 'results-fail' ? 'fail' : screenId === 'results-crown' || screenId === 'results-firstcrown' || screenId === 'ailost' ? 'crown' : screenId === 'results-practice' ? 'practice' : 'ok';
       ui.fx({ t: 'levelLoaded', level: lv });
       const data = mockResults(levelId, v);
+      // &newskins=a,b: skins this run unlocked, listed on the card (§7.14).
+      if (q.get('newskins')) data.skins = q.get('newskins')!.split(',').filter(Boolean);
       // The rank row: a slower clear (nonpb) shows the PB's standing; &arrive delays the server's answer (stamp).
       const nonPb = rankKind === 'nonpb';
       if (nonPb) data.pbSub = data.score! - 18;

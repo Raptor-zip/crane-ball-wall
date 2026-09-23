@@ -79,7 +79,16 @@ export function renderSelectScreen(root: HTMLElement, screen: Extract<Screen, { 
   const nextAt = RANK_THRESHOLDS[rank + 1];
 
   // ---- header
-  const settingsBtn = h('button', { class: 'btn btn--icon', type: 'button', 'aria-label': t('title.settings'), title: t('title.settings') }, icon('gear'));
+  // Unlocked skins not seen yet (§7.14): the red dot on the gear, the way to the skins row in the settings (a toast
+  // after a run can miss a small phone; the dot stays until the skins' tab was opened).
+  let skinsNew = false;
+  try {
+    skinsNew = (env.ctx.skins?.()?.unseen ?? 0) > 0;
+  } catch {
+    skinsNew = false;
+  }
+  const settingsBtn = h('button', { class: `btn btn--icon${skinsNew ? ' has-skin-dot' : ''}`, type: 'button', 'aria-label': skinsNew ? t('select.settingsNew') : t('title.settings'), title: t('title.settings') },
+    icon('gear'), skinsNew ? h('span', { class: 'skin-dot', 'aria-hidden': 'true' }) : null);
   settingsBtn.addEventListener('click', () => env.open({ id: 'settings' }));
   const aboutBtn = h('button', { class: 'btn btn--icon', type: 'button', 'aria-label': t('title.about'), title: t('title.about') }, icon('info'));
   aboutBtn.addEventListener('click', () => env.open({ id: 'about' }));

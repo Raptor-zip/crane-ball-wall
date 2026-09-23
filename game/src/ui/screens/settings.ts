@@ -100,13 +100,13 @@ export function renderSettingsScreen(root: HTMLElement, _screen: Extract<Screen,
   const warn = env.ctx.store && !env.ctx.store.persistent ? h('div', { class: 'warnbox' }, icon('offline'), t('settings.storage')) : null;
 
   // Skins (§7.14): from the menus only (never over the pause menu or a results card: skins change outside a run and
-  // the sheet shows them on the title attract).
+  // the sheet shows them on the title attract). The button's name starts with its visible word (えらぶ / Choose).
   let skinsRow: HTMLElement | null = null;
   try {
     const v = env.ctx.skins?.();
     const host = env.host();
     if (v && (host === 'title' || host === 'select' || host === 'daily')) {
-      const open = h('button', { class: 'btn set-skins', type: 'button', 'aria-label': v.unseen > 0 ? t('title.skinsNew') : t('settings.skins') },
+      const open = h('button', { class: 'btn set-skins', type: 'button', 'aria-label': t(v.unseen > 0 ? 'settings.skinsOpenNew' : 'settings.skinsOpenLabel') },
         icon('brush'), t('settings.skinsOpen'), v.unseen > 0 ? h('span', { class: 'skin-dot', 'aria-hidden': 'true' }) : null);
       open.addEventListener('click', () => env.open({ id: 'skins' }));
       skinsRow = row(t('settings.skins'), open, t('settings.skinsNote'));
