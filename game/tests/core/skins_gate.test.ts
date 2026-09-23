@@ -1,4 +1,5 @@
 // Readability gate over every skin combination (skins spec §3, §5.3, §5.8, §5.9-4). Owner: O5.
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { SphereGeometry } from 'three';
 import { DEFAULT_LOOK, LOOKS, SKIN_PARTS, confettiPalette, patternAt } from '../../src/render/skinLooks';
@@ -6,7 +7,7 @@ import type { SkinLook } from '../../src/render/skinLooks';
 import { ghostStyle } from '../../src/render/ghosts';
 import type { GhostKind } from '../../src/render/renderer';
 import {
-  BASELINE, CVD_MATRICES, GHOST_LOOKS, audit, contrast, de2000, gate, hex, reservedHit,
+  BASELINE, CONFETTI_SEEN, CVD_MATRICES, GHOST_LOOKS, audit, contrast, de2000, gate, hex, reservedHit,
 } from './skinAudit';
 
 const balls = Object.values(LOOKS.ball), cranes = Object.values(LOOKS.crane), trails = Object.values(LOOKS.trail), stages = Object.values(LOOKS.stage);
@@ -35,7 +36,7 @@ describe('the readability gate (§5.8)', () => {
     for (const egg of [false, true]) {
       for (const c of audit(DEFAULT_LOOK, egg)) {
         seen.add(c.id);
-        if (c.id.startsWith('P9') || c.id === 'P10') continue;
+        if (c.id.startsWith('P9') || c.id === 'P10' || c.id === 'S8') continue;
         expect(BASELINE[c.id], c.id).toBeDefined();
         expect(Math.abs(c.v - BASELINE[c.id]!), `${c.id}: ${c.v} vs ${BASELINE[c.id]}`).toBeLessThanOrEqual(0.01);
       }
@@ -43,6 +44,8 @@ describe('the readability gate (§5.8)', () => {
     expect([...seen].sort()).toEqual(Object.keys(BASELINE).sort());
     // Spot values from the spec (§5.8 [today]).
     expect([BASELINE.B1, BASELINE.B4, BASELINE.P5, BASELINE.S5, BASELINE.K7, BASELINE.K9, BASELINE.E1]).toEqual([10.42, 3.81, 18.35, 6.1, 12.07, 1.67, 4.6]);
+    // Added after the review: ink / danger on the wall top (the mortar core), the confetti burst on the board.
+    expect([BASELINE.B11, BASELINE.B12, BASELINE.C1]).toEqual([10.55, 38.75, 28.32]);
     // Today passes its own gate.
     for (const egg of [false, true]) expect(gate(DEFAULT_LOOK, egg).filter((r) => !r.ok)).toEqual([]);
   });
@@ -74,6 +77,52 @@ describe('the readability gate (§5.8)', () => {
     expect(failing(metal)).toContain('P10');
     const patterned: SkinLook = { ...D, ball: { ...LOOKS.ball['ball.kinobi']!, pattern: [{ kind: 'band', color: '#FFC23D', width: 0.18, axes: ['y'] }] } };
     expect(failing(patterned)).toContain('P9');
+    // Review findings, as first shipped: the dark 'print' mortar hid the ink dimension lines on the wall top; graphite
+    // strobe discs among graphite crumb discs; a paper-coloured spark burst. A red mortar hides the danger marks.
+    const tb = LOOKS.stage['stage.textbook']!;
+    expect(failing({ ...D, stage: { ...tb, mortar: '#3A3F4A' } })).toContain('B11');
+    expect(failing({ ...D, stage: { ...tb, mortar: '#3A3F4A' } }, true)).toContain('B11');
+    expect(failing({ ...D, stage: { ...D.stage, mortar: '#D9483F' } })).toContain('B12');
+    const pencil = LOOKS.trail['trail.pencil']!;
+    expect(failing({ ...D, trail: { ...pencil, strobe: { color: '#55585E', shape: 'disc' } } })).toEqual(['S8']);
+    expect(failing({ ...D, trail: { ...D.trail, strobe: { color: 'ball', shape: 'disc' }, confetti: { palette: ['#E0312B', '#F2B705', '#FFFFFF'], shape: 'disc' } } })).toContain('S8');
+    const pale = ['#FFF4C2', '#F6E7B0', '#EBDDD6', '#FFFFFF'];
+    for (const shape of ['spark', 'disc', 'rect'] as const) expect(failing({ ...D, trail: { ...D.trail, confetti: { palette: pale, shape } } })).toEqual(['C1']);
+    // The first wire palette fails on every board as the S_SPARK twinkle drew it (33 % white, 53 % cover).
+    const firstWire = { ...LOOKS.trail['trail.wire']!, confetti: { palette: ['#FFF4C2', '#FFB347', '#FF8A1E', '#F2B705'], shape: 'spark' as const } };
+    const ember = { ...CONFETTI_SEEN.spark };
+    try {
+      Object.assign(CONFETTI_SEEN.spark, { white: 0.326, cover: 0.527 });
+      for (const st of stages) expect(failing({ ...D, stage: st, trail: firstWire }), st.id).toEqual(['C1']);
+    } finally {
+      Object.assign(CONFETTI_SEEN.spark, ember);
+    }
+  });
+
+  it('the confetti model mirrors the particle shader (S_EMBER branch of render/particles.ts PT_FS)', () => {
+    const src = readFileSync(new URL('../../src/render/particles.ts', import.meta.url), 'utf8');
+    const branch = /\} else if \(vShape < 4\.5\) \{[\s\S]*?\} else \{([\s\S]*?)\n {2}\}/.exec(src)?.[1] ?? '';
+    const num = (re: RegExp): number => Number(re.exec(branch)?.[1]);
+    const k = num(/abs\(p\.x \* p\.y\) \* ([0-9.]+) \+ r \* 0\.85/), gain = num(/clamp\(star \* ([0-9.]+), 0\.0, 1\.0\)/);
+    const glow = num(/exp\(-r \* r \* 12\.0\) \* ([0-9.]+);/);
+    const core = /mix\(rgb, vec3\(1\.0\), exp\(-r \* r \* ([0-9.]+)\) \* ([0-9.]+)\)/.exec(branch);
+    expect([k, gain, glow, Number(core?.[1]), Number(core?.[2])]).toEqual([5, 1.8, 0.5, 30, 0.45]);
+    // Alpha-weighted means over the sprite (alpha >= 0.02), as CONFETTI_SEEN.spark states them.
+    let sa = 0, sw = 0, nf = 0;
+    const N = 240;
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+      const x = ((i + 0.5) / N) * 2 - 1, y = ((j + 0.5) / N) * 2 - 1, r = Math.hypot(x, y);
+      const star = Math.max(0, 1 - (Math.abs(x * y) * k + r * 0.85));
+      const a = Math.min(1, Math.min(1, Math.max(0, star * gain)) + Math.exp(-r * r * 12) * glow);
+      if (a < 0.02) continue;
+      sa += a;
+      sw += a * Math.exp(-r * r * Number(core?.[1])) * Number(core?.[2]);
+      nf++;
+    }
+    expect(sw / sa).toBeCloseTo(CONFETTI_SEEN.spark.white, 2);
+    expect(sa / nf).toBeCloseTo(CONFETTI_SEEN.spark.cover, 2);
+    // Today's S_SPARK branch (the goal twinkles) is untouched.
+    expect(src).toContain('float star = max(0.0, 1.0 - (abs(p.x * p.y) * 9.0 + r * 0.85));\n    a = clamp(star * 1.6, 0.0, 1.0) + exp(-r * r * 12.0) * 0.8;\n    rgb = mix(rgb, vec3(1.0), exp(-r * r * 10.0) * 0.8);');
   });
 
   it('GHOST_LOOKS mirror the renderer ghost styles for every kind', () => {

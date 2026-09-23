@@ -182,7 +182,9 @@ export function drawBrick(g: CanvasRenderingContext2D, style: StageLook['brickTe
     return;
   }
   if (style === 'print') {
-    // Printed figure: a flat near-white fill with light noise and a soft bevel; the dark joints draw the lines.
+    // Printed figure: a flat near-white fill with light noise and a soft bevel, outlined in dark ink: the figure's lines
+    // are drawn here, not by the mortar, because the mortar core is also the wall's top face (where the ink near-miss
+    // dimension lines land) and has to stay light.
     const r = rng(14);
     g.fillStyle = '#f6f5f2';
     g.fillRect(0, 0, W, H);
@@ -192,6 +194,13 @@ export function drawBrick(g: CanvasRenderingContext2D, style: StageLook['brickTe
     edge(0, 0, b, 0, 'rgba(255,255,255,0.2)');
     edge(0, H, 0, H - b * 1.4, 'rgba(30,32,40,0.22)');
     edge(W, 0, W - b, 0, 'rgba(30,32,40,0.16)');
+    // The outline: about 3 mm on a row face (0.051 m tall, 0.1-0.3 m wide), i.e. 8 texels across and 5 along.
+    const ly = 8, lx = 5;
+    g.fillStyle = 'rgba(38,42,52,0.9)';
+    g.fillRect(0, 0, W, ly);
+    g.fillRect(0, H - ly, W, ly);
+    g.fillRect(0, ly, lx, H - 2 * ly);
+    g.fillRect(W - lx, ly, lx, H - 2 * ly);
     return;
   }
   // 'clay': today's brick.

@@ -53,7 +53,10 @@ export interface TrailLook {
   ribbon: { color: 'ball' | Hex; width: number };
   /** Success strobe copies. */
   strobe: { color: 'ball' | Hex; shape: 'ring' | 'disc' };
-  /** Success confetti: 'auto' = [brick1, brick2, mortar, beam, goal, stamp, brick2] of the current board and crane. */
+  /**
+   * Success confetti: 'auto' = [brick1, brick2, mortar, beam, goal, stamp, brick2] of the current board and crane.
+   * Shape 'spark' is drawn as an S_EMBER star (render/particles.ts), whose small core keeps the palette colour.
+   */
   confetti: { palette: 'auto' | readonly Hex[]; shape: 'rect' | 'disc' | 'spark' };
 }
 export interface PaperTex {
@@ -178,13 +181,15 @@ const TRAILS: readonly TrailLook[] = [
   },
   {
     id: 'trail.pencil', string: '#323438', stringEdge: '#323438',
-    ribbon: { color: '#55585E', width: 0.55 }, strobe: { color: '#55585E', shape: 'disc' },
+    // Strobe copies are graphite rings (pencil circles), never discs: the eraser crumbs are discs, one of them graphite.
+    ribbon: { color: '#55585E', width: 0.55 }, strobe: { color: '#55585E', shape: 'ring' },
     confetti: { palette: ['#E2CFC6', '#D3BBB0', '#C8A27A', '#55585E', '#EBDDD6'], shape: 'disc' },
   },
   {
     id: 'trail.wire', string: '#2E3642', stringEdge: '#1E232B',
     ribbon: { color: 'ball', width: 1 }, strobe: { color: 'ball', shape: 'ring' },
-    confetti: { palette: ['#FFF4C2', '#FFB347', '#FF8A1E', '#F2B705'], shape: 'spark' },
+    // Deep oranges (no paper-coloured cream), drawn as S_EMBER stars whose small core keeps the colour on the paper.
+    confetti: { palette: ['#FF7A00', '#F2B705', '#E8590C', '#C2410C'], shape: 'spark' },
   },
   {
     id: 'trail.proof', string: '#1E2A44', stringEdge: '#1E2A44',
@@ -235,7 +240,9 @@ const STAGES: readonly StageLook[] = [
       grid: { rgb: [154, 156, 163], alpha: [0.42, 0.3, 0.2] },
     },
     floor: '#D8D6D1', floorTex: { noise: '#8C8A86', grid: '#C6C4BF', edge: '#ABA9A4', minor: true }, floorTint: [1, 1, 1],
-    brick1: '#83868C', brick2: '#91949A', mortar: '#3A3F4A', brickTex: 'print', rowH: 0.06, blob: '#2A2C30', dust: '#9A9CA3',
+    // Light mortar: its core is also the wall's top face, where the ink near-miss dimension lines and the near-wall
+    // marker are drawn (B11). The dark lines of the figure are drawn in the 'print' brick texture instead.
+    brick1: '#83868C', brick2: '#91949A', mortar: '#DCDCD7', brickTex: 'print', rowH: 0.06, blob: '#2A2C30', dust: '#9A9CA3',
   },
   {
     id: 'stage.castle', paper1: '#F4EFE5', paper2: '#E7E0CF',

@@ -3,7 +3,8 @@
 // fields the save already has, so current players unlock at once and never lose an unlock (the daily streak is the
 // exception: PART B keeps a bestStreak and a permanent `owned` list for it).
 // Skins are cosmetic only: nothing under src/sim, worker/, src/net, src/shared, src/store or the ghost codec imports
-// this module (tests/core/skins_boundary.test.ts), and skin ids never reach replays, boards, links or ghosts.
+// this module (tests/core/skins_boundary.test.ts), and skin ids never reach replays, boards, links or ghosts. The save
+// layer gets the bare id list from the import-free core/skinIds.ts instead (store -> core/skins would be a cycle).
 import type { BadgeId } from './bus';
 import type { LevelDef } from '../sim/level';
 import type { SaveV1 } from '../store/save';
@@ -12,6 +13,7 @@ import { crownCount } from './progress';
 import { TRICK_IDS } from './badges';
 import { SKIN_PARTS, partLook } from '../render/skinLooks';
 import type { SkinLook, SkinPart } from '../render/skinLooks';
+import { DEFAULT_SKIN_IDS as DEFAULT_IDS_BY_PART } from './skinIds';
 
 export type { SkinLook, SkinPart } from '../render/skinLooks';
 export { SKIN_PARTS } from '../render/skinLooks';
@@ -33,7 +35,7 @@ export type UnlockRule =
 
 export interface SkinDef { id: string; part: SkinPart; set: SkinSet; rule: UnlockRule }
 
-/** The catalog in screen order (§2.1). Thresholds live only here. */
+/** The catalog in screen order (§2.1); the ids are core/skinIds.ts SKIN_IDS, in the same order. Thresholds live only here. */
 export const SKINS: readonly SkinDef[] = [
   { id: 'ball.red', part: 'ball', set: 'original', rule: { k: 'always' } },
   { id: 'ball.steel', part: 'ball', set: 'lab', rule: { k: 'world', w: 1 } },
@@ -59,9 +61,8 @@ export const SKINS: readonly SkinDef[] = [
   { id: 'stage.castle', part: 'stage', set: 'tancho', rule: { k: 'crowns', n: 13 } },
 ];
 
-export const DEFAULT_SKIN_IDS: Readonly<Record<SkinPart, string>> = {
-  ball: 'ball.red', crane: 'crane.yellow', trail: 'trail.ink', stage: 'stage.note',
-};
+/** The defaults per part (the same object as core/skinIds.ts DEFAULT_SKIN_IDS). */
+export const DEFAULT_SKIN_IDS: Readonly<Record<SkinPart, string>> = DEFAULT_IDS_BY_PART;
 
 const SKIN_BY_ID: ReadonlyMap<string, SkinDef> = new Map(SKINS.map((s) => [s.id, s]));
 const DEFAULT_IDS: ReadonlySet<string> = new Set(Object.values(DEFAULT_SKIN_IDS));

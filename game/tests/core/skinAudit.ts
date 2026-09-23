@@ -166,6 +166,17 @@ const TAGS: readonly { id: string; c: RGB }[] = [
 ];
 
 const LIT_TOP = 1.0, LIT_FRONT = 0.68, BALL_LIT = [0.85, 0.45] as const;
+/** Success strobe copies: alpha of the oldest and the newest copy (render/trail.ts, 0.35 + 0.45 * age). */
+const STROBE_ALPHA = [0.35, 0.8] as const;
+/**
+ * A confetti piece as seen over the board: its colour whitened by the piece's core and spread over its footprint
+ * (alpha-weighted means over the sprite, alpha >= 0.02, of the shader in render/particles.ts PT_FS). Rect and disc
+ * pieces are opaque; a 'spark' piece is an S_EMBER star: 6 % white on average, 65 % cover. (Today's S_SPARK twinkle,
+ * 33 % white and 53 % cover, turned the first wire palette into a faint peach haze on the paper.)
+ */
+export const CONFETTI_SEEN: Readonly<Record<'rect' | 'disc' | 'spark', { white: number; cover: number }>> = {
+  rect: { white: 0, cover: 1 }, disc: { white: 0, cover: 1 }, spark: { white: 0.058, cover: 0.653 },
+};
 /** Today's CIEDE2000 of the 1 m / 0.5 m / 0.1 m grid lines over paper-1 (G1 normalises by these). */
 export const GRID_TODAY = [11.0, 7.73, 4.98] as const;
 
@@ -220,6 +231,11 @@ export function audit(look: SkinLook, egg = false): Check[] {
   add('B8', minOf(wall.map((w) => contrast(p1, w))), 2, 'paper-1 halo vs bricks');
   add('B9', minOf(wall.map((w) => dE(DANGER, w))), 8, 'danger X vs walls');
   addMax('B10', Math.max(dE(p1, hex('#F3EEE4')), dE(p2, hex('#E6DCCB'))), 10, 'board stays in the CSS paper family');
+  // The mortar core stands 0.5 mm above the top brick row (render/bricks.ts), so it is the wall's top face: the ink
+  // near-miss dimension lines, the near-wall leader dot (ink, danger under 20 mm) and the crash marker land on it.
+  const top = shade(hex(st.mortar), LIT_TOP);
+  add('B11', contrast(INK, top), 4.5, 'ink dimension lines on the wall top');
+  add('B12', dE(DANGER, top), 8, 'danger marks on the wall top');
 
   // ---- P: the player's ball (not on the egg level)
   if (!egg) {
@@ -268,11 +284,29 @@ export function audit(look: SkinLook, egg = false): Check[] {
   add('S4', dEcvd(rib, over(AI, 0.6, B.mid)).min, 10, 'trail vs AI dotted line');
   add('S5', dEcvd(rib, over(GOAL, 0.34, B.mid)).min, 8, 'trail vs goal');
   add('S6', dE(rib, B.mid), 8, 'trail on the board');
+  const conf = confettiPalette(look);
   if (!egg) {
     const strobe = hex(tr.strobe.color === 'ball' ? ballC : tr.strobe.color);
     const g = ghostMin(shade(strobe, 0.85));
     add('S7', g.v, 14, `strobe copies vs ghosts (${g.who})`);
+    // Strobe copies and confetti of the same shape (both discs) need different colours: the confetti bursts over the
+    // end of the path, right when the strobe figure is read. Other shape pairs (a ring or a rect) tell apart by shape.
+    if ((tr.strobe.shape as string) === (tr.confetti.shape as string)) {
+      let v = Infinity, who = '';
+      for (const a of STROBE_ALPHA) for (const h of conf) {
+        const r = dEcvd(over(strobe, a, B.mid), hex(h));
+        if (r.min < v) {
+          v = r.min;
+          who = `${h} at alpha ${a}, ${r.worst}`;
+        }
+      }
+      add('S8', v, 14, `strobe copies vs same-shape confetti (${who})`);
+    }
   }
+  // Confetti on the board: the mean over the palette (pieces are picked uniformly) of each piece as seen over the board.
+  const seen = CONFETTI_SEEN[tr.confetti.shape];
+  const pieceSeen = (h: string, p: RGB): RGB => over(over(WHITE, seen.white, hex(h)), seen.cover, p);
+  add('C1', minOf(boards.map((p) => conf.reduce((acc, h) => acc + dE(pieceSeen(h, p), p), 0) / conf.length)), 15, `confetti on the board (${tr.confetti.shape})`);
 
   // ---- K: crane
   const trolley = hex(cr.body), beam = hex(cr.beam), beamF = shade(beam, LIT_FRONT), trolleyF = shade(trolley, LIT_FRONT);
@@ -323,8 +357,8 @@ export function audit(look: SkinLook, egg = false): Check[] {
   ];
   if (tr.strobe.color !== 'ball') r2.push(['strobe', tr.strobe.color]);
   const hits2 = r2.map(([n, h]) => [n, reservedHit(h)] as const).filter(([, x]) => !!x).map(([n, x]) => `${n}: ${x}`);
-  const conf = tr.confetti.palette === 'auto' ? [] : confettiPalette(look);
-  const hitsC = conf.map((h) => [h, reservedHit(h)] as const).filter(([, x]) => !!x && x.startsWith('ai')).map(([h, x]) => `confetti ${h}: ${x}`);
+  const confOwn = tr.confetti.palette === 'auto' ? [] : conf;
+  const hitsC = confOwn.map((h) => [h, reservedHit(h)] as const).filter(([, x]) => !!x && x.startsWith('ai')).map(([h, x]) => `confetti ${h}: ${x}`);
   addMax('R2', hits2.length + hitsC.length, 0, [...hits2, ...hitsC].join('; '));
 
   // ---- G: graph grid strength over paper-1, relative to today
@@ -339,7 +373,7 @@ export function audit(look: SkinLook, egg = false): Check[] {
 
 /**
  * Today's values (the default look; the checks shared by both cargos have the same value on 4-3). Literal on purpose:
- * a change to the default palette cannot lower the gate. Checks without an entry (P9, P10) use their target.
+ * a change to the default palette cannot lower the gate. Checks without an entry (P9, P10, S8) use their target.
  */
 export const BASELINE: Readonly<Record<string, number>> = {
   B1: 10.42, B2: 5.35, B3: 5.82, B4: 3.81, B5: 10.54, B6: 7.28, B7: 21.19, B8: 2.81,
@@ -348,7 +382,7 @@ export const BASELINE: Readonly<Record<string, number>> = {
   S4: 24.45, S5: 6.1, S6: 22.73, S7: 18.35, K1: 9.17, K2: 8.05, K3: 29.82, K4: 42.4,
   K5: 2.57, K6: 25.32, K7: 12.07, K8: 58.27, K9: 1.67, 'K10 ai': 50.97, 'K10 pb': 9.9, 'K10 wr': 17.17,
   'K10 rival': 3.65, R1: 0, R2: 0, 'G1 1m': 1, 'G1 1m max': 1, 'G1 0.5m': 1, 'G1 0.5m max': 1, 'G1 0.1m': 1,
-  'G1 0.1m max': 1, E1: 4.6, E3: 21.91, E4: 9.31,
+  'G1 0.1m max': 1, E1: 4.6, E3: 21.91, E4: 9.31, B11: 10.55, B12: 38.75, C1: 28.32,
 };
 
 export interface GateResult { id: string; v: number; need: number; ok: boolean; max: boolean; note?: string }

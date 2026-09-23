@@ -12,6 +12,7 @@ import {
 } from '../../src/core/skins';
 import type { SkinFacts, SkinPart, UnlockRule } from '../../src/core/skins';
 import { DEFAULT_LOOK, LOOKS, partLook } from '../../src/render/skinLooks';
+import * as ids from '../../src/core/skinIds';
 
 const levels = (JSON.parse(readFileSync(new URL('../../src/data/levels.json', import.meta.url), 'utf8')) as LevelsFile).levels;
 const campaign = levels.filter((l) => l.world >= 1);
@@ -71,6 +72,24 @@ describe('catalog integrity (§2.1)', () => {
     // Screen order: parts are contiguous.
     const parts = SKINS.map((s) => s.part);
     expect(parts).toEqual([...parts].sort((a, b) => SKIN_PARTS.indexOf(a) - SKIN_PARTS.indexOf(b)));
+  });
+
+  it('the import-free id list (core/skinIds.ts, for the save layer) is the catalog, in order', () => {
+    expect([...ids.SKIN_IDS]).toEqual(SKINS.map((s) => s.id));
+    expect(ids.DEFAULT_SKIN_IDS).toBe(DEFAULT_SKIN_IDS);
+    expect([...ids.SKIN_ID_PARTS]).toEqual([...SKIN_PARTS]);
+    for (const s of SKINS) {
+      expect(ids.isSkinId(s.id), s.id).toBe(true);
+      expect(ids.skinIdPart(s.id), s.id).toBe(s.part);
+      expect(ids.isDefaultSkinId(s.id), s.id).toBe(s.rule.k === 'always');
+    }
+    for (const bad of ['', 'ball', 'ball.gold', 'Ball.red', ' ball.red', 'stage.note ', 7, null, undefined, {}, ['ball.red']]) {
+      expect(ids.isSkinId(bad), String(bad)).toBe(false);
+      expect(ids.isDefaultSkinId(bad), String(bad)).toBe(false);
+      expect(ids.skinIdPart(bad), String(bad)).toBeNull();
+    }
+    expect(ids.isSkinId('__proto__')).toBe(false);
+    expect(ids.isSkinId('toString')).toBe(false);
   });
 });
 

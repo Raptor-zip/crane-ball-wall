@@ -34,7 +34,7 @@ import { createString } from './string';
 import type { StringLine } from './string';
 import { createGhostMaterial, drawGhosts, lastTagRects, resetGhostTags } from './ghosts';
 import { QuadBatch, createInkMaterial, drawBackInk, drawMarginInk } from './overlays';
-import { Particles, PointsBatch, S_DISC, S_RECT, S_RING, S_SPARK } from './particles';
+import { Particles, PointsBatch, S_DISC, S_EMBER, S_RECT, S_RING } from './particles';
 import { Trail } from './trail';
 import { DEFAULT_LOOK, SKIN_PARTS, ballTrailColour, confettiPalette, craneAccent, patternAt } from './skinLooks';
 import type { BallLook, SkinLook, SkinPart } from './skinLooks';
@@ -384,7 +384,7 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
     });
     strC.set(t.string);
     strEdge.set(t.stringEdge);
-    confettiShape = t.confetti.shape === 'disc' ? S_DISC : t.confetti.shape === 'spark' ? S_SPARK : S_RECT;
+    confettiShape = t.confetti.shape === 'disc' ? S_DISC : t.confetti.shape === 'spark' ? S_EMBER : S_RECT;
     confettiPal = confettiPalette(look);
   };
 
