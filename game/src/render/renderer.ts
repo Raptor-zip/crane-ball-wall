@@ -43,7 +43,11 @@ import type { QualityGovernor } from './quality';
 import { createRailMapper } from './mapper';
 
 export interface Rect { x: number; y: number; w: number; h: number }
-export interface Layout { kind: 'wide' | 'tall'; w: number; h: number; dpr: number; scene: Rect; deck: Rect | null; hudTop: number }
+export interface Layout {
+  kind: 'wide' | 'tall'; w: number; h: number; dpr: number; scene: Rect; deck: Rect | null; hudTop: number;
+  /** tall: the bench band at the bottom of the scene in CSS px (O7); the play area is [hudTop, scene bottom - bench]. */
+  bench?: number;
+}
 export type GhostKind = 'ai' | 'calm' | 'research_fast' | 'research_pump' | 'reverse_hint' | 'pb' | 'wr' | 'rival' | 'challenge' | 'daily_pb';
 export interface GhostPose { kind: GhostKind; label: string; x: number; bx: number; by: number; slack: boolean; visible: boolean }
 export interface RenderFrame {

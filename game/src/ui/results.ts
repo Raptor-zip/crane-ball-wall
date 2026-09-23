@@ -98,6 +98,12 @@ function graph(label: string, me: ArrayLike<number> | null, ai: ArrayLike<number
   return h('div', { class: 'graph' }, h('div', { class: 'graph-label' }, label), svg);
 }
 
+let graphsSeq = 0;
+
+/**
+ * You vs the AI graphs (x, θ, F; the ball height when only the strobe is known). Few players read them, so they start
+ * closed behind a quiet text toggle under the bars and take no room on the card until it is pressed.
+ */
 function graphs(env: ScreenEnv, data: ResultsData): HTMLElement | null {
   let tracks = null;
   try {
@@ -105,12 +111,13 @@ function graphs(env: ScreenEnv, data: ResultsData): HTMLElement | null {
   } catch {
     tracks = null;
   }
-  const btn = h('button', { class: 'graphs', type: 'button', 'aria-label': `${t('results.graphs')} — ${t('results.tapExpand')}`, 'aria-expanded': 'false' });
+  const id = `res-graphs-${++graphsSeq}`;
+  const body = h('div', { class: 'graphs', id, role: 'group', 'aria-label': t('results.graphs'), hidden: true });
   if (tracks && (tracks.me || tracks.ai)) {
     const me: Channels | null = tracks.me;
     const ai: Channels | null = tracks.ai;
     const toDeg = (a: Float32Array | undefined): Float32Array | null => (a ? a.map((v) => (v * 180) / Math.PI) : null);
-    btn.append(
+    body.append(
       graph(t('results.graph.x'), me?.x ?? null, ai?.x ?? null),
       graph(t('results.graph.th'), toDeg(me?.th), toDeg(ai?.th)),
       graph(t('results.graph.f'), me?.f ?? null, ai?.f ?? null));
@@ -136,14 +143,20 @@ function graphs(env: ScreenEnv, data: ResultsData): HTMLElement | null {
       }
       return out;
     };
-    btn.classList.add('is-open');
-    btn.append(graph(t('results.graph.y'), data.strobe.length >= 4 ? resample(data.strobe, 0.1, 1) : null, aiPath ? resample(aiPath, 1 / 60, 1) : null));
+    body.append(graph(t('results.graph.y'), data.strobe.length >= 4 ? resample(data.strobe, 0.1, 1) : null, aiPath ? resample(aiPath, 1 / 60, 1) : null));
   }
+  body.append(h('div', { class: 'graph-legend' },
+    h('span', null, h('i', { style: 'background:#1E2A44' }), t('common.you')),
+    h('span', null, h('i', { style: 'background:#19C3FF' }), t('common.ai'))));
+  const label = h('span', null, t('results.graphsShow'));
+  const btn = h('button', { class: 'btn btn--flat graphs-toggle', type: 'button', 'aria-expanded': 'false', 'aria-controls': id }, label, icon('next'));
   btn.addEventListener('click', () => {
-    const open = btn.classList.toggle('is-open');
+    const open = body.hidden;
+    body.hidden = !open;
     btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    label.textContent = open ? t('results.graphsHide') : t('results.graphsShow');
   });
-  return btn;
+  return h('div', { class: 'res-graphs' }, btn, body);
 }
 
 /**
@@ -276,12 +289,7 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
     scroll.append(cmp);
 
     const g = graphs(env, data);
-    if (g) {
-      scroll.append(g, h('div', { class: 'graph-legend' },
-        h('span', null, h('i', { style: 'background:#1E2A44' }), t('common.you')),
-        h('span', null, h('i', { style: 'background:#19C3FF' }), t('common.ai')),
-        h('span', { style: 'margin-left:auto' }, t('results.tapExpand'))));
-    }
+    if (g) scroll.append(g);
 
     if (data.badges.length && !announced.has(data)) {
       // §7.3: badges are announced with a toast on the results card, one after another.

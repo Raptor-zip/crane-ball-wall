@@ -1,5 +1,7 @@
 // AI demo overlay (GAME_DESIGN.md §7.5 item 5, §8.4 item 6): the calm ghost plays at ×0.5 in the scene; this overlay
-// shows the F(t) graph (calm force and, if any, your last run's force), the AI gap and a skip button. Owner: O7.
+// shows a small F(t) graph (calm force and, if any, your last run's force), the AI gap and a skip button. The graph
+// panel stays off the ball and the goal zone: tall on the deck, wide a low strip on the bench front under the floor
+// (styles.css). Owner: O7.
 import type { Screen, ScreenHandle, HudState } from '../ui';
 import type { DemoInfo, ScreenEnv } from '../context';
 import { h, s, setAttr } from '../dom';
@@ -42,25 +44,29 @@ export function renderDemoScreen(root: HTMLElement, screen: Extract<Screen, { id
   const H = 140;
   const Fmax = info?.Fmax ?? level.physics.Fmax;
   const n = info ? Math.max(info.aiF.length, info.meF?.length ?? 0, 2) : 2;
-  const playhead = s('line', { x1: 0, x2: 0, y1: 0, y2: H, stroke: '#1E2A44', 'stroke-width': 2, 'vector-effect': 'non-scaling-stroke' });
+  // Quiet lines: thinner strokes and fainter guides than the results graphs, the playhead in secondary ink.
+  const playhead = s('line', { x1: 0, x2: 0, y1: 0, y2: H, stroke: '#4B5670', 'stroke-width': 1.5, 'vector-effect': 'non-scaling-stroke' });
   const svg = s('svg', { class: 'demo-graph', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img', 'aria-label': t('demo.force') },
-    s('rect', { x: 0, y: 0, width: W, height: H, fill: '#FFFDF8' }),
-    s('line', { x1: 0, x2: W, y1: H / 2, y2: H / 2, stroke: 'rgba(30,42,68,.35)', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }),
-    s('line', { x1: 0, x2: W, y1: 6, y2: 6, stroke: 'rgba(229,72,77,.5)', 'stroke-dasharray': '6 5', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }),
-    s('line', { x1: 0, x2: W, y1: H - 6, y2: H - 6, stroke: 'rgba(229,72,77,.5)', 'stroke-dasharray': '6 5', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }),
-    info?.meF ? s('path', { d: path(info.meF, n, Fmax, W, H), fill: 'none', stroke: '#C99700', 'stroke-width': 2, 'vector-effect': 'non-scaling-stroke', opacity: 0.9 }) : null,
-    info ? s('path', { d: path(info.aiF, n, Fmax, W, H), fill: 'none', stroke: '#19C3FF', 'stroke-width': 2.6, 'vector-effect': 'non-scaling-stroke' }) : null,
+    s('line', { x1: 0, x2: W, y1: H / 2, y2: H / 2, stroke: 'rgba(30,42,68,.2)', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }),
+    s('line', { x1: 0, x2: W, y1: 6, y2: 6, stroke: 'rgba(229,72,77,.35)', 'stroke-dasharray': '6 5', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }),
+    s('line', { x1: 0, x2: W, y1: H - 6, y2: H - 6, stroke: 'rgba(229,72,77,.35)', 'stroke-dasharray': '6 5', 'stroke-width': 1, 'vector-effect': 'non-scaling-stroke' }),
+    info?.meF ? s('path', { d: path(info.meF, n, Fmax, W, H), fill: 'none', stroke: '#C99700', 'stroke-width': 1.5, 'vector-effect': 'non-scaling-stroke', opacity: 0.8 }) : null,
+    info ? s('path', { d: path(info.aiF, n, Fmax, W, H), fill: 'none', stroke: '#19C3FF', 'stroke-width': 2, 'vector-effect': 'non-scaling-stroke' }) : null,
     playhead);
 
   const aiGap = info?.aiGapMm ?? sum?.minGapMm ?? null;
   const aiPeak = info?.aiPeakF ?? sum?.peakF ?? null;
-  const stats = h('div', { class: 'demo-stats' },
-    h('span', null, t('demo.force'), ' ', h('span', { class: 'num', style: 'color:var(--ink-2)' }, `±${Math.round(Fmax)} N`)),
-    h('span', { class: 'demo-legend' }, h('i', { style: 'background:#19C3FF' }), t('demo.aiLegend')),
-    info?.meF ? h('span', { class: 'demo-legend' }, h('i', { style: 'background:#C99700' }), t('demo.youLegend')) : null,
+  // Two short lines (what the graph shows; the AI's numbers): beside the graph in the wide strip, above it when tall.
+  const nums = h('div', { class: 'demo-row demo-nums' },
     aiGap !== null && level.physics.walls.length ? h('span', null, t('demo.gap'), ' ', h('span', { class: 'num' }, t('unit.mm', { v: fmtMm(aiGap) }))) : null,
     aiPeak !== null ? h('span', null, t('demo.peak'), ' ', h('span', { class: 'num' }, t('unit.N', { v: aiPeak.toFixed(1) }))) : null);
-  const panel = h('div', { class: 'demo-panel' }, stats, svg, h('div', { class: 'note', style: 'text-align:right;margin-top:4px' }, t('demo.anyKey')));
+  const stats = h('div', { class: 'demo-stats' },
+    h('div', { class: 'demo-row' },
+      h('span', null, t('demo.force'), ' ', h('span', { class: 'num demo-range' }, `±${Math.round(Fmax)} N`)),
+      h('span', { class: 'demo-legend' }, h('i', { style: 'background:#19C3FF' }), t('demo.aiLegend')),
+      info?.meF ? h('span', { class: 'demo-legend' }, h('i', { style: 'background:#C99700' }), t('demo.youLegend')) : null),
+    nums.childElementCount ? nums : null);
+  const panel = h('div', { class: 'demo-panel' }, stats, svg, h('div', { class: 'note demo-hint' }, t('demo.anyKey')));
   const el = h('div', { class: 'demo' }, top, panel);
   root.appendChild(el);
   // Any input skips (§2.1): a tap anywhere outside the panel, or any key.

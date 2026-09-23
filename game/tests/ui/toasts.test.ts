@@ -61,6 +61,28 @@ describe('toasts', () => {
     expect(t.pending()).toBe(0);
   });
 
+  it('one at a time (tall HUD, landscape phones): a burst of four drains in order, none dropped as stale', () => {
+    area = { ...area, max: 1 };
+    const t = createToasts(root, () => area);
+    for (const x of ['A', 'B', 'C', 'D']) t.show(x);
+    const seen: string[][] = [];
+    for (const ms of [0, 2900, 2900, 2900, 2900]) {
+      vi.advanceTimersByTime(ms);
+      seen.push(texts());
+    }
+    // 2.9 s each: D shows 8.7 s after it was queued (past the plain 8 s limit, inside 8 s + 2 × 2.9 s).
+    expect(seen).toEqual([['A'], ['B'], ['C'], ['D'], []]);
+    expect(t.pending()).toBe(0);
+    // A toast that waited for room longer than that is still dropped.
+    area = { ...area, max: 0 };
+    t.show('E');
+    vi.advanceTimersByTime(14000);
+    area = { ...area, max: 1 };
+    t.refresh();
+    expect(texts()).toEqual([]);
+    expect(t.pending()).toBe(0);
+  });
+
   it('drop(kind) removes the visible and waiting toasts of that kind and lets the others in', () => {
     const t = createToasts(root, () => area);
     t.show('badge A', 'badge');

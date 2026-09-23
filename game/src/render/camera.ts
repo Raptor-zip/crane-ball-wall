@@ -3,8 +3,9 @@
 // PerspectiveCamera, vertical FOV 24 deg, looking down 6 deg, yaw 4 deg.
 //   wide: fixed framing; x in wideX (or [rail0 - 0.3, rail1 + 0.3]), y in [-0.35, 1.6] fitted into
 //         the scene rect below the HUD band. The finger band (floor cross-section) is the bottom.
-//   tall (D10): the play area is [hudTop, scene bottom] (O7 sizes it from the width so that a 2.0-2.3 m
-//         window fills it; the HUD sits above it). The frame y in TALL_Y = [-0.05, 1.55] at the ball plane
+//   tall (D10): the play area is [hudTop, scene bottom - layout.bench] (O7 sizes it from the width so that a
+//         2.0-2.3 m window fills it; the HUD sits above it, and the layout's bench band under it shows the bench
+//         front under the floor, where O7 puts the HUD toasts). The frame y in TALL_Y = [-0.05, 1.55] at the ball plane
 //         (floor edge .. gantry beam plus one row of ghost tags) fills the play area exactly, which sets
 //         the scale; the window width W = scene.w / ppm follows (~2.06 m on a 390x844 phone: ball ~22 px
 //         instead of 18). W never drops below the level's minimum (tallWindowFor: 2.0 m, 4-1 2.3 m); when
@@ -106,7 +107,7 @@ export function createCamera(): CameraRig {
   view.quaternion.copy(q);
 
   let kind: 'wide' | 'tall' = 'wide';
-  let w = 1, h = 1, band = 56;
+  let w = 1, h = 1, band = 56, benchPx = 0;
   let X: [number, number] = [-1.3, 3.5];
   let Wmin = TALL_WINDOW_MIN;
   let W = 2.1;
@@ -181,10 +182,12 @@ export function createCamera(): CameraRig {
       // 1) The frame fills the play area vertically -> the scale, and W = scene width / ppm.
       const cx = (X[0] + X[1]) / 2;
       const topT = 1 - 2 * Math.min(0.8, Math.max(0, band / h));
+      // The layout's bench band at the bottom is not part of the play area (the bench front fills it).
+      const botT = Math.min(topT - 0.2, -1 + (2 * benchPx) / h);
       const keepFocus = focus;
       homeFocus = focus = cx;
       const run = (pts: Vector3[]): void => {
-        fit(pts, -1, 1, -1, topT, 'bottom', home);
+        fit(pts, -1, 1, botT, topT, 'bottom', home);
         place(home);
         measurePpm();
       };
@@ -243,6 +246,7 @@ export function createCamera(): CameraRig {
       w = Math.max(1, l.scene.w);
       h = Math.max(1, l.scene.h);
       band = Math.max(0, l.hudTop - l.scene.y);
+      benchPx = l.kind === 'tall' ? Math.max(0, l.bench ?? 0) : 0;
       base.aspect = view.aspect = w / h;
       base.updateProjectionMatrix();
       view.updateProjectionMatrix();

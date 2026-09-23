@@ -8,6 +8,7 @@
 // Dev only: served by `npm run dev` at /dev/input-demo.html (never part of the production build).
 import levelsJson from '../src/data/levels.json';
 import { createInputManager } from '../src/input/manager';
+import { DECK_LAYOUT, FINE_BAND } from '../src/input/pointer';
 import { KEY_RAMP } from '../src/input/keyboard';
 import { servoQ, speedCap } from '../src/input/servo';
 import type { Command, InputFrame, RailMapper } from '../src/input/types';
@@ -461,55 +462,14 @@ function drawDeck(): void {
   if (layout.kind !== 'tall' || !layout.deck) return;
   const ctx = deckView.getContext('2d');
   if (!ctx) return;
-  const s = run.s;
   const { w, h } = layout.deck;
   ctx.setTransform(layout.dpr, 0, 0, layout.dpr, 0, 0);
   ctx.fillStyle = '#ECE5D8';
   ctx.fillRect(0, 0, w, h);
-  drawForceBar(ctx, 0, 0, w, 8, satTicks >= 3);
+  drawForceBar(ctx, 0, 0, w, DECK_LAYOUT.forceBarPx, satTicks >= 3);
 
-  // mini rail (72 px): the whole rail, like the deck mapping
-  const [r0, r1] = phys.rail;
-  const pad = 14, mx = (x: number): number => pad + ((x - r0) / (r1 - r0)) * (w - 2 * pad);
-  const base = 8 + 60;
-  ctx.strokeStyle = 'rgba(30,42,68,0.35)';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(mx(r0), base);
-  ctx.lineTo(mx(r1), base);
-  ctx.stroke();
-  for (const z of phys.phases) {
-    ctx.fillStyle = 'rgba(34,181,115,0.35)';
-    ctx.fillRect(mx(z.xa), base - 4, mx(z.xb) - mx(z.xa), 4);
-  }
-  for (const wl of phys.walls) {
-    ctx.fillStyle = COLORS.brick;
-    const hh = wl.h * 34;
-    ctx.fillRect(mx(wl.x0), base - hh, Math.max(3, mx(wl.x1) - mx(wl.x0)), hh);
-  }
-  ctx.fillStyle = COLORS.ink;
-  ctx.fillRect(mx(s.x) - 6, 14, 12, 5);
-  ctx.strokeStyle = COLORS.string;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(mx(s.x), 19);
-  ctx.lineTo(mx(s.bx), 19 + (RAIL_Y - s.by) * 34);
-  ctx.stroke();
-  ctx.fillStyle = COLORS.ball;
-  ctx.beginPath();
-  ctx.arc(mx(s.bx), 19 + (RAIL_Y - s.by) * 34, 4, 0, Math.PI * 2);
-  ctx.fill();
-  const tx = frame?.targetX ?? null;
-  if (tx !== null) {
-    ctx.strokeStyle = frame?.fine ? COLORS.goal : COLORS.ink;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(mx(tx), 16, 6, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  // control surface + fine band (bottom third, ×1/3)
-  const top = 80, sh = h - 80, bandTop = top + sh * (2 / 3);
+  // control surface + fine band (bottom third, ×1/3) right under the force bar, like the game's deck
+  const top = DECK_LAYOUT.forceBarPx, sh = h - top, bandTop = top + sh * (2 / 3);
   ctx.strokeStyle = 'rgba(30,42,68,0.12)';
   ctx.beginPath();
   ctx.moveTo(0, top + 0.5);
@@ -659,8 +619,8 @@ $('shake').addEventListener('click', (e) => {
 
 // Finger feedback on the deck (display only; the InputManager does the real work).
 deckEl.addEventListener('pointerdown', (e) => {
-  const surfTop = layout.deck ? layout.deck.y + 80 : 0, surfH = layout.deck ? layout.deck.h - 80 : 0;
-  Object.assign(finger, { on: true, x: e.clientX, y: e.clientY, fine: e.clientY >= surfTop + (surfH * 2) / 3 });
+  const surfTop = layout.deck ? layout.deck.y + DECK_LAYOUT.forceBarPx : 0, surfH = layout.deck ? layout.deck.h - DECK_LAYOUT.forceBarPx : 0;
+  Object.assign(finger, { on: true, x: e.clientX, y: e.clientY, fine: e.clientY >= surfTop + surfH * (1 - FINE_BAND.frac) });
 });
 window.addEventListener('pointermove', (e) => {
   if (finger.on) Object.assign(finger, { x: e.clientX, y: e.clientY });

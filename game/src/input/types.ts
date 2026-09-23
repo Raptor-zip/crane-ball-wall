@@ -20,7 +20,7 @@ export type Intent =
  * - device:  the devices that produced movement input since resetForRun, accumulated
  *            (Unknown before any, Mixed once two kinds were used). Write the value of the
  *            last sampled frame of a run into the replay header.
- * - targetX: the current position target / hold point (target ring, tether, mini rail);
+ * - targetX: the current position target / hold point (target ring, tether);
  *            null while a velocity or force intent drives the trolley or no target was set yet.
  */
 export interface InputFrame { intent: Intent; fine: boolean; device: DeviceTag; targetX: number | null }
