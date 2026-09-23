@@ -1040,3 +1040,173 @@ test.describe('quiet graphs', () => {
     expect(t!.bottom).toBeLessThanOrEqual(deck!.top + 1);
   });
 });
+
+// Ranking replays (§7.5 item 6, §8.4 item 6, §9.4): the viewer's bar and F(t) strip on every kind of screen, and the
+// ranking's 「1位のリプレイを見る」 / ▶ column.
+test.describe('ranking replays', () => {
+  /** Buttons smaller than 44 px, except the ▶ of the rows (the whole row is their touch target). */
+  const smallButtons = async (page: Page): Promise<string[]> => (await smallTargets(page)).filter((s) => !s.startsWith('b-play-btn'));
+
+  for (const [vp, lang, ts, rank] of [
+    [{ width: 390, height: 844 }, 'ja', 100, 12], [{ width: 320, height: 568 }, 'en', 125, 100], [{ width: 360, height: 740 }, 'ja', 100, 1],
+    [{ width: 844, height: 390 }, 'ja', 100, 12], [{ width: 844, height: 390 }, 'en', 100, 1], [{ width: 568, height: 320 }, 'ja', 100, 12],
+    [{ width: 568, height: 320 }, 'en', 100, 100], [{ width: 568, height: 320 }, 'ja', 125, 12], [{ width: 640, height: 360 }, 'en', 125, 12],
+    [{ width: 667, height: 375 }, 'ja', 100, 37], [{ width: 1280, height: 720 }, 'ja', 100, 12], [{ width: 1280, height: 720 }, 'en', 125, 1],
+  ] as const) {
+    test(`viewer ${vp.width}x${vp.height} ${lang} ${ts} % #${rank}: the bar fits with who and the time, the strip keeps the clock`, async ({ page }) => {
+      const errors = collectErrors(page);
+      await page.setViewportSize(vp);
+      await open(page, `screen=replay&rank=${rank}&lang=${lang}&still=1&ts=${ts}`);
+      await page.screenshot({ path: `${OUT()}/${lang}-${vp.width}x${vp.height}-replay${rank}-ts${ts}.png` });
+      expect(errors).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      expect(await sidewaysClipped(page)).toEqual([]);
+      expect(await smallButtons(page)).toEqual([]);
+      const l = await page.evaluate(() => window.__UI_DEMO__!.layout());
+      const bar = await page.locator('.demo-top').evaluate((top) => {
+        const kids = [...top.children].filter((e) => getComputedStyle(e).display !== 'none').map((e) => e.getBoundingClientRect());
+        const name = top.querySelector<HTMLElement>('.demo-who-name');
+        return {
+          overflow: top.scrollWidth > top.clientWidth + 1,
+          overlap: kids.some((a, i) => kids.slice(i + 1).some((b) => a.left < b.right - 1 && b.left < a.right - 1 && a.width > 0 && b.width > 0)),
+          name: name ? name.scrollWidth <= name.clientWidth + 1 : null,
+          nameW: name?.getBoundingClientRect().width ?? 0,
+          time: top.querySelector('.demo-who-time')?.getBoundingClientRect().width ?? null,
+        };
+      });
+      expect(bar.overflow).toBe(false);
+      expect(bar.overlap).toBe(false);
+      if (l.kind === 'wide') {
+        // who is playing and the ranked time stay readable (the bar tightens its buttons first; at 125 % text on the
+        // narrowest landscape phones the name may lose its end, never the time)
+        if (ts === 100) expect(bar.name).toBe(true);
+        else expect(bar.nameW).toBeGreaterThan(80);
+        expect(bar.time).toBeGreaterThan(20);
+      }
+      const floorY = await page.evaluate(() => window.__UI_DEMO__!.toScreen(0, 0).y);
+      const [panel] = await rects(page, '.demo-panel');
+      expect(panel!.top).toBeGreaterThan(floorY);
+      expect(panel!.bottom).toBeLessThanOrEqual(vp.height);
+      expect(await page.evaluate(() => {
+        const e = document.querySelector<HTMLElement>('.demo-panel')!;
+        return e.scrollHeight <= e.clientHeight + 1;
+      })).toBe(true);
+      // The replay's numbers (not on the results card) are shown everywhere, starting with whose they are; the clock
+      // is on screen on landscape phones too.
+      const nums = page.locator('.demo-panel .demo-nums');
+      await expect(nums).toBeVisible();
+      await expect(nums.locator('.demo-owner')).toHaveText(lang === 'ja' ? `${rank}位` : `#${rank}`);
+      await expect(nums.locator('.demo-clock')).toBeVisible();
+      if (l.kind === 'wide') {
+        // at most two lines of text in the strip beside the graph on a landscape phone
+        expect(panel!.bottom - panel!.top).toBeLessThanOrEqual(vp.height < 500 ? 42 : 64);
+        // landscape phones: each of the two rows on one line (its items' middles within a few px)
+        const rows = await page.locator('.demo-panel .demo-row').evaluateAll((es) => es.filter((e) => getComputedStyle(e).display !== 'none')
+          .map((e) => {
+            const mids = [...e.children].filter((c) => getComputedStyle(c).display !== 'none')
+              .map((c) => { const r = c.getBoundingClientRect(); return (r.top + r.bottom) / 2; });
+            return Math.max(...mids) - Math.min(...mids) < 5 ? 1 : 2;
+          }));
+        if (vp.height < 520) expect(rows).toEqual([1, 1]);
+      }
+      // The hint (landscape screens that are not phones): inside the strip.
+      const hint = page.locator('.demo-panel .demo-hint');
+      if (await hint.isVisible()) {
+        const out = await hint.evaluate((e) => {
+          const r = document.createRange();
+          r.selectNodeContents(e);
+          return r.getBoundingClientRect().right - document.querySelector('.demo-panel')!.getBoundingClientRect().right;
+        });
+        expect(out).toBeLessThanOrEqual(0);
+      }
+    });
+  }
+
+  for (const vp of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 568, height: 320 }, { width: 640, height: 360 }, { width: 844, height: 390 }, { width: 1280, height: 720 }] as const) {
+    for (const lang of LANGS) {
+      for (const board of ['replay', 'replay-daily'] as const) {
+        test(`ranking ${board} ${vp.width}x${vp.height} ${lang}: the #1 button keeps its label and #1's time, the header stays low`, async ({ page }) => {
+          const errors = collectErrors(page);
+          await page.setViewportSize(vp);
+          await open(page, `screen=board&board=${board}&lang=${lang}&still=1`);
+          await page.waitForSelector('.board-wr');
+          await page.screenshot({ path: `${OUT()}/${lang}-${vp.width}x${vp.height}-board-${board}.png` });
+          expect(errors).toEqual([]);
+          expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+          expect(await sidewaysClipped(page)).toEqual([]);
+          expect(await smallButtons(page)).toEqual([]);
+          const l = await page.evaluate(() => window.__UI_DEMO__!.layout());
+          const head = await page.locator('.page-head').evaluate((e) => {
+            const clipped = (el: Element | null): boolean | null => (el ? el.scrollWidth > el.clientWidth + 1 : null);
+            const shown = (s: string): Element[] => [...e.querySelectorAll(s)].filter((x) => getComputedStyle(x).display !== 'none' && x.getBoundingClientRect().width > 0);
+            const back = e.querySelector('.btn--icon')!.getBoundingClientRect();
+            const title = e.querySelector('.page-title')!.getBoundingClientRect();
+            return {
+              h: e.getBoundingClientRect().height,
+              titleBesideBack: Math.abs(title.top - back.top) < back.height,
+              titleClipped: clipped(e.querySelector('.page-title > span:last-child')),
+              label: shown('.board-wr .board-wr-long, .board-wr .board-wr-short').map((x) => clipped(x)),
+              time: shown('.board-wr .board-wr-time, .board-wr .board-wr-subtime').map((x) => [x.textContent, clipped(x)]),
+            };
+          });
+          // tall: the title beside the back button (cut short there as without the button), the #1 button a row under
+          expect(head.titleBesideBack).toBe(true);
+          expect(head.h).toBeLessThanOrEqual(l.kind === 'tall' ? 135 : 80);
+          if (l.kind === 'wide') expect(head.titleClipped).toBe(false);
+          expect(head.label).toEqual([false]);
+          expect(head.time).toHaveLength(1);
+          expect(head.time[0]![1]).toBe(false);
+          // the ▶ column does not make the rows lower nor cut the time / gap columns
+          const cells = await page.locator('table.board tbody tr[data-rank]').first().evaluate((tr) => ({
+            h: tr.getBoundingClientRect().height,
+            time: [...tr.querySelectorAll('td.b-num')].map((td) => td.scrollWidth <= td.clientWidth + 1),
+          }));
+          expect(cells.h).toBeGreaterThanOrEqual(38);
+          expect(cells.time).toEqual([true, true]);
+        });
+      }
+    }
+  }
+
+  test('offline / low quota: only #1 can be watched, so the table has no ▶ column (the names keep their width)', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await open(page, 'screen=board&board=replay-lite&lang=en&still=1');
+    await page.waitForSelector('.board-wr');
+    await expect(page.locator('table.board .b-play')).toHaveCount(0);
+    await expect(page.locator('table.board thead th')).toHaveCount(4);
+    await expect(page.locator('table.board tr[data-rank="1"]')).toHaveClass(/is-watch/);
+  });
+
+  test('loading: a spinner, and with motion off a still hourglass (not a 「…」 that reads as a menu)', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const [q, want] of [['', 'spinner'], ['&motion=off', 'hourglass'], ['&still=1', 'hourglass']] as const) {
+      await open(page, `screen=board&board=replay-busy&lang=ja${q}`);
+      const btn = page.locator('tr[data-rank="3"] .b-play-btn');
+      await expect(btn).toHaveClass(/is-busy/);
+      const look = await btn.evaluate((b) => ({
+        wait: getComputedStyle(b.querySelector('.ico-wait')!).display,
+        after: getComputedStyle(b, '::after').content,
+        spin: getComputedStyle(b, '::after').animationName,
+      }));
+      if (want === 'spinner') expect(look).toMatchObject({ wait: 'none', spin: 'yp-spin' });
+      else expect(look).toMatchObject({ wait: 'block', after: 'none' });
+    }
+  });
+
+  test('a refused load: the ⓘ toast (not ✓, not the no-connection icon), its two lines balanced', async ({ page }) => {
+    await page.setViewportSize({ width: 568, height: 320 });
+    await open(page, 'screen=board&board=replay-limit&lang=ja');
+    const toast = page.locator('.toast').first();
+    await expect(toast).toContainText('リプレイの読み込み上限です');
+    await expect(toast).toHaveClass(/toast--notice/);
+    const lines = await toast.locator('span').evaluate((s) => {
+      const r = document.createRange();
+      r.selectNodeContents(s);
+      const rows = new Map<number, number>();
+      for (const x of r.getClientRects()) rows.set(Math.round(x.top), (rows.get(Math.round(x.top)) ?? 0) + x.width);
+      return [...rows.values()];
+    });
+    // no word (or one character) left alone on the last line
+    if (lines.length > 1) expect(Math.min(...lines)).toBeGreaterThan(0.4 * Math.max(...lines));
+  });
+});

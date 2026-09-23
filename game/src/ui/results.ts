@@ -18,7 +18,7 @@ export interface ResultsOpts { failText: string | null; pause: PauseInfo }
 
 /** Results already announced (the card is re-rendered when coming back from the ranking or after a rotation). */
 const announced = new WeakSet<ResultsData>();
-/** Results cards whose rank stamp was pressed: it animates once per card; re-renders show the final state. */
+/** Results cards whose rank stamp was pressed on screen: it animates once per card; re-renders show the final state. */
 const stamped = new WeakSet<ResultsData>();
 
 /** The rank stamp is pressed after the count-up (650 ms) and the medal fly, or when the answer arrives if later. */
@@ -398,9 +398,14 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
       }
       let press: { delayMs: number } | null = null;
       if (st.phase === 'confirmed' && st.stamp && !stamped.has(data)) {
-        stamped.add(data);
         press = { delayMs: still ? 0 : Math.max(0, openAt + STAMP_AT_MS - performance.now()) };
         if (!still) stampLandsAt = performance.now() + press.delayMs + (reduce ? 300 : 450);
+        // Pressed once the card stays on screen: a card drawn and replaced at once (back from the replay viewer core
+        // shows the card, then the ranking over it) presses when it is really shown.
+        const row = rankEl;
+        queueMicrotask(() => {
+          if (root.contains(row)) stamped.add(data);
+        });
       }
       renderRankRow(rankEl, st, press);
       if (press) {

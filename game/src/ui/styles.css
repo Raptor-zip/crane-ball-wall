@@ -1253,9 +1253,14 @@ input {
 .toast--badge {
   background: var(--gantry);
 }
-.toast--warn {
+.toast--warn,
+.toast--notice {
   background: var(--ink);
   color: var(--card);
+}
+/* Two-line toasts break evenly (no word alone on the second line). */
+.toast > span {
+  text-wrap: balance;
 }
 .toast .ico {
   width: 20px;
@@ -4087,6 +4092,36 @@ input {
   font-weight: 700;
   opacity: 0.92;
 }
+/* The sub line: #1's name gives way (ellipsis), the time stays whole. */
+.board-wr .board-wr-sub {
+  display: flex;
+}
+.board-wr-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.board-wr-time {
+  flex: 0 0 auto;
+  white-space: pre;
+}
+.board-wr-short,
+.board-wr .board-wr-subtime {
+  display: none;
+}
+/* Narrow landscape phones: 「1位のリプレイ」 over #1's time, so the page title beside it keeps its room. */
+@media (max-width: 699px) {
+  .yp[data-layout="wide"] .board-wr-long,
+  .yp[data-layout="wide"] .board-wr .board-wr-sub {
+    display: none;
+  }
+  .yp[data-layout="wide"] .board-wr-short {
+    display: inline;
+  }
+  .yp[data-layout="wide"] .board-wr .board-wr-subtime {
+    display: block;
+  }
+}
 /* The ▶ column of the ranking: narrow (the rank and the padding give back most of its width to the names); the whole
    row is the touch target, the ▶ the keyboard's. */
 .board--play td {
@@ -4137,10 +4172,18 @@ input {
   border-color: var(--ink);
   color: var(--ink);
 }
-/* Loading (single flight): a small spinner in place of the ▶; a static 「…」 with reduced motion. */
+/* Loading (single flight): a small spinner in place of the ▶; with reduced motion a still hourglass (a 「…」 in the
+   round button would read as a "more" menu). */
+.b-play-btn .ico-wait,
+.board-wr > .ico-wait,
 .b-play-btn.is-busy .ico,
 .board-wr.is-busy > .ico {
   display: none;
+}
+.board .b-play-btn .ico-wait {
+  width: 15px;
+  height: 15px;
+  margin: 0;
 }
 .b-play-btn.is-busy::after,
 .board-wr.is-busy::before {
@@ -4165,12 +4208,13 @@ input {
 .yp--still .b-play-btn.is-busy::after,
 .yp--reduce .board-wr.is-busy::before,
 .yp--still .board-wr.is-busy::before {
-  content: "…";
-  width: auto;
-  height: auto;
-  border: 0;
-  animation: none;
-  font: 800 0.9rem/1 var(--font-head);
+  content: none;
+}
+.yp--reduce .b-play-btn.is-busy .ico-wait,
+.yp--still .b-play-btn.is-busy .ico-wait,
+.yp--reduce .board-wr.is-busy > .ico-wait,
+.yp--still .board-wr.is-busy > .ico-wait {
+  display: block;
 }
 
 /* The replay viewer: the demo's bar and panel. Title in the card colour, the icon in the ghost's ink. */
@@ -4195,16 +4239,29 @@ input {
   color: var(--ink-2);
 }
 .demo-who {
+  gap: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+/* In the chip the ranked time stays whole; the name is cut (last resort, demo.ts tightens the bar first). */
+.demo-who-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* A bar too narrow for everything (demo.ts measures it): 「12位のリプレイ」 becomes 「12位」, then ×0.5 goes. */
+.demo-who-time {
+  flex: 0 0 auto;
+}
+/* A bar too narrow for everything (demo.ts measures the bar and the name in the chip): 「このゴーストと勝負」 becomes
+   「勝負」, 「12位のリプレイ」 becomes 「12位」, then ×0.5 goes, then 戻る keeps only its icon. */
+.demo-race-short,
+.demo-top--replay.is-race-short .demo-race-full,
 .demo-title-short,
 .demo-top--replay.is-tight .demo-title-text,
 .demo-top--replay.is-tighter .demo-speed {
   display: none;
 }
+.demo-top--replay.is-race-short .demo-race-short,
 .demo-top--replay.is-tight .demo-title-short {
   display: inline;
 }
@@ -4219,11 +4276,13 @@ input {
 .yp[data-layout="tall"] .demo-top--replay .btn {
   padding: 0 14px;
 }
-.yp[data-layout="tall"] .demo-back {
+.yp[data-layout="tall"] .demo-back,
+.demo-top--replay.is-back-icon .demo-back {
   width: 48px;
   padding: 0;
 }
-.yp[data-layout="tall"] .demo-back-label {
+.yp[data-layout="tall"] .demo-back-label,
+.demo-top--replay.is-back-icon .demo-back-label {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -4257,4 +4316,19 @@ input {
 .demo-clock {
   display: inline-block;
   min-width: 3.6em;
+}
+/* The numbers' row starts with whose they are (■12位), in the ink of the numbers. */
+.demo-owner {
+  color: var(--ink);
+}
+/* The replay's numbers are its own (the results card has only yours): they stay on landscape phones, in place of the
+   hint (戻る is right above), so the strip keeps to two lines of text; 「■12位 0.84秒」 needs no 「タイム」 there, and
+   at 125 % text the peak force goes (the clock and the gap stay). */
+.yp[data-short="1"] .demo--replay .demo-nums {
+  display: flex;
+}
+.yp[data-short="1"] .demo--replay .demo-hint,
+.yp[data-short="1"] .demo--replay .demo-time-label,
+.yp-ts125 .yp[data-short="1"] .demo--replay .demo-peak {
+  display: none;
 }

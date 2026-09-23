@@ -243,6 +243,8 @@ interface Viewer {
   end: number;
   /** Phase events already given to the renderer (5-4). */
   phase: number;
+  /** A rank-in stamp for the card under the viewer arrived while it was up (nobody has seen it yet). */
+  stampUnseen: boolean;
 }
 
 /** 3 ticks at |F| = Fmax: the trolley's red lamp (session SATURATE_TICKS, |q| = 127), read from a track's force. */
@@ -354,9 +356,11 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
   let uiBackBusy = false;   // a synthetic Escape is being delivered to the UI layer
   let inputPractice: boolean | null = null;   // last input.setPractice() value
   const rivalFetched = new Set<string>();
-  /** Verified ranking replays (id -> replay), oldest first; boot / local sources tried once per id. */
+  /** Verified ranking replays (id -> replay), least recently used first; a boot / local source that failed is not tried again. */
   const replays = new Map<string, PreparedReplay>();
   const replayTried = new Set<string>();
+  /** Rows the server answered with another run (the table was older than the board): row -> the answer's pidh / t120. */
+  const replayMoved = new Map<string, { pidh: string; t120: number }>();
   let viewer: Viewer | null = null;
   let dailyGapCache: { replay: string; gapMm: number | null } | null = null;
   let pendingPb: GhostTrack | null = null;
@@ -653,6 +657,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
   }
 
   function goTitle(): void {
+    dropViewer();
     state = 'TITLE';
     play = null;
     const lvl = data.level(TITLE_LEVEL) ?? data.levels[0] ?? null;
@@ -1343,8 +1348,11 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
       const rank = numOrNull(r?.rank);
       if (!r || rank === null) continue;
       const kind = onCard ? card.standing!.stamp : stampKind(r.status, rank, numOrNull(r.was));
-      // The card is on screen, or under the replay viewer (it comes back with the stamp when the viewer closes).
-      const cardUp = state === 'SUCCESS_BEAT' || state === 'RESULTS' || (state === 'DEMO' && viewer?.back === 'RESULTS');
+      // The card is on screen, or under the replay viewer: 戻る brings it back with the stamp; leaving the viewer any
+      // other way (勝負, a pasted link) makes it news then (dropViewer).
+      const underViewer = state === 'DEMO' && viewer?.back === 'RESULTS';
+      const cardUp = state === 'SUCCESS_BEAT' || state === 'RESULTS' || underViewer;
+      if (kind && onCard && underViewer) viewer!.stampUnseen = true;
       if (kind && !(onCard && cardUp)) {
         rankNews.set(run.board, { levelId: run.level, rank, kind });
       }
@@ -1404,13 +1412,16 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
 
   /** Leaving a run by other means than retry (menu, next level): counted like a retry. */
   function leaveRun(): void {
+    // The replay viewer stands on the results card: leaving it is leaving the card.
+    const from = state === 'DEMO' && viewer ? viewer.back : state;
+    dropViewer();
     if (state === 'RUNNING' && play && session?.started && play.level.world > 0) {
       updateProgress(play.level, (p) => applyOutcome(p, 'retry', session!.ticks, play!.origin === 'campaign'));
     }
     if ((state === 'PAUSED' || state === 'NOTES') && underState === 'RUNNING' && play && session?.started && play.level.world > 0) {
       updateProgress(play.level, (p) => applyOutcome(p, 'retry', session!.ticks, play!.origin === 'campaign'));
     }
-    if (state === 'RESULTS' || state === 'DAILY_HUB') {
+    if (from === 'RESULTS' || from === 'DAILY_HUB') {
       if (api) safe('api.flush', () => void api.flush('menu'));
     }
     if (state === 'PAUSED' && audio) safe('audio.resume', () => audio.resume());
@@ -1479,10 +1490,11 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     if (!play) return;
     const tr = ghosts.calm ?? ghosts.ai;
     if (!tr) {
+      dropViewer();
       enterReady(true);
       return;
     }
-    leaveRun();
+    leaveRun();   // also drops a replay viewer: this is the AI demo
     session?.retry();
     // the demo is drawn as a Running run (not the reset session's Ready): clear the crash debris of the
     // run that led here, snap the camera and start a fresh trail
@@ -1585,26 +1597,43 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     return p;
   }
 
-  /** A replay at hand without a request: watched before, #1 from the boot WR, or my own stored best. Each tried once. */
+  /** A cached replay, now the most recently used (the cache drops the least recently used), at the rank watched now. */
+  function replayHit(p: PreparedReplay, rank: number): PreparedReplay {
+    replays.delete(p.id);
+    replays.set(p.id, p);
+    return rerank(p, rank);
+  }
+
+  /** The row as the table showed it, at its rank (the key of replayMoved). */
+  const rowKey = (key: string, rank: number, pidh: string, t120: number): string => `${key}|${rank}|${pidh}|${t120}`;
+
+  /**
+   * A replay at hand without a request: watched before (also the run the server gave for a row the table showed
+   * older), #1 from the boot WR, or my own stored best. A boot / local source that fails verification is not tried
+   * again; one that passed is rebuilt when the cache has dropped it (#1 and my row never cost a request).
+   */
   function replayAtHand(key: string, level: LevelDef, rank: number, pidh: string, nameSeed: number, t120: number): PreparedReplay | null {
     const id = replayId(key, pidh, t120);
     const hit = replays.get(id);
-    if (hit) return rerank(hit, rank);
+    if (hit) return replayHit(hit, rank);
+    const moved = replayMoved.get(rowKey(key, rank, pidh, t120));
+    const got = moved ? replays.get(replayId(key, moved.pidh, moved.t120)) : undefined;
+    if (got) return replayHit(got, rank);
     // #1 from boot (0 requests): only when boot's rank 1 is this very row (the player may have improved since boot).
     const b = rank === 1 ? bootBoardOf(key) : null;
     const top0 = b?.top[0];
     if (b?.wr && top0 && top0[0] === pidh && top0[2] === t120 && !replayTried.has(`boot|${id}`)) {
-      replayTried.add(`boot|${id}`);
       const p = prepareReplay('boot', key, level, rank, pidh, nameSeed, t120, b.wr);
       if (p) return p;
+      replayTried.add(`boot|${id}`);
     }
     // My row (0 requests): my stored best of this board when it has the row's time.
     if (pidh === save().id.pidh && !replayTried.has(`local|${id}`)) {
       const best = level.world === 0 ? todayBest() : progressOf(level).hash === pbHash(level) ? progressOf(level) : null;
       if (best && best.bestSub === t120 && best.bestReplay) {
-        replayTried.add(`local|${id}`);
         const p = prepareReplay('local', key, level, rank, pidh, nameSeed, t120, best.bestReplay);
         if (p) return p;
+        replayTried.add(`local|${id}`);
       }
     }
     return null;
@@ -1632,14 +1661,23 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     if (near) return { ok: true, id: near.id };
     if (!api || !api.enabled || api.lite) return { ok: false, reason: 'offline' };
     const left = api.ghostsLeft?.() ?? 1;
-    const g = await api.ghost(req.key, req.rank, { pidh: req.pidh, t120: req.t120 }).catch(() => null);
+    // A row the server already answered with another run asks for that run (the api's cache has it: no request).
+    const row = rowKey(req.key, req.rank, req.pidh, req.t120);
+    const want = replayMoved.get(row) ?? { pidh: req.pidh, t120: req.t120 };
+    const g = await api.ghost(req.key, req.rank, want).catch(() => null);
     if (disposed) return { ok: false, reason: 'stale' };
     if (!g) return { ok: false, reason: !api.enabled || api.lite ? 'offline' : left <= 0 ? 'budget' : 'missing' };
     // Named and timed from the answer (the board may have moved since the table was drawn), never from the tapped row.
     const at = replayLevel(req.key);
     if (!at || g.key !== req.key) return { ok: false, reason: 'stale' };
+    if (g.pidh !== req.pidh || g.t120 !== req.t120) {
+      // The next tap of this row plays the same run without asking again (and replayAvail says 'ready').
+      replayMoved.delete(row);
+      replayMoved.set(row, { pidh: g.pidh, t120: g.t120 });
+      while (replayMoved.size > REPLAY_CACHE_MAX * 2) replayMoved.delete(replayMoved.keys().next().value!);
+    }
     const hit = replays.get(replayId(req.key, g.pidh, g.t120));
-    if (hit) return { ok: true, id: rerank(hit, req.rank).id };
+    if (hit) return { ok: true, id: replayHit(hit, req.rank).id };
     const p = prepareReplay('net', req.key, at, req.rank, g.pidh, g.nameSeed, g.t120, g.replay);
     if (!p) {
       if (!errorsLogged.has('replay verify')) {
@@ -1675,7 +1713,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     const name = p.track.label;
     viewer = {
       p, back: state, name, ai: ghostSetIndex() === 4 ? null : ghosts.ai ?? data.track(p.level, 'ai'),
-      end: (p.t120 + HOLD_SUB) / 120, phase: 0,
+      end: (p.t120 + HOLD_SUB) / 120, phase: 0, stampUnseen: false,
     };
     demoTrack = p.track;
     demoTime = 0;
@@ -1697,6 +1735,19 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     if (state === v.back) show({ id: 'board', key: v.p.key, focusRank: v.p.rank });
   }
 
+  /**
+   * The viewer goes without 戻る (勝負, a pasted #c= / #l= / #d link, anything that leaves the card): the next DEMO is
+   * the AI demo again, and a rank-in stamp the card took while the viewer was up becomes news (a toast on the next
+   * select / results / daily screen), as for a card that is skipped.
+   */
+  function dropViewer(): void {
+    const v = viewer;
+    if (!v) return;
+    viewer = null;
+    demoTrack = null;
+    if (v.stampUnseen) cardStampToNews();
+  }
+
   /** 「このゴーストと勝負」: the next attempt on this level races the replay's ghost (§7.6). */
   function raceGhost(payload: unknown): void {
     const v = viewer;
@@ -1704,8 +1755,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     const id = payloadId(payload);
     // not my own run (the viewer offers no race for it: the PB ghost is that run)
     if ((id !== null && id !== v.p.id) || v.p.pidh === save().id.pidh) return;
-    viewer = null;
-    demoTrack = null;
+    dropViewer();
     state = v.back;
     ghosts.picked = v.p.track;
     ghosts.pickedPidh = v.p.pidh;
@@ -1996,31 +2046,40 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     if (!b || b.key !== key) return;
     rivalFetched.add(level.id);
     const pbSub = p.bestSub;
-    const pickRank = (top: readonly (readonly [string, number, number, ...number[]])[], cutoff: number | null): number | null => {
+    /** The record just above my PB: its rank and the row the answer must be (a cached answer of an older board is
+     *  not it); 'full': somewhere in 11..100, the full board tells. */
+    type Pick = { rank: number; pidh?: string; t120: number } | 'full' | null;
+    const pick = (top: readonly (readonly [string, number, number, ...number[]])[], cutoff: number | null): Pick => {
       const me = save().id.pidh;
-      const faster = top.filter((r) => r[2] < pbSub && r[0] !== me).length;
-      if (faster < top.length || top.length < 10) return faster >= 1 ? faster : null; // rank of the record just above me
-      if (cutoff !== null && pbSub > cutoff) return 100;
-      return -1; // somewhere in 11..100: needs the full board
+      const faster = top.filter((r) => r[2] < pbSub && r[0] !== me);
+      if (faster.length < top.length || top.length < 10) {
+        const r = faster[faster.length - 1];
+        return r ? { rank: faster.length, pidh: r[0], t120: r[2] } : null;
+      }
+      if (cutoff !== null && pbSub > cutoff) {
+        const r = top[99];
+        return r ? { rank: 100, pidh: r[0], t120: r[2] } : { rank: 100, t120: cutoff };
+      }
+      return 'full';
     };
-    let rank = pickRank(b.top, b.cutoff);
-    const fetchGhost = (r: number): void => {
-      void api.ghost(key, r).then((g) => {
-        if (!g || disposed) return;
+    const fetchGhost = (w: { rank: number; pidh?: string; t120: number }): void => {
+      void api.ghost(key, w.rank, { pidh: w.pidh, t120: w.t120 }).then((g) => {
+        if (!g || disposed || g.t120 >= pbSub) return;
         const name = safe('displayName', () => displayName(g.nameSeed, g.pidh, lang()), '') || uiText('ghost.rival', undefined, lang());
         const tr = safe('rival ghost', () => trackFromReplay(level, g.replay, 'rival', name), null);
         if (tr && play?.level === level) ghosts.rival = tr;
       });
     };
-    if (rank === null) return;
-    if (rank > 0) {
-      fetchGhost(rank);
+    const first = pick(b.top, b.cutoff);
+    if (first === null) return;
+    if (first !== 'full') {
+      fetchGhost(first);
       return;
     }
     void api.board(key).then((full) => {
       if (!full) return;
-      rank = pickRank(full.top, full.cutoff);
-      if (rank !== null && rank > 0) fetchGhost(Math.min(100, rank));
+      const w = pick(full.top, full.cutoff);
+      if (w !== null && w !== 'full') fetchGhost({ ...w, rank: Math.min(100, w.rank) });
     });
   }
 

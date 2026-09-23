@@ -45,7 +45,7 @@ export class FakeUI implements UI {
   fx(e: GameEvent): void {
     this.fxs.push(e);
   }
-  toast(text: string, kind?: 'info' | 'badge' | 'warn'): void {
+  toast(text: string, kind?: 'info' | 'badge' | 'warn' | 'notice'): void {
     this.toasts.push({ text, kind });
   }
   on(a: UiAction, cb: (payload?: unknown) => void): void {

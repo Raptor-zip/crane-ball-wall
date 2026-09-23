@@ -174,25 +174,64 @@ describe('ranking: the replay entry points', () => {
     await flush();
     expect(busy()).toEqual([]);
     expect(got).toEqual([]);
-    expect(root.querySelector('.yp-toasts')!.textContent).toContain('このセッションで読み込めるリプレイの上限に達しました');
+    expect(root.querySelector('.yp-toasts')!.textContent).toContain('リプレイの読み込み上限です（タブを閉じるとリセット）');
+    // not the connection, not a success: the ⓘ toast (the no-connection one is for 'offline' only)
+    expect(root.querySelector('.yp-toasts .toast--notice')).not.toBeNull();
     // and the next tap goes
     root.querySelector<HTMLElement>('tr[data-rank="5"] .b-play-btn')!.click();
     expect(rc.loadReplay).toHaveBeenCalledTimes(2);
   });
 
-  it('every refusal has its toast', async () => {
-    const texts: Record<string, string> = {
-      offline: 'いまはリプレイを読み込めません', missing: 'この記録はもう見られません', bad: 'このリプレイは再生できませんでした', stale: 'この記録はもう見られません',
+  it('every refusal has its toast: the no-connection one only for offline, the ⓘ one for the others', async () => {
+    const texts: Record<string, [string, string]> = {
+      offline: ['いまはリプレイを読み込めません', 'warn'], missing: ['この記録はもう見られません', 'notice'],
+      bad: ['このリプレイは再生できませんでした', 'notice'], stale: ['この記録はもう見られません', 'notice'],
     };
-    for (const [reason, text] of Object.entries(texts)) {
+    for (const [reason, [text, kind]] of Object.entries(texts)) {
       document.body.innerHTML = '<div id="app"></div>';
       root = document.getElementById('app')!;
       mount({ boot: () => boot(), fetchBoard: async () => null, ...replayCtx(() => Promise.resolve({ ok: false, reason } as ReplayLoad)) });
       ui.show({ id: 'board', key: KEY });
       root.querySelector<HTMLElement>('tr[data-rank="2"] .b-play-btn')!.click();
       await flush();
-      expect(root.querySelector('.yp-toasts')!.textContent, reason).toContain(text);
+      const toast = root.querySelector<HTMLElement>('.yp-toasts .toast')!;
+      expect(toast.textContent, reason).toContain(text);
+      expect(toast.classList.contains(`toast--${kind}`), reason).toBe(true);
     }
+  });
+
+  it('offline / low quota (#1 alone watchable): no ▶ column, the #1 row is still tapped; my row too gives the column', async () => {
+    const onlyWr = vi.fn((_k: string, rank: number): ReplayAvail => (rank === 1 ? 'ready' : null));
+    const load = vi.fn((req: ReplayReq): Promise<ReplayLoad> => Promise.resolve({ ok: true, id: `${req.key}|${req.pidh}|${req.t120}` }));
+    mount({ boot: () => boot(), fetchBoard: async () => null, replayAvail: onlyWr, loadReplay: load });
+    ui.show({ id: 'board', key: KEY });
+    await flush();
+    expect(root.querySelector('.board-wr')).not.toBeNull();
+    expect(root.querySelector('table.board')!.classList.contains('board--play')).toBe(false);
+    expect(root.querySelector('.b-play')).toBeNull();
+    expect(root.querySelector('table.board thead tr')!.children).toHaveLength(4);
+    root.querySelector<HTMLElement>('tr[data-rank="1"] td.b-name')!.click();
+    await flush();
+    expect(load).toHaveBeenCalledTimes(1);
+    // my own row (my stored best) is watchable as well: the column is back
+    const t = boardTable(rows(10, 4), { mePidh: ME, parSub: 324, replay: (rank, row) => (rank === 1 || row[0] === ME ? 'ready' : null) });
+    expect(t.classList.contains('board--play')).toBe(true);
+    expect([...t.querySelectorAll<HTMLElement>('.b-play-btn')].map((b) => b.dataset.rank)).toEqual(['1', '4']);
+  });
+
+  it('the #1 button: the time stays whole beside the name; a short label and the time alone for narrow landscape', async () => {
+    mount({ boot: () => boot(), fetchBoard: async () => null, ...replayCtx() });
+    ui.show({ id: 'board', key: KEY });
+    await flush();
+    const wr = root.querySelector<HTMLElement>('.board-wr')!;
+    const time = (200 / 120).toFixed(3);
+    expect(wr.querySelector('.board-wr-long')!.textContent).toBe('1位のリプレイを見る');
+    expect(wr.querySelector('.board-wr-short')!.textContent).toBe('1位のリプレイ');
+    expect(wr.querySelector('.board-wr-time')!.textContent).toBe(`・${time}秒`);
+    expect(wr.querySelector('.board-wr-subtime')!.textContent).toBe(`${time}秒`);
+    // loading with reduced motion: an hourglass, not a 「…」 (styles.css shows .ico-wait)
+    expect(wr.querySelector('.ico-wait')).not.toBeNull();
+    expect(root.querySelector('tr[data-rank="2"] .b-play-btn .ico-wait')).not.toBeNull();
   });
 
   it('back from the viewer (focusRank): that row scrolled to and its ▶ focused, my row not flashed again', async () => {
@@ -234,10 +273,15 @@ describe('the demo viewer: a ranked replay', () => {
     expect(top.textContent).toContain('×0.5');
     expect(top.querySelector('.demo-race')!.textContent).toContain('勝負');
     const panel = root.querySelector<HTMLElement>('.demo-panel')!;
-    expect([...panel.querySelectorAll('.demo-legend')].map((e) => e.textContent)).toEqual(['3位', 'AI', 'あなた（自己ベスト）']);
-    expect(panel.querySelector('.demo-nums')!.textContent).toContain('すき間 12mm');
-    expect(panel.querySelector('.demo-nums')!.textContent).toContain('ピーク力 31.3N');
-    expect(panel.querySelector('.demo-hint')!.textContent).toBe('何か押すとランキングへ');
+    // the graph's other lines on the first row; the numbers' row starts with whose they are (■3位)
+    expect([...panel.querySelectorAll('.demo-row:not(.demo-nums) .demo-legend')].map((e) => e.textContent)).toEqual(['AI', 'あなた（自己ベスト）']);
+    const nums = panel.querySelector<HTMLElement>('.demo-nums')!;
+    expect(nums.firstElementChild!.classList.contains('demo-owner')).toBe(true);
+    expect(nums.firstElementChild!.textContent).toBe('3位');
+    expect(nums.querySelector('.demo-owner i')!.classList.contains('demo-sw--rival')).toBe(true);
+    expect(nums.textContent).toContain('すき間 12mm');
+    expect(nums.textContent).toContain('ピーク力 31.3N');
+    expect(panel.querySelector('.demo-hint')!.textContent).toBe('何か押すと戻る');
     expect(panel.querySelectorAll('svg.demo-graph path')).toHaveLength(3);
     expect(panel.querySelector('svg.demo-graph path:last-of-type')!.getAttribute('class')).toContain('demo-line--rival');
     ui.hud(hudState({ timeSub: 120 }));
@@ -295,7 +339,50 @@ describe('the demo viewer: a ranked replay', () => {
     mount();
     ui.show({ id: 'demo', level: lv('2-2'), replay: view({ rank: 12 }) });
     expect(root.querySelector('.demo-top')!.textContent).toContain('#12 replay');
-    expect([...root.querySelectorAll('.demo-legend')].map((e) => e.textContent)).toEqual(['#12', 'AI', 'You (best)']);
+    expect([...root.querySelectorAll('.demo-legend')].map((e) => e.textContent)).toEqual(['AI', 'You (best)', '#12']);
+    expect(root.querySelector('.demo-nums .demo-owner')!.textContent).toBe('#12');
     expect(root.querySelector('.demo-hint')!.textContent).toBe('Press anything to go back');
+  });
+
+  it('opens on the results card\'s HUD (my finished time): the clock, the playhead and 勝負 wait for the viewer\'s own', () => {
+    mount();
+    // the results card's HUD: my time (480 > the ranked 206), not a demo frame
+    ui.hud(hudState({ mode: 'campaign', timeSub: 480, running: false }));
+    ui.show({ id: 'demo', level: lv('2-2'), replay: view() });
+    const panel = root.querySelector<HTMLElement>('.demo-panel')!;
+    const race = root.querySelector<HTMLElement>('.demo-race')!;
+    expect(panel.querySelector('.demo-clock')!.textContent).toBe('0.00秒');
+    expect(panel.querySelector('svg.demo-graph line:last-of-type')!.getAttribute('x1')).toBe('0');
+    expect(race.classList.contains('is-done')).toBe(false);
+    ui.hud(hudState({ timeSub: 1 }));
+    expect(race.classList.contains('is-done')).toBe(false);
+    ui.hud(hudState({ timeSub: 206 }));
+    expect(race.classList.contains('is-done')).toBe(true);
+    // drawn again at the end (a rotation): the held frame, no second pop
+    ui.show({ id: 'demo', level: lv('2-2'), replay: view() });
+    expect(root.querySelector('.demo-clock')!.textContent).toBe('1.717秒');
+    expect(root.querySelector('.demo-race')!.classList.contains('is-done')).toBe(false);
+  });
+
+  it('the bar: 「勝負」 on phones held upright; wide: 「このゴーストと勝負」 and the name chip with the time kept whole', () => {
+    mount();
+    ui.show({ id: 'demo', level: lv('2-2'), replay: view() });
+    let race = root.querySelector<HTMLElement>('.demo-race')!;
+    expect(race.querySelector('.demo-race-full')!.textContent).toBe('このゴーストと勝負');
+    expect(race.querySelector('.demo-race-short')!.textContent).toBe('勝負');
+    expect(race.getAttribute('aria-label')).toBe('このゴーストと勝負');
+    expect(root.querySelector('.demo-top')!.classList.contains('is-race-short')).toBe(true);
+    expect(root.querySelector('.demo-who')).toBeNull();
+    // wide (a landscape screen): the full label unless the bar is short (demo.ts measures it), and who is playing
+    document.body.innerHTML = '<div id="app"></div>';
+    root = document.getElementById('app')!;
+    Object.defineProperty(root, 'clientWidth', { configurable: true, value: 1280 });
+    Object.defineProperty(root, 'clientHeight', { configurable: true, value: 720 });
+    mount();
+    ui.show({ id: 'demo', level: lv('2-2'), replay: view() });
+    race = root.querySelector<HTMLElement>('.demo-race')!;
+    expect(root.querySelector('.demo-top')!.classList.contains('is-race-short')).toBe(false);
+    expect(root.querySelector('.demo-who-name')!.textContent).toBe('しずかなクレーン#1234');
+    expect(root.querySelector('.demo-who-time')!.textContent).toBe(`・${(206 / 120).toFixed(3)}秒`);
   });
 });

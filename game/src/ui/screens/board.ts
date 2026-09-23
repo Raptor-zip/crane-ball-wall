@@ -42,15 +42,16 @@ export function gapCell(gapUm: number | null | undefined): string {
 /** Shown in the gap column when the level has no walls (1-1): there is no clearance to measure. */
 export const NO_GAP = '—';
 
-/** The ▶ of a ranking row (a real button: keyboard and screen readers reach every watchable row). */
+/** The ▶ of a ranking row (a real button: keyboard and screen readers reach every watchable row). Loading: a spinner, or
+ *  with reduced motion a still hourglass (styles.css). */
 function playButton(rank: number, name: string, busy: boolean): HTMLElement {
   return h('button', {
     class: `b-play-btn${busy ? ' is-busy' : ''}`, type: 'button', 'data-rank': rank,
     'aria-label': t('board.watchRow', { rank, name }), 'aria-busy': busy ? 'true' : null,
-  }, icon('play'));
+  }, icon('play'), icon('wait', 'ico ico-wait'));
 }
 
-/** What a failed load says (ReplayLoad reasons). */
+/** What a failed load says (ReplayLoad reasons), and its toast: the no-connection one only when it is the connection. */
 const LOAD_TOAST = {
   offline: 'toast.replayOffline', budget: 'toast.replayLimit', missing: 'toast.replayGone', bad: 'toast.replayBad', stale: 'toast.replayGone',
 } as const;
@@ -58,14 +59,25 @@ const LOAD_TOAST = {
 /**
  * The ranking table. `partial`: `rows` is only the head of the list (the boot top 10), so an AI slower than all of them
  * is not placed after the last row (it can be anywhere below). `replay` (the ranking screen only, not the daily hub's top
- * 10): a narrow last column with the ▶ of every row it says can be watched; `busy`: the rank whose replay is loading.
+ * 10): a narrow last column with the ▶ of every row it says can be watched, when a row below #1 can be (#1 alone has
+ * the header's button: offline / low quota the column would stand empty); a watchable row is tapped as a whole either
+ * way. `busy`: the rank whose replay is loading.
  */
 export function boardTable(rows: BoardRow[], opts: {
   mePidh?: string | null; parSub?: number | null; startRank?: number; partial?: boolean;
   replay?: (rank: number, row: BoardRow) => ReplayAvail; busy?: number | null;
 }): HTMLElement {
   const tbody = h('tbody');
-  const play = opts.replay;
+  const first = opts.startRank ?? 1;
+  const avails: ReplayAvail[] = rows.map((r, i) => {
+    if (!opts.replay) return null;
+    try {
+      return opts.replay(first + i, r);
+    } catch {
+      return null;
+    }
+  });
+  const play = avails.some((a, i) => a !== null && first + i > 1);
   const playCell = (c: Node | null): HTMLElement | null => (play ? h('td', { class: 'b-play' }, c) : null);
   let aiPlaced = opts.parSub === null || opts.parSub === undefined;
   const aiRow = (): HTMLElement => h('tr', { class: 'is-ai' },
@@ -80,17 +92,10 @@ export function boardTable(rows: BoardRow[], opts: {
       tbody.appendChild(aiRow());
       aiPlaced = true;
     }
-    const rank = (opts.startRank ?? 1) + i;
+    const rank = first + i;
     const me = !!opts.mePidh && pidh === opts.mePidh;
     const name = safeName(seed, pidh);
-    let avail: ReplayAvail = null;
-    if (play) {
-      try {
-        avail = play(rank, r);
-      } catch {
-        avail = null;
-      }
-    }
+    const avail = avails[i] ?? null;
     const cls = [me ? 'is-me' : '', avail ? 'is-watch' : ''].filter(Boolean).join(' ');
     tbody.appendChild(h('tr', { class: cls, 'data-rank': rank },
       h('td', null, String(rank)),
@@ -243,11 +248,12 @@ export function renderBoardScreen(root: HTMLElement, screen: Extract<Screen, { i
   back.addEventListener('click', () => env.back());
   const sumRow = h('div', { class: 'board-sum' });
   const list = h('div', null, ...Array.from({ length: 8 }, () => h('div', { class: 'skel' })));
-  // 「1位のリプレイを見る」 lives in the header: it stays in view while the list scrolls to my row (tall: its own row).
+  // 「1位のリプレイを見る」 lives in the header: it stays in view while the list scrolls to my row (tall: its own row
+  // under the title, which stays beside the back button and is cut short there, as without the button).
   const wrSlot = h('div', { class: 'board-wr-slot' });
   const page = h('div', { class: 'page screen-enter' },
     h('header', { class: 'page-head board-head' }, back,
-      h('div', { style: 'min-width:0;flex:1 1 auto' },
+      h('div', { class: 'board-head-title', style: 'min-width:0;flex:1 1 0' },
         h('div', { class: 'eyebrow' }, t('board.title')),
         h('h1', { class: 'page-title', style: 'display:flex;align-items:center;gap:8px' }, idChip ? h('span', { class: 'idchip' }, idChip) : null, h('span', { style: 'overflow:hidden;text-overflow:ellipsis' }, title))),
       wrSlot),
@@ -330,7 +336,7 @@ export function renderBoardScreen(root: HTMLElement, screen: Extract<Screen, { i
       return;
     }
     paintBusy();
-    env.toast(t(LOAD_TOAST[res.reason] ?? 'toast.replayBad'), res.reason === 'offline' || res.reason === 'budget' ? 'info' : 'warn');
+    env.toast(t(LOAD_TOAST[res.reason] ?? 'toast.replayBad'), res.reason === 'offline' ? 'warn' : 'notice');
   };
 
   // One listener for every row: the whole row is the touch target (its height), the ▶ is the keyboard's.
@@ -341,16 +347,25 @@ export function renderBoardScreen(root: HTMLElement, screen: Extract<Screen, { i
     void watch(Number(hit.dataset.rank));
   });
 
-  /** 「1位のリプレイを見る」: #1's name and time under it (the same row as the table's first). */
+  /**
+   * 「1位のリプレイを見る」: #1's name and time under it (the same row as the table's first); the time stays whole, the
+   * name is cut if it must be. Narrow landscape phones: 「1位のリプレイ」 and the time only, so the title keeps its room.
+   */
   const wrButton = (v: BoardView): HTMLElement | null => {
     const row = v.top[0];
     if (!replayOf || !row || !replayOf(1, row)) return null;
+    const time = fmtTime(row[2]);
+    const name = safeName(row[1], row[0]);
+    const [pre = '', post = ''] = t('board.watchSub', { name: '\u0001', t: time }).split('\u0001');
     return h('button', {
       class: `btn btn--primary board-wr${busy === 1 ? ' is-busy' : ''}`, type: 'button', 'data-rank': 1, 'data-row': `${row[0]}:${row[2]}`,
       'aria-busy': busy === 1 ? 'true' : null,
     },
-      icon('play'),
-      h('span', { class: 'btn-stack' }, h('span', null, t('board.watchWr')), h('span', { class: 'btn-sub' }, t('board.watchSub', { name: safeName(row[1], row[0]), t: fmtTime(row[2]) }))));
+      icon('play'), icon('wait', 'ico ico-wait'),
+      h('span', { class: 'btn-stack' },
+        h('span', null, h('span', { class: 'board-wr-long' }, t('board.watchWr')), h('span', { class: 'board-wr-short' }, t('board.watchWrShort'))),
+        h('span', { class: 'btn-sub board-wr-sub' }, h('span', { class: 'board-wr-name' }, pre + name), h('span', { class: 'board-wr-time' }, post)),
+        h('span', { class: 'btn-sub board-wr-subtime' }, t('unit.s', { v: time }))));
   };
 
   /** The table and the pinned row always come from the same snapshot. */
@@ -371,7 +386,7 @@ export function renderBoardScreen(root: HTMLElement, screen: Extract<Screen, { i
       // 「⋮」 says "further down": only for a pin that is below the 100th row (an estimate or 100位圏外), not for a time
       // that belongs among the rows (反映待ち / 未送信 with no rank).
       if (pin && (pin.rank !== null || pin.status === 'out') && v.complete && v.top.length >= BOARD_TOP_N) {
-        table.querySelector('tbody')!.appendChild(h('tr', { class: 'is-gap', 'aria-hidden': 'true' }, h('td', { colspan: replayOf ? 5 : 4 }, '⋮')));
+        table.querySelector('tbody')!.appendChild(h('tr', { class: 'is-gap', 'aria-hidden': 'true' }, h('td', { colspan: table.classList.contains('board--play') ? 5 : 4 }, '⋮')));
       }
       body.push(table);
     }

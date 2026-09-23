@@ -92,7 +92,7 @@ export interface UI {
   show(s: Screen): void;
   hud(h: HudState): void;                        // once per frame (diffed into the DOM)
   fx(e: GameEvent, screenPos?: { x: number; y: number }): void;
-  toast(text: string, kind?: 'info' | 'badge' | 'warn'): void;
+  toast(text: string, kind?: 'info' | 'badge' | 'warn' | 'notice'): void;
   on(a: UiAction, cb: (payload?: unknown) => void): void;
   /**
    * Esc / gamepad B from outside the UI layer (core): closes the settings / about / notes / board sub-screen on

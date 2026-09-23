@@ -4,7 +4,7 @@
 // simulateReplay and acceptance rule, the viewer on top of the results card, and 「このゴーストと勝負」. Real app / sim /
 // data, FakeApi. Owner: O3.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createApp, type App, type AppDeps } from '../../src/core/app';
+import { createApp, REPLAY_CACHE_MAX, type App, type AppDeps } from '../../src/core/app';
 import { bundledSources, createGameData, type GameData } from '../../src/core/data';
 import { createSession } from '../../src/core/session';
 import { servoQ } from '../../src/input/servo';
@@ -333,6 +333,127 @@ describe('the replay viewer (§7.5 item 6): sources, verification, the viewer ov
     expect(card.standing).toMatchObject({ phase: 'confirmed', rank: 4, stamp: 'in' });
     r.ui.emit('select');
     expect(r.ui.toasts.filter((t) => t.kind === 'badge' && !t.text.includes('技'))).toEqual([]);
+  });
+
+  it('a rank-in answer during the viewer, then 勝負 (the card never comes back): it is said on the next select', async () => {
+    const api = api11();
+    const r = await toBoard(api);
+    await load(r, 1, api.bootRes!.boards['1-1']!.top[0]!);
+    r.ui.emit('replay', { id: idOf(K11, P1, BOT.score) });
+    const run = api.queued.filter((q) => q.board === K11).at(-1)!;
+    api.answer([run], [{ board: K11, status: 'accepted', rank: 4, n: 5, cutoff: null, was: null, counted: run.t120 }]);
+    advance(r, 0.5);
+    r.ui.emit('raceGhost', { id: idOf(K11, P1, BOT.score) });
+    expect(r.app.state()).toBe('READY');
+    r.ui.emit('select');
+    expect(r.ui.toasts.filter((t) => t.kind === 'badge' && !t.text.includes('技'))).toEqual([{ text: '1-1 ランクイン！ 4位', kind: 'badge' }]);
+  });
+
+  it('a stamp seen on the card before the viewer is not said again after 勝負', async () => {
+    const api = api11();
+    const r = await toBoard(api);
+    const run = api.queued.filter((q) => q.board === K11).at(-1)!;
+    api.answer([run], [{ board: K11, status: 'accepted', rank: 4, n: 5, cutoff: null, was: null, counted: run.t120 }]);
+    await load(r, 1, api.bootRes!.boards['1-1']!.top[0]!);
+    r.ui.emit('replay', { id: idOf(K11, P1, BOT.score) });
+    advance(r, 0.5);
+    r.ui.emit('raceGhost', { id: idOf(K11, P1, BOT.score) });
+    r.ui.emit('select');
+    expect(r.ui.toasts.filter((t) => t.kind === 'badge' && !t.text.includes('技'))).toEqual([]);
+  });
+
+  it('a link pasted while the viewer is open: the viewer goes with the card (its runs are sent), the next demo is the AI\'s', async () => {
+    const api = api11();
+    const ui = new FakeUI();
+    const loc = { hash: '', protocol: 'https:', origin: 'https://y.example' };
+    const app = createApp(document.createElement('div'), {
+      ui, renderer: new FakeRenderer(), input: new FakeInput(), store: new MemStore(), api, audio: null, haptics: null, data, autoStart: false,
+      now: () => DAILY_EPOCH + 10 * DAY_MS + 3600_000, location: loc, prefersReducedMotion: () => false,
+    });
+    apps.push(app);
+    await ticks();
+    expect((await app.playReplay('1-1', MINE)).state).toBe('RESULTS');
+    ui.emit('board', { level: '1-1' });
+    await ui.ctx!.loadReplay!({ key: K11, rank: 1, pidh: P1, nameSeed: 11, t120: BOT.score });
+    ui.emit('replay', { id: idOf(K11, P1, BOT.score) });
+    for (let t = 0; t < 0.5; t += 1 / 30) app.advance(1 / 30);
+    loc.hash = '#l=1-1';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    expect(app.state()).toBe('READY');
+    expect(app.debugState().replay).toBeNull();
+    expect(api.flushes).toContain('menu');          // leaving the viewer is leaving the results card
+    // the AI demo (results card / pause menu) plays and ends on its own, back to READY
+    ui.emit('demo');
+    expect(app.state()).toBe('DEMO');
+    expect((ui.last as Extract<Screen, { id: 'demo' }>).replay).toBeUndefined();
+    for (let t = 0; t < 30; t += 1 / 30) app.advance(1 / 30);
+    expect(app.state()).toBe('READY');
+    expect(app.debugState().ghosts).not.toContain('wr');
+  });
+
+  it('a row the table shows older than the board: the server\'s run at that rank, one request however many taps', async () => {
+    const api = api11();
+    const r = await toBoard(api);
+    const row2 = api.bootRes!.boards['1-1']!.top.find((x) => x[0] === P2)!;
+    api.ghostReply = () => Promise.resolve({ key: K11, rank: 2, pidh: P3, nameSeed: 33, t120: S3, replay: R3 });
+    for (let i = 0; i < 3; i++) {
+      expect(await load(r, 2, row2)).toEqual({ ok: true, id: idOf(K11, P3, S3) });
+      expect(r.ctx.replayAvail!(K11, 2, row2)).toBe('ready');
+    }
+    expect(api.ghostCalls).toHaveLength(1);
+    expect(api.left).toBe(2);
+  });
+
+  it('#1 (boot) and my row (my best) never cost a request, also after the session cache dropped them', async () => {
+    const api = api11();
+    const me = new MemStore();
+    const r = await toBoard(api, { store: me });
+    const top = api.bootRes!.boards['1-1']!.top;
+    const mine: BoardRow = [me.d.id.pidh, me.d.id.nameSeed, S_MINE, -1, 1, 1];
+    expect(r.ctx.replayAvail!(K11, 1, top[0]!)).toBe('ready');
+    expect(r.ctx.replayAvail!(K11, 4, mine)).toBe('ready');
+    // more other rows watched than the cache holds
+    api.left = 100;
+    let i = 0;
+    api.ghostReply = () => Promise.resolve({ key: K11, rank: 3, pidh: `c${String(++i).padStart(15, '0')}`, nameSeed: 33, t120: S3, replay: R3 });
+    for (let k = 0; k < REPLAY_CACHE_MAX + 2; k++) expect((await load(r, 3, [`x${k}`, 1, S3, -1, 1, 1])).ok).toBe(true);
+    const calls = api.ghostCalls.length;
+    expect(r.ctx.replayAvail!(K11, 1, top[0]!)).toBe('ready');
+    expect(await load(r, 1, top[0]!)).toEqual({ ok: true, id: idOf(K11, P1, BOT.score) });
+    expect(await load(r, 4, mine)).toEqual({ ok: true, id: idOf(K11, mine[0], S_MINE) });
+    expect(api.ghostCalls).toHaveLength(calls);
+    api.enabled = false;
+    expect(r.ctx.replayAvail!(K11, 1, top[0]!)).toBe('ready');
+  });
+});
+
+describe('the rival (§7.6): the record just above my PB', () => {
+  async function withPb(answer: (key: string, rank: number) => GhostResponse | null): Promise<Rig> {
+    const api = api11();
+    api.ghostReply = (key, rank) => Promise.resolve(answer(key, rank));
+    const store = new MemStore();
+    store.d.levels['1-1'] = {
+      hash: data.hash(L('1-1')), cleared: true, skipped: false, attempts: 5, fails: 0, consecutiveCrashes: 0, bestSub: S_MINE, bestReplay: MINE,
+      medal: 1, crown: false, badges: [], hintsSeen: 0, briefed: true, demoShown: false, aiBeatenSent: false,
+    };
+    const r = await rig(api, { store });
+    expect((await r.app.playReplay('1-1', MINE)).state).toBe('RESULTS');
+    await ticks();
+    r.store.d.settings.ghostSet = 3;   // AI + rival
+    return r;
+  }
+
+  it('asks for the row it picked (a cached answer of an older board at that rank is not it)', async () => {
+    const top = top11('b000000000000000').filter((x) => x[0] !== 'b000000000000000');
+    const r = await withPb((key, rank) => ({ key, rank, pidh: top[rank - 1]![0], nameSeed: top[rank - 1]![1], t120: top[rank - 1]![2], replay: R3 }));
+    expect(r.api.ghostCalls).toEqual([{ key: K11, rank: 3, opts: { pidh: top[2]![0], t120: top[2]![2] } }]);
+    expect(r.app.debugState().ghosts).toContain('rival');
+  });
+
+  it('an answer that is not faster than my PB is no rival', async () => {
+    const r = await withPb((key, rank) => ({ key, rank, pidh: P3, nameSeed: 33, t120: S_MINE + 10, replay: MINE }));
+    expect(r.api.ghostCalls).toHaveLength(1);
+    expect(r.app.debugState().ghosts).not.toContain('rival');
   });
 });
 
