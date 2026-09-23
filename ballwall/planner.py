@@ -15,6 +15,7 @@ low and are raised to their real height, warm-starting each solve.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import casadi as ca
@@ -90,12 +91,16 @@ def _clearance_fn(plant: Plant, scene: Scene, n_string: int) -> ca.Function:
 
 
 def plan(plant: Plant, scene: Scene, cfg: PlanConfig, init: Plan | None = None,
-         continuation: bool | None = None) -> Plan:
+         continuation: bool | None = None, *,
+         extra: Callable[[ca.Opti, ca.MX, ca.MX, ca.MX], None] | None = None) -> Plan:
     """Solve for a nominal trajectory.
 
     init         : warm start (interpolated onto this plan's time grid).
     continuation : raise the walls gradually; default True without `init`,
                    False with it (a warm start is assumed to clear the walls).
+    extra        : optional hook called as extra(opti, X, U, Xm) after the
+                   standard constraints, to add problem-specific ones (X: node
+                   states 4x(N+1), U: forces 1xN, Xm: mid-interval states 4xN).
     """
     N, dt = cfg.N, cfg.T / cfg.N
     step = rk4_step(plant, dt, cfg.substeps)
@@ -130,6 +135,9 @@ def plan(plant: Plant, scene: Scene, cfg: PlanConfig, init: Plan | None = None,
         ten = ca.Function("ten", [s_sym, u_sym], [tension(s_sym, u_sym, plant, ca)]).map(N)
         for Xs in (X[:, :-1], Xm, X[:, 1:]):
             opti.subject_to(ten(Xs, U) >= cfg.tension_min)
+
+    if extra is not None:
+        extra(opti, X, U, Xm)
 
     # penalise force steps, including the steps up from and back to zero at the ends
     dU = ca.diff(ca.horzcat(0, U, 0), 1, 1)
