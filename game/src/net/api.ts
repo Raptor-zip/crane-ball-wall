@@ -4,26 +4,41 @@
 // 5xx / non-JSON answer (e.g. Cloudflare's 1027 page) / network error silently switches to offline;
 // retries then wait 1 -> 2 -> 4 -> 8 -> 16 -> 30 (-> 30 ...) minutes. Nothing here ever throws or logs.
 //
-// Sending discipline (§7.9): enqueue() filters (first clear / cutoff / first AI-beaten / daily once-a-day) and keeps the
-// best run per board in SaveV1.outbox; flush() sends one batch (4 runs / 16 KB / 5400 substeps) at most
-// every 120 s ('dailyDone', and 'pagehide' with a daily run waiting, are exempt), always with keepalive.
-// deferred (and rejected:lite) stay queued; accepted / unranked / notBetter / rejected are dropped.
+// Sending discipline (§7.9):
+// - enqueue() classifies a level run against the boot board (levelClass): 'rankIn' can enter the top 100, 'urgent' is a
+//   first AI-beaten, 'lazy' a first placement or a histogram move (LevelProgress.sentSub = the server's plays.t120), and
+//   null means the server would write nothing: it is not queued. Dailies: once a day. The best run per board is kept
+//   in SaveV1.outbox.
+// - flush() sends one batch (4 runs / 16 KB / 5400 substeps) at most every 120 s, always with keepalive. Exempt:
+//   'dailyDone', 'rankIn' (its board first, its own 15 s interval; a throttled one is deferred, never dropped), and
+//   'pagehide' with a daily or a rank-in run waiting. menu / select leave a batch of < 4 lazy runs (queued this
+//   session) for a pagehide; under soft (§7.8 9b) lazy runs stay queued.
+// - deferred (and rejected:lite) stay queued; accepted / unranked / notBetter / rejected are dropped. Level answers
+//   set sentSub from `counted`, patch the boot board (cutoff, n, my histogram bin) and reach onResults() listeners.
 import type {
   BoardResponse, BootBoard, BootResponse, GhostResponse, SubmitRequest, SubmitResponse, SubmitResult,
 } from '../shared/api';
+import { HIST_BINS } from '../shared/api';
+import { LEVEL_HIST_BINS, levelBin, padHist, trimHist } from '../shared/rank';
 import type { SaveV1, Store } from '../store/save';
 import {
-  boardDay, dailyFallback, dailyPrev, enqueueRun, isBetter, isDailyBoard, isSendable, takeBatch, type PendingRun,
+  BATCH_MAX_RUNS, boardDay, dailyFallback, dailyPrev, enqueueRun, isBetter, isDailyBoard, isSendable, takeBatch, type PendingRun,
 } from './outbox';
+
+/** Why a flush happens (§7.9). 'rankIn': a top-100 candidate PB at the success tick, its board first. */
+export type FlushReason = 'menu' | 'select' | 'pagehide' | 'dailyDone' | 'rankIn';
 
 export interface Api {
   readonly enabled: boolean; readonly lite: boolean;
   boot(dayIndex: number): Promise<BootResponse | null>;       // null on failure (treated as offline)
-  flush(reason: 'menu' | 'select' | 'pagehide' | 'dailyDone'): Promise<SubmitResponse | null>;
+  flush(reason: FlushReason, opts?: { first?: string }): Promise<SubmitResponse | null>;
   enqueue(r: PendingRun): void;
   ghost(key: string, rank: number): Promise<GhostResponse | null>;
   board(key: string): Promise<BoardResponse | null>;
 }
+
+/** Gets every submit answer after it was applied to the save: the runs of the request and the server's results. */
+export type ResultsListener = (sent: readonly PendingRun[], results: readonly SubmitResult[]) => void;
 
 /** The concrete client: the contract plus read-only extras for the wiring code. */
 export interface NetApi extends Api {
@@ -36,6 +51,10 @@ export interface NetApi extends Api {
    * 「オフライン」 chip meanwhile: show it for `!enabled && !booting`.
    */
   readonly booting: boolean;
+  /** The soft valve is on (§7.8 9b; from the boot or a submit answer, then for the session): lazy runs stay queued. */
+  readonly soft: boolean;
+  /** Subscribes to submit answers (every flush reason); returns the unsubscribe function. */
+  onResults(cb: ResultsListener): () => void;
 }
 
 export const BOOT_TIMEOUT_MS = 3000;
@@ -48,6 +67,8 @@ export const GHOST_COUNT_KEY = 'yurapita:ghosts';
 export const GHOST_MAX_PER_SESSION = 3;
 export const BOARD_CACHE_MS = 60_000;
 export const SEND_MIN_INTERVAL_MS = 120_000;
+/** Minimum gap between two rank-in sends; a throttled one is deferred to the end of the gap, not dropped. */
+export const RANKIN_MIN_INTERVAL_MS = 15_000;
 /** Retry delays after consecutive failures, in minutes (the last one repeats). */
 export const BACKOFF_MINUTES: readonly number[] = [1, 2, 4, 8, 16, 30];
 
@@ -87,6 +108,36 @@ export interface ApiOptions {
   requestTimeoutMs?: number;
 }
 
+// ---- level classes (§7.9) ----
+
+/**
+ * rankIn: can enter the top 100 (the boot cutoff); urgent: the first run below par on this board; lazy: the server
+ * would move my histogram position (a first placement, or a faster run in another bin); null: the server would write
+ * nothing, so the run is not sent. `b` is the boot board of the run's key.
+ * Lite is not looked at here: lite keeps every level run queued (takeBatch skipLevels) and a top-100 run must survive it.
+ */
+export type LevelClass = 'rankIn' | 'urgent' | 'lazy' | null;
+export function levelClass(r: PendingRun, d: SaveV1, b: BootBoard): LevelClass {
+  const t = r.t120;
+  if (t === null) return null;
+  const p = d.levels[r.level];
+  if (b.cutoff === null || t < b.cutoff) return 'rankIn';
+  if (t < b.par && p?.aiBeatenSent !== true) return 'urgent';
+  if (p?.sentSub === undefined) return 'lazy';
+  if (t < p.sentSub && levelBin(t) !== levelBin(p.sentSub)) return 'lazy';
+  return null;
+}
+
+/** The level histogram of a boot board as a dense LEVEL_HIST_BINS array; null when absent or malformed. */
+export function levelHistOf(b: BootBoard): number[] | null {
+  return b.hist === undefined ? null : padHist(b.hist, LEVEL_HIST_BINS);
+}
+
+/** The histogram of a board answer (level: 153 bins, daily: 150); null when absent or malformed. */
+export function boardHistOf(r: BoardResponse): number[] | null {
+  return r.hist === undefined ? null : padHist(r.hist, r.key.startsWith('D:') ? HIST_BINS : LEVEL_HIST_BINS);
+}
+
 // ---- response validation (never trust the wire) ----
 
 type Obj = Record<string, unknown>;
@@ -100,6 +151,7 @@ const isCutoff = (x: unknown): boolean => x === null || isNum(x);
 
 // The fields checked here are the ones the UI renders (counts, "AI に勝った人", cutoff, top rows, the
 // daily histogram for "上位 n%"): an answer missing them is treated like no answer (offline), never NaN.
+// A level histogram is not checked: a bad one only hides the estimates (levelHistOf / boardHistOf return null).
 function isBootBoard(x: unknown): x is BootBoard {
   return isObj(x) && typeof x.key === 'string' && isNum(x.n) && isNum(x.aiBeaten) && isNum(x.par) && isCutoff(x.cutoff)
     && isRows(x.top) && isWr(x.wr);
@@ -129,7 +181,12 @@ type Outcome = { kind: 'ok'; json: unknown } | { kind: 'offline' } | { kind: 'cl
 
 interface Optimistic { board: string; run: PendingRun; submitted: SaveV1['daily']['submitted']; lastSentT120: number | null; dayIndex: number }
 /** One submit request on the wire; `optimistic` can grow while it is out (a pagehide during the request). */
-interface Flight { sent: PendingRun[]; optimistic: Optimistic[] }
+interface Flight { sent: PendingRun[]; optimistic: Optimistic[]; done: Promise<SubmitResponse | null> | null }
+/** A rank-in send waiting for the end of its 15 s gap: one timer, every caller gets the same answer. */
+interface DeferredRankIn {
+  first: string; promise: Promise<SubmitResponse | null>; timer: ReturnType<typeof setTimeout> | null;
+  resolve(p: Promise<SubmitResponse | null> | SubmitResponse | null): void;
+}
 
 function defaultSession(): SessionLike | null {
   try {
@@ -157,11 +214,19 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
   let bootLite = false;              // lite flag of the last boot answer
   let liteSticky = false;            // a submit said lite: stays on for the rest of the session ("その日は")
   let readOnly = false;
+  let bootSoft = false;              // soft flag of the last boot answer
+  let softSticky = false;            // a submit said soft: stays on for the session
   let lastSendAt = -Infinity;
+  let lastRankInAt = -Infinity;
+  let deferredRankIn: DeferredRankIn | null = null;
+  const sessionStart = now();        // lazy sending applies only to runs queued after this (§7.9)
   const inFlight = new Set<string>();
   const flights = new Set<Flight>();
   const ghostCache = new Map<string, GhostResponse>();
   const boardCache = new Map<string, { at: number; res: BoardResponse }>();
+  /** Boards whose next board() skips every cache (an accepted run of mine just changed them). */
+  const noStore = new Set<string>();
+  const listeners = new Set<ResultsListener>();
 
   const sessionGet = (k: string): string | null => {
     try {
@@ -269,11 +334,13 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
   }
 
   const isLite = (): boolean => bootLite || liteSticky;
+  const isSoft = (): boolean => bootSoft || softSticky;
 
   function adoptBoot(res: BootResponse): void {
     bootedOk = true;
     bootLite = res.lite;
     readOnly = res.readOnly === true;
+    bootSoft = res.soft === true;
   }
 
   function boot(dayIndex: number): Promise<BootResponse | null> {
@@ -327,13 +394,16 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
     return b && b.key === r.board ? b : null;
   }
 
-  function levelWorthSending(r: PendingRun, d: SaveV1): boolean {
-    if (d.levels[r.level]?.playSent !== true) return true;   // first clear: counts the player (plays), whatever the rank
+  /** The class of a level run against the current boot; undefined (unknown) before boot, offline, or for another key. */
+  function classNow(r: PendingRun, d: SaveV1): LevelClass | undefined {
     const b = online() ? bootBoardFor(r) : null;
-    if (!b || r.t120 === null) return true;                 // before boot / offline / unknown board: unconditionally
-    if (b.cutoff === null || r.t120 < b.cutoff) return true; // fewer than 100 rows, or faster than the 100th
-    return r.t120 < b.par && d.levels[r.level]?.aiBeatenSent !== true; // first AI-beaten report
+    return b ? levelClass(r, d, b) : undefined;
   }
+
+  /** Lazy only for level runs queued in this session: an older queued run rides the first flush (§7.9). */
+  const isLazyRun = (r: PendingRun): boolean =>
+    !isDailyBoard(r.board) && r.queuedAt >= sessionStart && classNow(r, store.data()) === 'lazy';
+  const isRankInRun = (r: PendingRun): boolean => !isDailyBoard(r.board) && classNow(r, store.data()) === 'rankIn';
 
   function enqueue(given: PendingRun): void {
     if (!allowed) return;                     // this origin never sends (single HTML, file:)
@@ -349,8 +419,8 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
           if (prev === undefined) delete run.prev;
           else run.prev = prev;
         }
-      } else if (!levelWorthSending(run, d)) {
-        return;
+      } else if (classNow(run, d) === null) {
+        return;                               // the server would write nothing (an unknown class is queued)
       }
       d.outbox = enqueueRun(d.outbox, run);
     });
@@ -371,17 +441,24 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
   }
 
   /**
-   * The outbox as it should be sent now: daily runs the server would refuse (older than yesterday) and
-   * today's runs that are no longer due (§7.9) are dropped, and `prev` of today's is refreshed.
+   * The outbox as it should be sent now: daily runs the server would refuse (older than yesterday), today's runs
+   * that are no longer due and level runs of class null (§7.9; not while lite or soft) are dropped, and `prev` of
+   * today's is refreshed.
    * Returns null when nothing changes, so a flush without news does not rewrite the save.
    */
   function normalizedOutbox(d: SaveV1): PendingRun[] | null {
     const refDay = Math.max(d.daily.dayIndex, booted?.res.day ?? -1);
     let changed = false;
     const out: PendingRun[] = [];
+    const dropLevels = !isLite() && !isSoft();
     for (const r of d.outbox) {
       const day = boardDay(r.board);
       if (day !== null && day < refDay - 1) {
+        changed = true;
+        continue;
+      }
+      // A level run the server would take without writing anything (e.g. my counted time moved since it was queued).
+      if (dropLevels && !isDailyBoard(r.board) && !inFlight.has(r.board) && classNow(r, d) === null) {
         changed = true;
         continue;
       }
@@ -448,8 +525,43 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
     d.outbox = enqueueRun(d.outbox, o.run);
   }
 
-  function applyResults(f: Flight, results: SubmitResult[]): void {
+  /**
+   * The boot board of an answered level run follows the answer (in memory and in the sessionStorage copy): cutoff,
+   * n, and my histogram bin (from the counted time `prev` to `c`), so the next results card starts from it.
+   */
+  function patchBoot(run: PendingRun, r: SubmitResult, prev: number | undefined, c: number | undefined): boolean {
+    const b = bootBoardFor(run);
+    if (!b) return false;
+    let changed = false;
+    if ((r.cutoff === null || isNum(r.cutoff)) && b.cutoff !== r.cutoff) {
+      b.cutoff = r.cutoff;
+      changed = true;
+    }
+    if (isNum(r.n) && r.n > b.n) {
+      b.n = r.n;
+      changed = true;
+    }
+    const h = c !== undefined && c !== prev ? levelHistOf(b) : null;
+    if (h && c !== undefined) {
+      if (prev !== undefined) {
+        const pb = levelBin(prev);
+        if (h[pb]! > 0) h[pb]! -= 1;
+      }
+      h[levelBin(c)]! += 1;
+      b.hist = trimHist(h);
+      changed = true;
+    }
+    return changed;
+  }
+
+  const countedOf = (x: unknown): number | null | undefined =>
+    x === null ? null : typeof x === 'number' && Number.isInteger(x) && x >= 1 && x <= 1e6 ? x : undefined;
+
+  function applyResults(f: Flight, res: SubmitResponse): void {
+    const results = res.results;
+    if (res.soft === true) softSticky = true;
     const byBoard = new Map(results.map((r) => [r.board, r]));
+    let bootChanged = false;
     store.update((d) => {
       for (const run of f.sent) {
         const r = byBoard.get(run.board);
@@ -470,27 +582,47 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
           const lp = d.levels[run.level];
           if (lp && (r.aiBeaten === true || (par !== undefined && run.t120 < par))) lp.aiBeatenSent = true;
           if (lp) lp.playSent = true;
+          // counted: a number = my histogram time now, null = not counted, absent (an older server) = unknown.
+          const c = countedOf(r.counted);
+          const prev = lp?.sentSub;
+          if (lp && typeof c === 'number') lp.sentSub = c;
+          else if (lp && c === null) delete lp.sentSub;
+          if (patchBoot(run, r, prev, lp && typeof c === 'number' ? c : undefined)) bootChanged = true;
+          if (r.status === 'accepted') {
+            boardCache.delete(run.board);
+            noStore.add(run.board);
+          }
         }
       }
     });
+    if (bootChanged && booted) sessionSet(BOOT_CACHE_KEY, JSON.stringify({ at: booted.at, day: booted.day, res: booted.res }));
+    for (const cb of [...listeners]) {
+      try {
+        cb(f.sent, results);
+      } catch {
+        // a listener never breaks the api
+      }
+    }
   }
 
-  function send(reason: 'menu' | 'select' | 'pagehide' | 'dailyDone', exempt: boolean): Promise<SubmitResponse | null> {
+  function send(reason: FlushReason, exempt: boolean, first?: string): Promise<SubmitResponse | null> {
     if (readOnly) return Promise.resolve(null);
     // Checked again here: a flush that waited for a lazy boot must not follow another send within 120 s.
     if (!exempt && now() - lastSendAt < SEND_MIN_INTERVAL_MS) return Promise.resolve(null);
     const d = store.data();
-    const batch = takeBatch(d.outbox, { skipLevels: isLite(), exclude: inFlight });
+    const batch = takeBatch(d.outbox, { skipLevels: isLite(), exclude: inFlight, first, lazy: isLazyRun, skipLazy: isSoft() });
     if (batch.length === 0) return Promise.resolve(null);
     const sent = batch.map((s) => ({ ...d.outbox.find((p) => p.board === s.board)! }));
+    // menu / select: runs the server can take later wait for a pagehide (or until they fill a request).
+    if ((reason === 'menu' || reason === 'select') && batch.length < BATCH_MAX_RUNS && sent.every(isLazyRun)) return Promise.resolve(null);
     const body: SubmitRequest = { v: 1, secret: d.id.secret, nameSeed: d.id.nameSeed, runs: batch };
-    const flight: Flight = { sent, optimistic: [] };
+    const flight: Flight = { sent, optimistic: [], done: null };
     if (reason === 'pagehide') store.update((dd) => commitOptimistic(dd, flight));
 
     lastSendAt = now();
     for (const r of sent) inFlight.add(r.board);
     flights.add(flight);
-    return request('/api/submit', {
+    const done = request('/api/submit', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -502,7 +634,7 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
         succeed();
         const res = o.json;
         if (res.lite === true) liteSticky = true;
-        applyResults(flight, res.results);
+        applyResults(flight, res);
         return res;
       }
       if (o.kind === 'client') {
@@ -516,22 +648,86 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
       if (flight.optimistic.length > 0) store.update((dd) => flight.optimistic.forEach((x) => rollback(dd, x)));
       return null;
     });
+    flight.done = done;
+    return done;
   }
 
-  function flush(reason: 'menu' | 'select' | 'pagehide' | 'dailyDone'): Promise<SubmitResponse | null> {
+  /** Sends now when a request may be made (booting lazily when `allowBoot`); null when nothing could go. */
+  function sendWhenReady(reason: FlushReason, exempt: boolean, allowBoot: boolean, first?: string): Promise<SubmitResponse | null> {
+    const ok = ready(allowBoot);
+    return ok === true ? send(reason, exempt, first) : ok === false ? Promise.resolve(null) : ok.then((yes) => (yes ? send(reason, exempt, first) : null));
+  }
+
+  // ---- rank-in (§7.9): a top-100 candidate goes out at the success tick, first in its batch ----
+
+  function flightOf(board: string): { run: PendingRun; done: Promise<SubmitResponse | null> } | null {
+    for (const f of flights) {
+      const run = f.sent.find((r) => r.board === board);
+      if (run && f.done) return { run, done: f.done };
+    }
+    return null;
+  }
+
+  /** The rank-in send of `first` now (no interval check). */
+  function rankInNow(first: string): Promise<SubmitResponse | null> {
+    if (readOnly || isLite()) return Promise.resolve(null);
+    const queued = store.data().outbox.find((r) => r.board === first);
+    if (!queued) return Promise.resolve(null);
+    const flying = flightOf(first);
+    if (flying) {
+      // The same run is already on its way: its answer is the answer. A faster run queued meanwhile follows it.
+      return sameRun(flying.run, queued) ? flying.done : flying.done.then(() => flushRankIn(first));
+    }
+    lastRankInAt = now();
+    return sendWhenReady('rankIn', true, true, first);
+  }
+
+  function flushRankIn(first: string | undefined): Promise<SubmitResponse | null> {
+    if (first === undefined || readOnly || isLite()) return Promise.resolve(null);
+    if (!store.data().outbox.some((r) => r.board === first)) return Promise.resolve(null);
+    if (flightOf(first)) return rankInNow(first);
+    if (deferredRankIn) {
+      deferredRankIn.first = first;             // the newest candidate goes first; the others ride along
+      return deferredRankIn.promise;
+    }
+    if (now() - lastRankInAt >= RANKIN_MIN_INTERVAL_MS) return rankInNow(first);
+    let resolve!: DeferredRankIn['resolve'];
+    const promise = new Promise<SubmitResponse | null>((r) => { resolve = r; });
+    const w: DeferredRankIn = { first, promise, resolve, timer: null };
+    w.timer = setTimeout(() => {
+      if (deferredRankIn !== w) return;
+      deferredRankIn = null;
+      w.resolve(rankInNow(w.first));
+    }, Math.max(0, lastRankInAt + RANKIN_MIN_INTERVAL_MS - now()));
+    deferredRankIn = w;
+    return promise;
+  }
+
+  function flush(reason: FlushReason, opts: { first?: string } = {}): Promise<SubmitResponse | null> {
     if (!allowed) return Promise.resolve(null);
+    if (reason === 'rankIn') return flushRankIn(opts.first);
     const norm = normalizedOutbox(store.data());
     if (norm) store.update((d) => { d.outbox = norm; });
     const d = store.data();
-    const dailyWaiting = d.outbox.some((r) => isDailyBoard(r.board) && !inFlight.has(r.board));
-    const exempt = reason === 'dailyDone' || (reason === 'pagehide' && dailyWaiting);
+    const waiting = (r: PendingRun): boolean => !inFlight.has(r.board);
+    const dailyWaiting = d.outbox.some((r) => isDailyBoard(r.board) && waiting(r));
+    // pagehide: a top-100 run must not be stranded behind the 120 s rule (a deferred rank-in, a failed one).
+    const rankInWaiting = reason === 'pagehide' && !isLite() && d.outbox.some((r) => waiting(r) && isRankInRun(r));
+    const exempt = reason === 'dailyDone' || (reason === 'pagehide' && (dailyWaiting || rankInWaiting));
+    // A pagehide takes over a deferred rank-in: its send carries the run (first), its answer is the answer.
+    const deferred = reason === 'pagehide' ? deferredRankIn : null;
+    if (deferred) {
+      deferredRankIn = null;
+      if (deferred.timer !== null) clearTimeout(deferred.timer);
+    }
+    const first = opts.first ?? deferred?.first;
     let result: Promise<SubmitResponse | null>;
     if (!exempt && now() - lastSendAt < SEND_MIN_INTERVAL_MS) {
       result = Promise.resolve(null);
     } else {
-      const ok = ready(reason !== 'pagehide');
-      result = ok === true ? send(reason, exempt) : ok === false ? Promise.resolve(null) : ok.then((yes) => (yes ? send(reason, exempt) : null));
+      result = sendWhenReady(reason, exempt, reason !== 'pagehide', first);
     }
+    deferred?.resolve(result);
     if (reason === 'pagehide') {
       // A daily send still waiting for its answer (e.g. 'dailyDone' a moment before the tab closed) is
       // committed now too, then the queue is persisted: the page may be gone after this handler, also
@@ -572,12 +768,15 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
 
   function board(key: string): Promise<BoardResponse | null> {
     if (!allowed || isLite() || !KEY_RE.test(key)) return Promise.resolve(null);
-    const hit = boardCache.get(key);
+    // After an accepted run of mine the board changed: skip this cache and the HTTP cache (max-age 60) once.
+    const fresh = noStore.has(key);
+    const hit = fresh ? undefined : boardCache.get(key);
     if (hit && now() - hit.at < BOARD_CACHE_MS) return Promise.resolve(hit.res);
     const go = (): Promise<BoardResponse | null> =>
-      request(`/api/board/${key}`, { method: 'GET' }, reqTimeout).then((o) => {
+      request(`/api/board/${key}`, { method: 'GET', cache: fresh ? 'no-store' : 'default' }, reqTimeout).then((o) => {
         if (o.kind === 'ok' && isBoardResponse(o.json)) {
           succeed();
+          if (fresh) noStore.delete(key);
           boardCache.set(key, { at: now(), res: o.json });
           return o.json;
         }
@@ -602,6 +801,15 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
     },
     get booting() {
       return allowed && !bootedOk && failures === 0 && bootInFlight !== null;
+    },
+    get soft() {
+      return isSoft();
+    },
+    onResults(cb: ResultsListener) {
+      listeners.add(cb);
+      return () => {
+        listeners.delete(cb);
+      };
     },
     lastBoot: () => (bootedOk ? booted?.res ?? null : null),
     boot,

@@ -423,6 +423,9 @@ export const en: Record<I18nKey, string> = {
   'toast.newWorld': 'World {n} unlocked!',
   'toast.dailyOpen': '“Daily 5” unlocked!',
   'toast.skipAvailable': 'You can skip this level (pause menu)',
+  'toast.rankIn': '{id}: Top 100! #{n}',
+  'toast.rankUp': '{id}: up to #{n}',
+  'toast.rankWr': '{id}: World #1!',
 
   'trick.toast': 'Trick found: {name}!',
   'trick.brakeFling': 'Brake Fling',

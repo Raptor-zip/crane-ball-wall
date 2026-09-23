@@ -60,17 +60,18 @@ describe('client outbox -> /api/submit', () => {
   });
 
   it('a batch with a top-100 run first and an out-of-top level run is answered run by run (level answers carry counted)', async () => {
-    // The out-of-top run is what the client will send lazily (§7.9); the rank-in run rides first (BatchOptions.first, PR2:
-    // here the earlier queuedAt puts it there). The wire form is the current client's: v 1, no prev on level runs.
+    // The out-of-top run is what the client sends lazily (§7.9: it sorts last); the rank-in run rides first
+    // (BatchOptions.first), although it was queued later. The wire form: v 1, no prev on level runs.
     setParOverrideForTest({ '1-1': 100 });
     await seedBoard(levelKey('1-1'), fakeRows(100, 10));
     const b11: BotRun = successBot(level('1-1').physics, { moveS: 4.5 });
     const [wall] = wallBots(1) as [{ levelId: string; bot: BotRun }];
     const outbox: PendingRun[] = [
-      levelPendingRun(levelKey('1-1'), '1-1', b11.replay, b11.t120, DeviceTag.Mouse, NOW - 1000),
-      levelPendingRun(levelKey(wall.levelId), wall.levelId, wall.bot.replay, wall.bot.t120, DeviceTag.Keyboard, NOW - 2000),
+      levelPendingRun(levelKey('1-1'), '1-1', b11.replay, b11.t120, DeviceTag.Mouse, NOW - 2000),
+      levelPendingRun(levelKey(wall.levelId), wall.levelId, wall.bot.replay, wall.bot.t120, DeviceTag.Keyboard, NOW - 1000),
     ];
-    const runs = takeBatch(outbox);
+    expect(takeBatch(outbox).map((r) => r.board)).toEqual([levelKey('1-1'), levelKey(wall.levelId)]);   // oldest first
+    const runs = takeBatch(outbox, { first: levelKey(wall.levelId), lazy: (r) => r.level === '1-1' });
     expect(runs.map((r) => r.board)).toEqual([levelKey(wall.levelId), levelKey('1-1')]);
     for (const r of runs) expect('prev' in r).toBe(false);
     const j = (await (await submit({ v: 1, secret: secretOf(8), nameSeed: 99, runs } satisfies SubmitRequest)).json()) as SubmitResponse;

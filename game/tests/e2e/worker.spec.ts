@@ -6,7 +6,7 @@
 //   - GET /api/boot is 200 with the §7.7 shape and Cache-Control; GET / is the game (static assets);
 //   - POST /api/submit with a 1-1 replay is accepted (rank 1); a replay with one q flipped is a mismatch, and the
 //     same inputs under a second secret are a 'dup' (§7.8 step 6);
-//   - in the browser: clear 1-1 -> N (next level) -> the outbox submits -> accepted; the ranking screen shows the
+//   - in the browser: clear 1-1 -> the rank-in send at the success tick -> accepted; the ranking screen shows the
 //     run as 「あなた」; a second visitor gets the WR ghost from boot.
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
@@ -217,27 +217,27 @@ async function gotoOnline(page: Page, info: TestInfo, base = BASE): Promise<void
   }
 }
 
-test('in the game: clear 1-1 online, the outbox submits, the ranking shows the run', async ({ page, browser, request }, info) => {
+test('in the game: clear 1-1 online, the rank-in send submits, the ranking shows the run', async ({ page, browser, request }, info) => {
   test.setTimeout(180_000);
   const errors = collectErrors(page);
   const bot = bot11();
   await gotoOnline(page, info);
   await expect(page.locator('.chip--offline')).toBeHidden();
 
+  // A top-100 candidate (the 1-1 board is empty) goes out at the success tick, before the results card (rank-in, §7.9).
+  const submitted = page.waitForResponse((resp) => resp.url().endsWith('/api/submit') && resp.request().method() === 'POST');
   const r = await playReplay(page, '1-1', bot.replay);
   expect(r).toMatchObject({ status: STATUS.Success, score: bot.score, state: 'RESULTS' });
   const card = page.locator('section.res');
   await expect(card.getByRole('button', { name: /ランキング/ })).toBeEnabled();
-
-  // leaving the results (N: the next level) flushes the outbox (§7.9)
-  const submitted = page.waitForResponse((resp) => resp.url().endsWith('/api/submit') && resp.request().method() === 'POST');
-  await page.keyboard.press('n');
-  await waitForState(page, (s) => s.state === 'READY' && s.level === '1-2', 'READY on 1-2');
   const resp = await submitted;
   expect(resp.status()).toBe(200);
   const body = (await resp.json()) as SubmitResponse;
   info.annotations.push({ type: 'submit', description: JSON.stringify(body) });
-  expect(body.results.find((x) => x.board === KEY_11)).toMatchObject({ status: 'accepted' });
+  expect(body.results.find((x) => x.board === KEY_11)).toMatchObject({ status: 'accepted', rank: 1, counted: bot.score });
+  await page.keyboard.press('n');
+  await waitForState(page, (s) => s.state === 'READY' && s.level === '1-2', 'READY on 1-2');
+  expect((await readSave(page))!.levels['1-1']!.sentSub).toBe(bot.score);
 
   // the ranking screen (from a results card) lists the run as mine
   await command(page, 'openLevel:1-1');

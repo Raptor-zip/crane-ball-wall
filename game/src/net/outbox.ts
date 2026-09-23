@@ -146,12 +146,34 @@ export interface BatchOptions {
   skipLevels?: boolean;
   /** Boards already in flight in another request. */
   exclude?: ReadonlySet<string>;
+  /** This board goes first (a rank-in send, §7.9: the first run of a batch is always CPU-verified). */
+  first?: string;
+  /** Level runs the server may take later (§7.9 "lazy"): they sort last. */
+  lazy?: (r: PendingRun) => boolean;
+  /** soft (§7.8 9b): lazy runs stay queued (the `first` board is never held back). */
+  skipLazy?: boolean;
 }
 
-/** Send order: daily boards first (they expire after a day), then oldest first. */
-function sendOrder(outbox: readonly PendingRun[]): PendingRun[] {
-  return outbox.slice().sort((a, b) =>
-    (isDailyBoard(a.board) ? 0 : 1) - (isDailyBoard(b.board) ? 0 : 1) || a.queuedAt - b.queuedAt);
+/** Send group of each run: 0 the `first` board, 1 daily, 2 level, 3 lazy level. */
+const LAZY_GROUP = 3;
+function sendGroups(outbox: readonly PendingRun[], opts: BatchOptions): Map<PendingRun, number> {
+  const group = new Map<PendingRun, number>();
+  for (const r of outbox) {
+    group.set(r, r.board === opts.first ? 0 : isDailyBoard(r.board) ? 1 : opts.lazy?.(r) ? LAZY_GROUP : 2);
+  }
+  return group;
+}
+
+function ordered(outbox: readonly PendingRun[], group: ReadonlyMap<PendingRun, number>): PendingRun[] {
+  return outbox.slice().sort((a, b) => group.get(a)! - group.get(b)! || a.queuedAt - b.queuedAt);
+}
+
+/**
+ * Send order (§7.9): the `first` board, then daily boards (they expire after a day), then level runs, lazy level
+ * runs last; oldest first inside each group.
+ */
+export function sendOrder(outbox: readonly PendingRun[], opts: BatchOptions = {}): PendingRun[] {
+  return ordered(outbox, sendGroups(outbox, opts));
 }
 
 /**
@@ -162,10 +184,12 @@ export function takeBatch(outbox: readonly PendingRun[], opts: BatchOptions = {}
   const out: SubmitRun[] = [];
   let bytes = ENVELOPE_BYTES;
   let substeps = 0;
-  for (const r of sendOrder(outbox)) {
+  const group = sendGroups(outbox, opts);
+  for (const r of ordered(outbox, group)) {
     if (out.length >= BATCH_MAX_RUNS) break;
     if (!isSendable(r) || opts.exclude?.has(r.board)) continue;
     if (opts.skipLevels && !isDailyBoard(r.board)) continue;
+    if (opts.skipLazy && group.get(r) === LAZY_GROUP) continue;
     const s = toSubmitRun(r);
     const b = utf8Len(JSON.stringify(s)) + (out.length > 0 ? 1 : 0);
     const sub = runSubsteps(r);

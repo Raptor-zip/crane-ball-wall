@@ -422,6 +422,9 @@ export const ja = {
   'toast.newWorld': 'ワールド {n} が開いた!',
   'toast.dailyOpen': '「今日の5球」が開いた!',
   'toast.skipAvailable': 'スキップできます（ポーズメニュー）',
+  'toast.rankIn': '{id} ランクイン！ {n}位',
+  'toast.rankUp': '{id} {n}位にランクアップ',
+  'toast.rankWr': '{id} 世界一！',
 
   'trick.toast': '技「{name}」を見つけた!',
   'trick.brakeFling': 'ブレーキ振り出し',
