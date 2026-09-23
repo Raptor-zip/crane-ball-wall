@@ -10,7 +10,7 @@ import { CRON_DAILY, CRON_HIST } from '../../worker/cron';
 import { HIST_MIN_INTERVAL_MS, HIST_NEXT_KEY, LEVEL_BIN_SQL, histIntervalMs, runHistRebuild } from '../../worker/hist';
 import { jstDate } from '../../worker/limits';
 import { levelTargets } from '../../worker/verify';
-import { NOW, boardRow, fakeRows, proxyDb, resetAll, seedBoard, seedPlays } from './helpers';
+import { NOW, boardRow, call, fakeRows, proxyDb, resetAll, seedBoard, seedPlays } from './helpers';
 
 const KEYS = levelTargets().map((t) => t.key);
 const [K1, K2, K3] = [KEYS[0]!, KEYS[1]!, KEYS[5]!];
@@ -171,6 +171,59 @@ describe('runHistRebuild', () => {
     await arm();
     expect(await runHistRebuild(env as unknown as Env, NOW + HOUR)).toMatchObject({ written: 1 });
     expect((await boardRow(K1))!.hist).toBe(stored(times.get(K1)!));
+  });
+
+  it('an admin purge (plays.t120 = NULL) drops the player at the next run, and empties a board whose last counted player went', async () => {
+    await seedBoard(K1, fakeRows(3, 100), { n: 3 });
+    await seedBoard(K2, [], { n: 7 });                           // only population rows: never rebuilt, keeps its n
+    await seedPlays(K1, 2, 500);                                  // p000000000000000 at 500, p000000000000001 at 501
+    await seedPlays(K2, 4, null);
+    await arm();
+    expect(await runHistRebuild(env as unknown as Env, NOW)).toMatchObject({ written: 1 });
+    expect([(await boardRow(K1))!.hist, (await boardRow(K1))!.n]).toEqual([stored([500, 501]), 2]);
+
+    const purge = (pidh: string): Promise<unknown> =>
+      env.DB.prepare('UPDATE plays SET t120 = NULL WHERE board = ? AND pidh = ?').bind(K1, pidh).run();
+    await purge('p000000000000001');
+    await arm();
+    expect(await runHistRebuild(env as unknown as Env, NOW + HOUR)).toMatchObject({ written: 1 });
+    expect([(await boardRow(K1))!.hist, (await boardRow(K1))!.n]).toEqual([stored([500]), 1]);
+
+    await purge('p000000000000000');
+    await arm();
+    expect(await runHistRebuild(env as unknown as Env, NOW + 2 * HOUR)).toMatchObject({ written: 1 });
+    expect([(await boardRow(K1))!.hist, (await boardRow(K1))!.n]).toEqual(['[]', 0]);
+    expect('hist' in ((await (await call(`/api/board/${K1}`)).json()) as object)).toBe(false);
+    expect([(await boardRow(K2))!.hist, (await boardRow(K2))!.n]).toEqual([null, 7]);
+
+    // Emptied once: the next run writes no boards row.
+    await arm();
+    const p = proxyDb(env.DB);
+    expect(await runHistRebuild({ ...(env as unknown as Env), DB: p.db }, NOW + 3 * HOUR)).toMatchObject({ written: 0 });
+    expect(p.sqls.some((s) => s.startsWith('UPDATE boards'))).toBe(false);
+  });
+
+  it('without D1 rows_read it errs high: 4 per counted row + 3 per key + the boards rows, above what D1 reports', async () => {
+    await seedBoard(K1, fakeRows(3, 100), { n: 3 });
+    await seedBoard(K2, fakeRows(3, 100), { n: 3 });
+    const times = await randomPlays(3000, [K1, K2]);
+    await seedPlays(K2, 1500, null);                              // untimed rows (pidh "p..."; randomPlays uses "q...")
+    const counted = times.get(K1)!.length + times.get(K2)!.length;
+    await arm();
+    const reported = (await runHistRebuild(env as unknown as Env, NOW)).read!;
+    expect(reported).toBeGreaterThanOrEqual(2 * counted + 1500);   // the GROUP BY reads a counted row twice
+    const blind = {
+      prepare: (sql: string) => env.DB.prepare(sql),
+      batch: async (stmts: D1PreparedStatement[]) => {
+        const r = await env.DB.batch(stmts);
+        for (const x of r) delete (x.meta as Partial<D1Meta>).rows_read;
+        return r;
+      },
+    } as unknown as D1Database;
+    await arm();
+    const guess = (await runHistRebuild({ ...(env as unknown as Env), DB: blind }, NOW + HOUR)).read!;
+    expect(guess).toBe(4 * counted + 3 * KEYS.length + 2);
+    expect(guess).toBeGreaterThan(reported);
   });
 
   it('uses at most 1 + 2 + 18 + 1 = 22 statements with all 18 boards changing', async () => {

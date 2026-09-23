@@ -253,6 +253,19 @@ describe('localRank', () => {
     expect(localRank(boot(tied), 220, ME, 220)).toMatchObject({ rank: 2, exact: true });
   });
 
+  it('my row last in the boot top 10: a PB that does not pass 9th stays 10th, not the estimate', () => {
+    // 9 others at 480..488, me 10th at 490; 40 players right behind in the same 0.2 s bin, then a tail.
+    const times = [...Array.from({ length: 9 }, (_, i) => 480 + i), 490, ...Array.from({ length: 40 }, (_, i) => 495 + (i % 9)),
+      ...Array.from({ length: 200 }, (_, i) => 600 + 5 * i)].sort((a, b) => a - b);
+    const top = [...Array.from({ length: 9 }, (_, i) => row(`p${String(i).padStart(15, '0')}`, 480 + i)), row(ME, 490)];
+    const snap = boot(top, histOf(times), times[BOARD_TOP_N - 1]!);
+    expect(localRank(snap, 489, ME, 490)).toMatchObject({ rank: 10, candidate: true, exact: false, pct: null });
+    expect(localRank(snap, 485, ME, 490)).toMatchObject({ rank: 7, candidate: true, exact: false });   // passes 486..488
+    expect(localRank(snap, 470, ME, 490)).toMatchObject({ rank: 1, candidate: true, exact: false });
+    expect(localRank(snap, 490, ME, 490)).toMatchObject({ rank: 10, exact: true });
+    expect(localRank({ ...snap, complete: true }, 489, ME, 490).rank).toBe(10);
+  });
+
   it('excludes my own row from the others', () => {
     // I am 1st at 200; a new time of 205 would still be 1st (my old row does not count against me).
     const top = [row(ME, 200, 1), ...tenRows().slice(1)];

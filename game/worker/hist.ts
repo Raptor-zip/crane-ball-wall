@@ -2,13 +2,17 @@
 // Owner: O9.
 //
 // Level boards.hist and boards.n are a cache of the plays table: submits move a player's plays.t120 (and add 1 to n for
-// a brand-new placement) but never write hist. This job recomputes both for the current 18 level keys:
+// a brand-new placement) but never write hist. This job recomputes both for the current 18 level keys (a board whose
+// stored hist still counts someone but has no counted play left, after an admin purge, is emptied: [] and n = 0):
 //   1 statement  counters: today's usage (lite -> skip) and 'hist:next' (absent = not armed; the one-off seed arms it)
 //   1 batch      boards rows + one grouped SELECT over plays (one snapshot)
 //   1 batch      UPDATE boards SET hist, n ... WHERE ver = <read ver> for each changed board (a submit that bumped ver in
 //                between wins, that board waits for the next run; the rebuild never bumps ver itself), and the counters
 //                ('hist:next' = the earliest next run, today's write estimate)
 // At most 1 + 2 + 18 + 1 = 22 statements (D1: 50). Stale-hash boards are never read or written.
+// Rows read (D1 meta.rows_read, measured on local D1): the grouped SELECT reads each counted plays row twice (the index
+// search, then the GROUP BY temp B-tree) and each row without a time once, plus about 1 per key; the boards SELECT reads
+// about 1 per key plus its rows. So ≈ 2 × counted + untimed + 3 × 18 + boards rows.
 import type { Env } from './index';
 import { Db, parseHist } from './db';
 import { estimateUsage, isLite, jstDate } from './limits';
@@ -19,7 +23,10 @@ import { LEVEL_HIST_BINS, sumHist, trimHist } from '../src/shared/rank';
 export const HIST_NEXT_KEY = 'hist:next';
 /** At most one rebuild per hourly tick. */
 export const HIST_MIN_INTERVAL_MS = 55 * 60_000;
-/** Rows read per hour of interval: hourly up to 20k plays rows, every 5th tick at 100k (reads stay <= ~480k/day). */
+/**
+ * Rows read per hour of interval (reads stay <= ~480k/day): hourly up to 20k rows read, i.e. ≈ 10k counted plays rows
+ * (each is read twice); 100k rows read (≈ 50k counted rows) runs every 5th tick.
+ */
 export const HIST_ROWS_PER_HOUR = 20_000;
 /** levelBin of src/shared/rank.ts in SQL: integer division on the INTEGER column t120 (tests pin it for t in 0..5400). */
 export const LEVEL_BIN_SQL =
@@ -75,17 +82,24 @@ export async function runHistRebuild(env: Env, now: number): Promise<HistRebuild
     h[Math.max(0, Math.min(LEVEL_HIST_BINS - 1, Math.floor(Number(r.b) || 0)))]! += k;
     counted += k;
   }
-  // D1 reports the rows each statement read; without that, the counted plays rows and the boards rows (a lower bound).
+  // D1 reports the rows each statement read. Without that report, err high (a longer interval): 2 reads per counted row,
+  // up to 2 rows without a time per counted row (read once; right after the seed ≈ 1 per counted row, e.g. 1-1 ≈ 505
+  // of ≈ 1,000, and the share only falls: first sends and heals carry a time), 3 per key and the boards rows.
   const reported = [bRes!, pRes!].map((r) => r.meta?.rows_read);
-  const read = reported.every((x) => typeof x === 'number') ? (reported as number[]).reduce((a, x) => a + x, 0) : counted + boards.length;
+  const read = reported.every((x) => typeof x === 'number')
+    ? (reported as number[]).reduce((a, x) => a + x, 0)
+    : 4 * counted + 3 * keys.length + boards.length;
 
   const stmts: D1PreparedStatement[] = [];
   for (const b of boards) {
     const h = hists.get(b.board);
-    if (!h) continue;   // no counted play yet: nothing to rebuild from
-    const json = JSON.stringify(trimHist(h));
-    const n = sumHist(h);
-    if (b.n === n && b.hist !== null && JSON.stringify(trimHist(parseHist(b.hist, LEVEL_HIST_BINS))) === json) continue;
+    const had = parseHist(b.hist, LEVEL_HIST_BINS);
+    // No counted play: nothing to rebuild from (the board keeps its n), unless the stored hist still counts someone.
+    // Then an admin purge (package.json step (5)) took the last counted player out, and the board is emptied.
+    if (!h && sumHist(had) === 0) continue;
+    const json = JSON.stringify(h ? trimHist(h) : []);
+    const n = h ? sumHist(h) : 0;
+    if (b.n === n && b.hist !== null && JSON.stringify(trimHist(had)) === json) continue;
     stmts.push(db.prepare('UPDATE boards SET hist = ?, n = ? WHERE board = ? AND ver = ?').bind(json, n, b.board, b.ver));
   }
   const updates = stmts.length;

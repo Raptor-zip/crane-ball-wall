@@ -139,6 +139,8 @@ export interface LocalRank { rank: number | null; n: number | null; pct: number 
  * Where time t of player `me` would stand in `b`. `counted` = the player's plays time (LevelProgress.sentSub) or null.
  * others = top without me; k = rows of others with t120 <= t (the earlier submission stays ahead on ties).
  * - me's own row in top has exactly t120 === t: rank = its position, candidate = true, exact = true.
+ * - me's own row in top is slower than t (a PB): rank = k + 1, candidate = true, exact = false. Every row with t120 <= t
+ *   is ahead of my row, so k <= its index and the slot is known even when my row is the last one of the boot top 10.
  * - k < others.length, or the list is complete [b.complete || top.length < BOOT_TOP_N] and k + 1 <= 100 (the server's
  *   own "enters the top 100" rule): rank = k + 1, candidate = true, exact = false.
  * - else if cutoff === null || t < cutoff: candidate = true, rank = estimate clamped to [others.length + 1, 100] (null without hist).
@@ -157,6 +159,7 @@ export function localRank(b: BoardSnapshot, t: number, me: string, counted: numb
     return { rank, n, pct, candidate, exact };
   };
   if (ownIdx >= 0 && b.top[ownIdx]![2] === t) return withN(ownIdx + 1, true, true);
+  if (ownIdx >= 0 && t < b.top[ownIdx]![2]) return withN(k + 1, true, false);
   const complete = b.complete || b.top.length < BOOT_TOP_N;
   if (k < others.length || (complete && k + 1 <= BOARD_TOP_N)) return withN(k + 1, true, false);
   if (b.cutoff === null || t < b.cutoff) {
