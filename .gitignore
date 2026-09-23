@@ -7,15 +7,14 @@ out/
 .venv/
 __pycache__/
 .pytest_cache/
-# 論文：図とPDFは paper/make_figs.py と lualatex で再生成できる
-paper/figs/
-paper/cache/
-paper/*.aux
-paper/*.log
-paper/*.out
-paper/*.toc
-paper/main.pdf
-paper/x_summary.pdf
+# 論文：図・中間ファイル・PDF は make_figs.py と lualatex で再生成できる（組版済みの PDF は docs/ に置く）
+paper/research/figs/
+paper/research/cache/
+paper/research/*.aux
+paper/research/*.log
+paper/research/*.out
+paper/research/*.toc
+paper/research/*.pdf
 # 開発過程の論文（paper/game_dev/）：図は make_figs.py，PDF は lualatex で再生成できる（ゲーム画面の切り出し figs/shot_*.png は追跡）
 paper/game_dev/*.aux
 paper/game_dev/*.log

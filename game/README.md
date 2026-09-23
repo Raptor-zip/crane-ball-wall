@@ -4,6 +4,11 @@
 研究の最適制御（AI）が出した最短時間の解がゴーストとして隣を走り、プレイヤーはその AI のタイムを超える（王冠）ことを目指す。
 全 18 面・今日の5球・挑戦状リンク・世界ランキング（Cloudflare Workers + D1、サーバー側で再シミュレーションして検証）。
 
+**遊ぶ：https://yurapita.raptor-s.workers.dev/**（`main` への push で Cloudflare Workers Builds が自動でデプロイする）
+
+物理モデルと AI の最短時間解はリポジトリの研究コード（[`ballwall/`](../ballwall/)）から来ている。リポジトリ全体の案内は[ルートの README](../README.md)、
+現状と引き継ぎ事項は [docs/HANDOFF.md](docs/HANDOFF.md)、作った過程は[開発記録](../docs/game_dev_paper.pdf)にある。
+
 仕様はすべて [GAME_DESIGN.md](./GAME_DESIGN.md) にある。ディレクトリ構成とファイルごとの担当（単一所有者）は §10.1、
 モジュール間の契約（型）は §10.4 と `src/contracts.ts`、テストの合格基準は §10.7、マイルストーンは §11 を参照。
 

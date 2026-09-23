@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8" />
-<title>プレイ人口2000人突破</title>
+<title>プレイ人口突破カード</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;800&display=swap" />
 <style>
   /* Palette = game/src/ui/tokens.css */
@@ -48,7 +48,7 @@
 
   .lead { position: absolute; top: 270px; left: 250px; font: 800 58px/1 "M PLUS Rounded 1c"; color: var(--ink-2); letter-spacing: .08em; }
 
-  /* 2000 : "2" + three hanging balls as "000" */
+  /* N,000 : leading digit(s) + three hanging balls as "000". The leading digit comes from ?k= (render.mjs) */
   .num { position: absolute; top: 196px; left: 0; right: 0; height: 520px; }
   .one { position: absolute; left: 300px; top: 150px; font: 800 380px/1 "M PLUS Rounded 1c"; color: var(--ink); letter-spacing: -.02em; }
   .pend { position: absolute; top: 0; width: 220px; }
@@ -86,7 +86,7 @@
 
 
   <div class="num">
-    <div class="one">2</div>
+    <div class="one" id="k">1</div>
     <div class="pend p1"><div class="trolley"></div><div class="str"></div><div class="ball"></div></div>
     <div class="pend p2"><div class="trolley"></div><div class="str"></div><div class="ball"></div></div>
     <div class="pend p3"><div class="trolley"></div><div class="str"></div><div class="ball"></div></div>
@@ -95,5 +95,11 @@
   <div class="badge">突破！</div>
 
   <p class="thanks"><span>遊んでくれて<em>ありがとう！</em></span></p>
+<script>
+  // ?k=2 -> 2,000. Keep it to one digit: the layout has room for one glyph before the balls.
+  const k = new URLSearchParams(location.search).get('k') || '1';
+  document.getElementById('k').textContent = k;
+  document.title = `プレイ人口${k}000人突破`;
+</script>
 </body>
 </html>

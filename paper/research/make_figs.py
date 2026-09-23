@@ -1,4 +1,4 @@
-"""Figures and table data for the paper (paper/figs/*.pdf, paper/figs/data.tex).
+"""Figures and table data for the paper (paper/research/figs/*.pdf, paper/research/figs/data.tex).
 
 Everything is regenerated from the project outputs:
   out/<mission>/<preset>/{plan.npz,report.json}   final nominal plans and reports
@@ -6,7 +6,7 @@ Everything is regenerated from the project outputs:
 The closed loops are re-simulated here from plan.npz with the project's own
 TVLQR + DOP853 simulator, so the curves are the ones the reports describe.
 
-    uv run python paper/make_figs.py
+    uv run python paper/research/make_figs.py
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle, Rectangle
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from ballwall.__main__ import PRESETS  # noqa: E402
