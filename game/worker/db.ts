@@ -4,7 +4,10 @@ import { isFingerprint } from './dup';
 
 /** D1 free plan: 50 statements per invocation; we stay at or below this (§7.8 step 1). */
 export const STATEMENT_LIMIT = 49;
-/** Worst case of one run: read 2 + plays 1 + write 4, then read 2 + write 4 for one conflict retry. */
+/**
+ * Worst case of one run: read 2 (board + own runs/plays) + write 5 (new board, UPDATE, runs, drop, plays), then
+ * read 2 + write 4 for one conflict retry (the board exists by then).
+ */
 export const STATEMENTS_PER_RUN = 13;
 /** The counters flush at the end of a submit. */
 export const STATEMENTS_COUNTERS = 1;
@@ -82,13 +85,16 @@ export function publicRow(r: TopRow): BoardRow {
   return [r[0], r[1], r[2], r[3], r[4], r[5]];
 }
 
-/** Parsed daily `boards.hist` (always 150 non-negative integers). */
-export function parseHist(json: string | null | undefined): number[] {
-  const h = new Array<number>(HIST_BINS).fill(0);
+/**
+ * Parsed `boards.hist`: always `bins` non-negative integers (daily: HIST_BINS = 150; level: LEVEL_HIST_BINS = 153 of
+ * src/shared/rank.ts). A short (trimmed) array pads with zeros; bad JSON or bad entries read as zeros.
+ */
+export function parseHist(json: string | null | undefined, bins: number = HIST_BINS): number[] {
+  const h = new Array<number>(bins).fill(0);
   if (!json) return h;
   try {
     const v: unknown = JSON.parse(json);
-    if (Array.isArray(v)) for (let i = 0; i < HIST_BINS; i++) h[i] = Math.max(0, Number(v[i]) | 0);
+    if (Array.isArray(v)) for (let i = 0; i < bins; i++) h[i] = Math.max(0, Number(v[i]) | 0);
   } catch {
     // keep zeros
   }

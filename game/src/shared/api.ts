@@ -25,6 +25,8 @@ export interface BootBoard {
   cutoff: number | null;          // 100th time, null while fewer than 100 rows
   top: BoardRow[];                // top 10 only
   wr: string | null;              // base64url replay of rank 1
+  /** Level histogram (src/shared/rank.ts LEVEL_HIST_BINS layout, trailing zeros trimmed); absent while boards.hist is NULL/empty. */
+  hist?: number[];
 }
 export interface BootDaily {
   key: string;                    // "" only while the Worker has no daily pool (development builds)
@@ -35,6 +37,7 @@ export interface BootDaily {
 }
 export interface BootResponse {
   v: 1; sim: number; now: number; day: number; lite: boolean; readOnly: boolean;
+  soft?: boolean;                      // the soft valve is on (§7.8 step 9b): optional writes stop, lazy runs stay queued
   boards: Record<string, BootBoard>;   // keyed by level id ("2-2")
   daily: BootDaily;
 }
@@ -47,7 +50,7 @@ export interface SubmitRun {
   device: number;                 // DeviceTag
   tries?: number;                 // daily only
   balls?: string;                 // daily only, e.g. "XOOCX" (X fail, O ok, G gold, C crown, - unused)
-  prev?: number | null;           // daily only; omitted on the first send of the day
+  prev?: number | null;           // daily only; ignored on level boards. Omitted on the first send of the day
 }
 export interface SubmitRequest { v: 1; secret: string; nameSeed: number; runs: SubmitRun[] }
 export type SubmitStatus = 'accepted' | 'unranked' | 'notBetter' | 'rejected' | 'deferred';
@@ -59,18 +62,25 @@ export type RejectReason = 'mismatch' | 'stale' | 'badReplay' | 'tooLong' | 'bad
 export interface SubmitResult {
   board: string; status: SubmitStatus;
   reason?: RejectReason;          // only with status 'rejected'
-  rank?: number | null;           // level: exact rank in the top 100 (null outside); daily: exact in the top 100, estimated from hist outside
+  /** level AND daily: exact 1..100 in top; >= 101 estimated from hist; null = unknown (level without a usable hist) / no rank */
+  rank?: number | null;
   n?: number; cutoff?: number | null;
   aiBeaten?: boolean;             // level boards: this run is faster than the AI (t120 < par)
-  pct?: number;                   // daily boards with a success: "top n %" (pctFromHist)
+  pct?: number;                   // daily: "top n %" (pctFromHist). level: levelPct(rank, n), only when rank >= 101
+  was?: number | null;            // level: the player's rank before this run (exact when <= 100, estimate when >= 101); null = unknown
+  counted?: number | null;        // level: plays.t120 after this run (the time the player is counted with); null = not counted
 }
-export interface SubmitResponse { ok: boolean; lite: boolean; results: SubmitResult[] }
+export interface SubmitResponse { ok: boolean; lite: boolean; soft?: boolean; results: SubmitResult[] }
 
 // ---- GET /api/ghost/:key/:rank ----
 export interface GhostResponse { key: string; rank: number; pidh: string; nameSeed: number; t120: number; replay: string }
 
 // ---- GET /api/board/:key ----
-export interface BoardResponse { key: string; n: number; aiBeaten: number; par: number; cutoff: number | null; top: BoardRow[] }
+export interface BoardResponse {
+  key: string; n: number; aiBeaten: number; par: number; cutoff: number | null; top: BoardRow[];
+  hist?: number[];                // level (153 bins) or daily (150 bins), trailing zeros trimmed; absent while empty
+  cleared?: number;               // daily only
+}
 
 /**
  * Error body of 400 / 403 / 404 / 405 / 413 / 415 / 429 / 500 / 503 answers.

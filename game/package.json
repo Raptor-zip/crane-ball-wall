@@ -13,7 +13,9 @@
     "       (2) delete the run: npm run admin:purge -- \"DELETE FROM runs WHERE board='<key>' AND pidh='<pidh>'\"",
     "       (3) drop it from the cached top list and bump ver (optimistic lock):",
     "           npm run admin:purge -- \"UPDATE boards SET top=(SELECT json_group_array(json(value)) FROM json_each(boards.top) WHERE json_extract(value,'$[0]')<>'<pidh>'), ver=ver+1 WHERE board='<key>'\"",
-    "       (4) if the purged run was rank 1, refresh wr: npm run admin:purge -- \"UPDATE boards SET wr=(SELECT replay FROM runs WHERE board='<key>' AND t120 IS NOT NULL ORDER BY t120, created LIMIT 1), ver=ver+1 WHERE board='<key>'\""
+    "       (4) if the purged run was rank 1, refresh wr: npm run admin:purge -- \"UPDATE boards SET wr=(SELECT replay FROM runs WHERE board='<key>' AND t120 IS NOT NULL ORDER BY t120, created LIMIT 1), ver=ver+1 WHERE board='<key>'\"",
+    "       (5) take the purged player out of the level histogram (the next hourly rebuild drops them):",
+    "           npm run admin:purge -- \"UPDATE plays SET t120=NULL WHERE board='<key>' AND pidh='<pidh>'\""
   ],
   "scripts": {
     "dev": "vite",

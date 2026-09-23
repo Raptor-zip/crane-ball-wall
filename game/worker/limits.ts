@@ -1,5 +1,5 @@
 // Rate limiting (RL_SUBMIT / RL_READ with in-memory token-bucket fallback), the isolate's usage counters and the
-// lite safety valve (GAME_DESIGN.md §7.7, §7.8 steps 9-10, §7.10). Owner: O9.
+// soft / lite safety valves (GAME_DESIGN.md §7.7, §7.8 steps 9, 9b and 10, §7.10). Owner: O9.
 import type { Env } from './index';
 import type { Db } from './db';
 
@@ -136,6 +136,11 @@ export function rateKey(ip: string): string {
 /** Flush thresholds of the isolate counters. */
 export const FLUSH_WRITES = 50;
 export const FLUSH_REQUESTS = 100;
+/**
+ * The soft valve (§7.8 step 9b): above this estimate, optional writes stop (histogram moves, out-of-top placements,
+ * daily/dup plays rows). Top-100 entries, first AI-beaten runs and daily rankings still write. Lite implies soft.
+ */
+export const SOFT_LIMIT = 50_000;
 /** The safety valve (§7.8 step 10): estimated rows written / requests today above which the Worker goes lite. */
 export const LITE_LIMIT = 80_000;
 
@@ -213,6 +218,10 @@ export function estimateUsage(rows: readonly { k: string; n: number }[], now: nu
     else if (r.k.startsWith('wr:')) wr += r.n;
   }
   return { req, wr };
+}
+
+export function isSoft(u: Usage): boolean {
+  return u.wr > SOFT_LIMIT || u.req > SOFT_LIMIT;
 }
 
 export function isLite(u: Usage): boolean {

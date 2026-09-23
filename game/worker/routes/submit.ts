@@ -24,6 +24,7 @@ import {
   type SubmitResponse, type SubmitResult, type SubmitRun,
 } from '../../src/shared/api';
 import { isValidSecret, pidhFromSecret } from '../../src/shared/names';
+import { estimateDailyRank } from '../../src/shared/rank';
 
 /** Substeps verified per request (§7.10 CPU: 5400 = one 45 s run). */
 export const CPU_SUBSTEPS = 5400;
@@ -339,7 +340,7 @@ export function decide(d: DecideInput): Decision {
   } else if (d.own || d.prev !== undefined || t < d.par) {
     runs = { t120: t, gapUm: d.gapUm, peakCn: d.peakCn, device: d.device, replay: null, created: d.now };
   }
-  const result: SubmitResult = { board: d.board, status: 'accepted', rank: inTop ? rank : estimateRank(hist, t), n };
+  const result: SubmitResult = { board: d.board, status: 'accepted', rank: inTop ? rank : estimateDailyRank(hist, t), n };
   if (pct !== null) result.pct = pct;
   return { write: true, top, n, cleared, aiBeaten, hist, wr: inTop && rank === 1 ? d.replay : null, runs, drop, result };
 }
@@ -362,14 +363,6 @@ function insertRow(others: readonly TopRow[], pos: number, row: TopRow): { top: 
   const top = [...others.slice(0, pos), row, ...others.slice(pos)];
   const drop = top.length > BOARD_TOP_N ? top[BOARD_TOP_N]![0] : null;
   return { top: top.slice(0, BOARD_TOP_N), drop };
-}
-
-/** Daily rank outside the top 100, estimated from the histogram (the same half-bin rule as pct). */
-function estimateRank(hist: readonly number[], t: number): number {
-  const b = histBin(t);
-  let faster = 0;
-  for (let i = 0; i < b; i++) faster += hist[i]!;
-  return Math.max(BOARD_TOP_N + 1, Math.floor(faster + hist[b]! / 2) + 1);
 }
 
 const SQL_READ_BOARD = 'SELECT ver, top, n, cleared, ai_beaten, hist FROM boards WHERE board = ?';
