@@ -17,6 +17,10 @@
 //   hud=0                hide the mock HUD / deck / popups
 //   split=0.62           tall only: the old fixed 62 % scene / 38 % deck split with a 56 px HUD band instead
 //                        of O7's layout (src/ui/layout.ts), to check the camera on other rects
+//   skin=ball.steel,crane.wood,trail.wire,stage.site   cosmetic skin per part (skins spec §5.1), any combination,
+//                        straight from src/render/skinLooks.ts LOOKS (never the save; locked or not). "ball:steel"
+//                        works too; parts left out keep their default. Applied before renderer.init (the boot path);
+//                        __RENDER_DEMO__.setSkin(spec) switches later (the settings path).
 import levelsJson from '../src/data/levels.json';
 import type { LevelDef, LevelsFile } from '../src/sim/level';
 import type { GameEvent } from '../src/core/bus';
@@ -29,6 +33,8 @@ import * as decalsMod from '../src/render/decals';
 import * as particlesMod from '../src/render/particles';
 import * as cameraMod from '../src/render/camera';
 import * as mapperMod from '../src/render/mapper';
+import { DEFAULT_LOOK, LOOKS, SKIN_PARTS, partLook } from '../src/render/skinLooks';
+import type { SkinLook, SkinPart } from '../src/render/skinLooks';
 import { SimRun, TrackRun, decodeTrack, frameOf, trackPose } from './render-demo-sim';
 import type { DemoSource, GhostFile, GhostSpec, Track } from './render-demo-sim';
 
@@ -77,6 +83,10 @@ declare global {
       setAiMarginMm(mm: number): void;
       /** renderer.loadLevel of the current level again, without a levelLoaded event (core does this for dailies). */
       reload(): void;
+      /** Applies a skin spec ("ball.steel,crane.wood" / "ball:steel"; "" = default) through renderer.setSkin. */
+      setSkin(spec: string): Record<SkinPart, string>;
+      /** Ids of the skin in use (renderer.skin()). */
+      skin(): Record<SkinPart, string>;
       /** The pure render modules, for in-page unit checks from the spec. */
       mods: {
         quality: typeof qualityMod; shake: typeof shakeMod; decals: typeof decalsMod; particles: typeof particlesMod;
@@ -127,7 +137,20 @@ if (!showHud) {
   popLayer.style.display = 'none';
 }
 
+/** Look of a skin spec: comma-separated ids ("ball.steel" or "ball:steel"); unknown tokens are ignored. */
+function lookOf(spec: string): SkinLook {
+  const out: SkinLook = { ...DEFAULT_LOOK };
+  for (const raw of spec.split(',')) {
+    const tok = raw.trim().replace(':', '.');
+    const part = tok.split('.')[0] as SkinPart;
+    if (!SKIN_PARTS.includes(part) || !Object.prototype.hasOwnProperty.call(LOOKS[part], tok)) continue;
+    (out as Record<SkinPart, SkinLook[SkinPart]>)[part] = partLook(part, tok);
+  }
+  return out;
+}
+
 const renderer = createRenderer();
+renderer.setSkin(lookOf(params.get('skin') ?? ''));
 renderer.init(canvas, { quality: opts.q, reducedMotion: opts.rm });
 
 const split = Number(params.get('split'));
@@ -452,6 +475,29 @@ for (const [name, mk] of fxButtons) {
   });
   fxBox.appendChild(b);
 }
+// Skin pickers (one select per part).
+{
+  const box = document.createElement('div');
+  for (const part of SKIN_PARTS) {
+    const s = document.createElement('select');
+    s.dataset.part = part;
+    for (const id of Object.keys(LOOKS[part])) {
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = id;
+      s.appendChild(o);
+    }
+    s.value = renderer.skin()[part];
+    s.addEventListener('change', () => {
+      const cur = renderer.skin();
+      cur[part] = s.value;
+      renderer.setSkin(lookOf(Object.values(cur).join(',')));
+      if (frozen) void load({});
+    });
+    box.appendChild(s);
+  }
+  fxBox.appendChild(box);
+}
 for (const sc of ['run', 'crash', 'stop', 'slack'] as const) {
   const b = document.createElement('button');
   b.textContent = `▶ ${sc}`;
@@ -502,6 +548,11 @@ window.__RENDER_DEMO__ = {
     if (level) renderer.loadLevel(level, aiPathNow, level.cargo === 'egg');
   },
   mods: { quality: qualityMod, shake: shakeMod, decals: decalsMod, particles: particlesMod, camera: cameraMod, mapper: mapperMod },
+  setSkin(spec) {
+    renderer.setSkin(lookOf(spec));
+    return renderer.skin();
+  },
+  skin: () => renderer.skin(),
   setOptions: (o) => renderer.setOptions(o),
   step(frames, dt) {
     const f = frame();

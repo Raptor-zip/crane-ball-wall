@@ -8,6 +8,8 @@
 // Numbers that O7 shows as DOM popups ("ギリ 7mm", "−4mm") are not drawn in-world (no duplicates).
 // The back board carries a faint page heading above the beam's right end: the level id, or for daily
 // levels core's levelLoaded.label (「今日の5球 #N」, another day's daily name), never the raw "d:16".
+// Cosmetic skins (skins spec §5.4): setSkin() takes one resolved look (skinLooks.ts); the default look draws exactly
+// today's frame. Skins change colours, material scalars and canvas pixels only: never sizes, the camera or the ghosts.
 import {
   BackSide, Color, LatheGeometry, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, PMREMGenerator, SphereGeometry, Vector2, Vector3,
   NoToneMapping, PCFShadowMap, SRGBColorSpace, WebGLRenderer,
@@ -32,8 +34,10 @@ import { createString } from './string';
 import type { StringLine } from './string';
 import { createGhostMaterial, drawGhosts, lastTagRects, resetGhostTags } from './ghosts';
 import { QuadBatch, createInkMaterial, drawBackInk, drawMarginInk } from './overlays';
-import { Particles, PointsBatch, S_DISC } from './particles';
+import { Particles, PointsBatch, S_DISC, S_RECT, S_RING, S_SPARK } from './particles';
 import { Trail } from './trail';
+import { DEFAULT_LOOK, SKIN_PARTS, ballTrailColour, confettiPalette, craneAccent, patternAt } from './skinLooks';
+import type { BallLook, SkinLook, SkinPart } from './skinLooks';
 import { createDecals } from './decals';
 import type { Decal, DecalStore } from './decals';
 import { createShake } from './shake';
@@ -79,6 +83,13 @@ export interface RendererExtras {
   setOptions(o: { quality?: 'auto' | 'high' | 'low'; reducedMotion?: boolean }): void;
   /** AI margin of the current level (ghosts_summary.json `aiMarginMm`, default 20) for the cyan lines (§8.4-4). */
   setAiMarginMm(mm: number): void;
+  /**
+   * Cosmetic skin (skins spec §5.4): one resolved look (src/core/skins.ts skinLook()). Before init it is kept and init
+   * builds everything from it (textures painted once); after init only the parts whose id changed are applied, in
+   * place (colours, uniforms, material scalars, canvas redraws: no new textures or materials). Call it outside a run
+   * only (menus, title, results, READY). Physics, hitboxes, the camera and the ghosts never change.
+   */
+  setSkin(look: SkinLook): void;
 }
 
 /** Extra, non-contract hooks for dev pages and tests. */
@@ -99,6 +110,8 @@ export interface RendererDebug {
   ghostTags(): { label: string; x0: number; x1: number; y0: number; y1: number; row: number }[];
   /** Board heading text and the AI margin [mm] of the cyan lines. */
   labels(): { board: string; aiMarginMm: number };
+  /** Ids of the skin looks in use (the pending look before init). */
+  skin(): Record<SkinPart, string>;
   /**
    * Framing in viewport CSS px through the base camera at the current focus: the far top edge of the
    * beam, the floor's front edge, the lower edge of the bench band that is still on screen.
@@ -118,7 +131,7 @@ interface Pulse { x: number; y: number; t: number; r0: number; r1: number; life:
 interface CrashNote { kind: number; wall: number; x: number; y: number; t: number }
 
 const C_INK = col(PAL.ink), C_GOAL = col(PAL.goal), C_DANGER = col(PAL.danger), C_AMBER = col(PAL.amber);
-const C_WHITE = col('#FFFFFF'), C_AI = col(PAL.ai), C_STRING = col(PAL.string);
+const C_WHITE = col('#FFFFFF'), C_AI = col(PAL.ai);
 const C_TETHER_LO = col('#7C8699'), C_TETHER_HI = col('#E89A00');
 const TIER_COLORS = [col('#1E2A44'), col('#E0A800'), col('#FF7A1A'), col(PAL.danger)];
 
@@ -190,6 +203,49 @@ function eggGeometry(): LatheGeometry {
   return g;
 }
 
+/** Writes a patterned ball look into a sphere's colour attribute (linear colours, lerped like the egg's speckles). */
+function paintBallPattern(geo: SphereGeometry, look: BallLook): void {
+  const pos = geo.getAttribute('position');
+  const colAttr = geo.getAttribute('color');
+  const arr = colAttr.array as Float32Array;
+  const base = col(look.body), c = new Color();
+  const layers = (look.pattern ?? []).map((l) => col(l.color));
+  for (let i = 0; i < pos.count; i++) {
+    c.copy(base);
+    const [li, t] = look.pattern ? patternAt(look.pattern, pos.getX(i), pos.getY(i), pos.getZ(i), BALL_R) : [-1, 0];
+    if (li >= 0) c.lerp(layers[li] as Color, t);
+    arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b;
+  }
+  colAttr.needsUpdate = true;
+}
+
+const isPatterned = (b: BallLook): boolean => !!b.pattern && b.pattern.length > 0;
+
+/**
+ * MeshPhysicalMaterial parameters of the plain ball for a ball look (today: #E0312B, .34 / 0 / 1 / .26 / .70).
+ * Clearcoat stays > 0 for every look, so the shader program never changes (three switches programs at 0).
+ */
+export function ballMaterialParams(b: BallLook): {
+  color: string; roughness: number; metalness: number; clearcoat: number; clearcoatRoughness: number; envMapIntensity: number;
+  transparent: true; opacity: 1;
+} {
+  return {
+    color: b.body, roughness: b.mat.roughness, metalness: b.mat.metalness, clearcoat: Math.max(0.02, b.mat.clearcoat),
+    clearcoatRoughness: b.mat.clearcoatRoughness, envMapIntensity: b.mat.envMapIntensity, transparent: true, opacity: 1,
+  };
+}
+
+/** Copies a look's material scalars (and, for the plain ball, its colour) into a ball material. */
+function setBallMaterial(m: MeshPhysicalMaterial, b: BallLook, withColor: boolean): void {
+  const p = ballMaterialParams(b);
+  if (withColor) m.color.set(p.color);
+  m.roughness = p.roughness;
+  m.metalness = p.metalness;
+  m.clearcoat = p.clearcoat;
+  m.clearcoatRoughness = p.clearcoatRoughness;
+  m.envMapIntensity = p.envMapIntensity;
+}
+
 /**
  * Crash beat (§9.5, 0.7 s CRASH_BEAT): t = 0 contact (red circle, O7's popup), 80 ms hit-stop, then
  * shake 1.0 + red vignette (rise, hold, gone by 0.68 s), and the red cross stamps on the wall at 0.3 s.
@@ -220,6 +276,17 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
   let egg: Mesh | null = null;
   let ballLine: Mesh | null = null;
   let eggLine: Mesh | null = null;
+  /** Patterned balls (skins): a second, vertex-coloured sphere, hidden unless such a ball is equipped (§5.4). */
+  let patBall: Mesh | null = null;
+  let patLine: Mesh | null = null;
+  /** The skin look: pending before init, then the applied one (`applied` = ids built into the scene). */
+  let look: SkinLook = DEFAULT_LOOK;
+  let applied: Record<SkinPart, string> | null = null;
+  let patterned = false;
+  const strC = col(PAL.string), strEdge = col(PAL.string);
+  let confettiPal: readonly string[] = confettiPalette(DEFAULT_LOOK);
+  let confettiShape = S_RECT;
+  let dustTint: string = PAL.mortar, sparkTint: string = PAL.brick2, floorDustTint: string = PAL.floor;
   let ghostBatch: QuadBatch | null = null;
   let inkWorld: QuadBatch | null = null;
   let inkTop: QuadBatch | null = null;
@@ -282,6 +349,90 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
   const scene = (): Stage => {
     if (!stage) throw new Error('renderer not initialised');
     return stage;
+  };
+
+  // ---- skins (§5.4) ------------------------------------------------------------------------------
+
+  const cargoVisibility = (): void => {
+    if (ball) ball.visible = !isEgg && !patterned;
+    if (patBall) patBall.visible = !isEgg && patterned;
+    if (egg) egg.visible = isEgg;
+  };
+
+  const applyBall = (b: BallLook): void => {
+    patterned = isPatterned(b);
+    if (patterned && patBall && patLine) {
+      paintBallPattern(patBall.geometry as SphereGeometry, b);
+      setBallMaterial(patBall.material as MeshPhysicalMaterial, b, false);
+      (patLine.material as MeshBasicMaterial).color.set(b.outline);
+    } else if (!patterned && ball && ballLine) {
+      setBallMaterial(ball.material as MeshPhysicalMaterial, b, true);
+      (ballLine.material as MeshBasicMaterial).color.set(b.outline);
+    }
+    cargoVisibility();
+  };
+
+  /** Ribbon / strobe colours ('ball' follows the ball; the egg level uses today's red) and the string colours. */
+  const applyTrail = (): void => {
+    const t = look.trail;
+    const ballC = ballTrailColour(look.ball, isEgg);
+    trail.setLook({
+      ribbon: cTmp.set(t.ribbon.color === 'ball' ? ballC : t.ribbon.color),
+      width: t.ribbon.width,
+      strobe: cTmp2.set(t.strobe.color === 'ball' ? ballC : t.strobe.color),
+      shape: t.strobe.shape === 'disc' ? S_DISC : S_RING,
+    });
+    strC.set(t.string);
+    strEdge.set(t.stringEdge);
+    confettiShape = t.confetti.shape === 'disc' ? S_DISC : t.confetti.shape === 'spark' ? S_SPARK : S_RECT;
+    confettiPal = confettiPalette(look);
+  };
+
+  /** Board skin, the parts init builds from the look itself: canvases, board / floor, clear colour, bricks, blobs. */
+  const repaintStage = (): void => {
+    const st = look.stage;
+    tex?.restyle(st);
+    stage?.setLook(st);
+    gl?.setClearColor(col(st.paper1), 1);
+    if (bricks && level && bricks.rowH !== st.rowH) {
+      stage?.scene.remove(bricks.group);
+      bricks.dispose();
+      bricks = createBricks(level.physics.walls, (tex as Textures).brick, st);
+      stage?.scene.add(bricks.group);
+    } else {
+      bricks?.recolor(st);
+    }
+    blobs?.setColor(st.blob);
+  };
+
+  /** Board skin, the rest: the ink halos (paper-1, like today) and the crash dust / spark tints. */
+  const applyStage = (): void => {
+    const st = look.stage;
+    for (const q of [inkWorld, inkTop, backInk, marginInk]) {
+      const u = (q?.mesh.material as import('three').ShaderMaterial | undefined)?.uniforms.uHalo as { value: Color } | undefined;
+      u?.value.set(st.paper1);
+    }
+    dustTint = st.dust ?? st.mortar;
+    sparkTint = st.spark ?? st.brick2;
+    floorDustTint = st.floorDust ?? st.floor;
+  };
+
+  /** Applies the parts of `look` whose ids differ from what the scene shows (all of them on the first call). */
+  const applySkin = (): void => {
+    const prev = applied;
+    const changed = (p: SkinPart): boolean => !prev || prev[p] !== look[p].id;
+    const ballC = changed('ball'), craneC = changed('crane'), trailC = changed('trail'), stageC = changed('stage');
+    if (ballC) applyBall(look.ball);
+    if (ballC || craneC) {
+      crane?.setLook(look.crane, craneAccent(look.crane, look.ball));
+      if (craneC && prev) tex?.setHazard(look.crane.hazard[0], look.crane.hazard[1]);
+    }
+    if (stageC) {
+      if (prev) repaintStage();
+      applyStage();
+    }
+    if (ballC || trailC || stageC || craneC) applyTrail();
+    applied = { ball: look.ball.id, crane: look.crane.id, trail: look.trail.id, stage: look.stage.id };
   };
 
   const applyQuality = (): void => {
@@ -673,14 +824,14 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
       r.shadowMap.type = PCFShadowMap;
       r.shadowMap.enabled = false;
       gl = r;
-      r.setClearColor(col(PAL.paper1), 1);
+      r.setClearColor(col(look.stage.paper1), 1);
       r.clear();
       // Allow the browser to restore the context; three.js re-uploads everything on restore.
       onContextLost = (ev: Event): void => ev.preventDefault();
       canvasEl = canvas;
       canvas.addEventListener('webglcontextlost', onContextLost);
       quality = createQualityGovernor(opts.quality, undefined, typeof devicePixelRatio === 'number' ? devicePixelRatio : 1);
-      tex = createTextures();
+      tex = createTextures({ stage: look.stage, crane: look.crane });
       // Labels and the board heading are drawn into the atlas once: when the rounded web font arrives later
       // (Google Fonts, display=swap), draw them again instead of keeping the fallback font.
       onFontsLoaded = (): void => {
@@ -692,7 +843,7 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
         fonts.addEventListener('loadingdone', onFontsLoaded);
         void fonts.ready.then(() => onFontsLoaded?.(), () => undefined);
       }
-      stage = createScene(tex);
+      stage = createScene(tex, look.stage);
       const pm = new PMREMGenerator(r);
       const room = new RoomEnvironment();
       env = pm.fromScene(room, 0.04).texture;
@@ -700,24 +851,24 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
       pm.dispose();
       rig = createCamera();
 
-      crane = createCrane(tex.hazard, env);
+      crane = createCrane(tex.hazard, env, look.crane, craneAccent(look.crane, look.ball));
       stage.scene.add(crane.group);
       goal = createGoal();
       stage.scene.add(goal.mesh);
-      blobs = createBlobs(tex.soft);
+      blobs = createBlobs(tex.soft, look.stage.blob);
       stage.scene.add(blobs.mesh);
 
-      const ballMat = new MeshPhysicalMaterial({
-        color: col(PAL.ball), roughness: 0.34, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.26,
-        envMap: env, envMapIntensity: 0.7, transparent: true, opacity: 1,
-      });
+      // The plain ball (today's mesh, material and program). A patterned look leaves it hidden with the default values.
+      const plain = isPatterned(look.ball) ? DEFAULT_LOOK.ball : look.ball;
+      const bp = ballMaterialParams(plain);
+      const ballMat = new MeshPhysicalMaterial({ ...bp, color: col(bp.color), envMap: env });
       ballMat.envMapRotation.set(ENV_ROT_X, ENV_ROT_Y, 0);
       ball = new Mesh(new SphereGeometry(BALL_R, 48, 32), ballMat);
       ball.castShadow = true;
       ball.renderOrder = 8;
       stage.scene.add(ball);
       // Ink outline (inverted hull): keeps the cargo legible on the pale paper.
-      ballLine = new Mesh(ball.geometry, new MeshBasicMaterial({ color: col('#7A1712'), side: BackSide, transparent: true, opacity: 1 }));
+      ballLine = new Mesh(ball.geometry, new MeshBasicMaterial({ color: col(plain.outline), side: BackSide, transparent: true, opacity: 1 }));
       ballLine.renderOrder = 7.9;
       ball.add(ballLine);
       const eggMat = new MeshPhysicalMaterial({
@@ -732,6 +883,23 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
       eggLine = new Mesh(egg.geometry, new MeshBasicMaterial({ color: col('#6B5536'), side: BackSide, transparent: true, opacity: 1 }));
       eggLine.renderOrder = 7.9;
       egg.add(eggLine);
+      // Patterned ball skins: same sphere as the ball, vertex colours, the egg material's program flags (§5.4 D4).
+      const patGeo = new SphereGeometry(BALL_R, 48, 32);
+      patGeo.setAttribute('color', new (patGeo.getAttribute('position').constructor as typeof import('three').Float32BufferAttribute)(
+        new Float32Array(patGeo.getAttribute('position').count * 3), 3));
+      const patMat = new MeshPhysicalMaterial({
+        vertexColors: true, roughness: 0.6, clearcoat: 0.25, clearcoatRoughness: 0.4, envMap: env, envMapIntensity: 0.6,
+        transparent: true, opacity: 1,
+      });
+      patMat.envMapRotation.set(ENV_ROT_X, ENV_ROT_Y, 0);
+      patBall = new Mesh(patGeo, patMat);
+      patBall.castShadow = true;
+      patBall.renderOrder = 8;
+      patBall.visible = false;
+      stage.scene.add(patBall);
+      patLine = new Mesh(patGeo, new MeshBasicMaterial({ color: col('#000000'), side: BackSide, transparent: true, opacity: 1 }));
+      patLine.renderOrder = 7.9;
+      patBall.add(patLine);
 
       str = createString();
       stage.scene.add(str.mesh);
@@ -753,6 +921,9 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
       aiPts.points.renderOrder = 2;
       stage.scene.add(ghostBatch.mesh, inkWorld.mesh, inkTop.mesh, backInk.mesh, marginInk.mesh, pts.points, aiPts.points,
         vignette.mesh);
+      // The pending skin: textures, board, crane and blobs were built from it above; ball, trail, halos now.
+      applied = null;
+      applySkin();
     },
 
     setLayout(l) {
@@ -770,6 +941,7 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
     loadLevel(lv, aiPath, eggCargo) {
       const st = scene();
       level = lv;
+      const eggChanged = isEgg !== eggCargo;
       isEgg = eggCargo;
       aiPathData = aiPath;
       const ph = lv.physics;
@@ -777,7 +949,7 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
         st.scene.remove(bricks.group);
         bricks.dispose();
       }
-      bricks = createBricks(ph.walls, (tex as Textures).brick);
+      bricks = createBricks(ph.walls, (tex as Textures).brick, look.stage);
       st.scene.add(bricks.group);
       crane?.setRail(ph.rail);
       goal?.set(ph.phases, ph.L);
@@ -786,8 +958,9 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
       aiMarginMm = levelMarginMm(lv);
       boardLabel = boardLabels.get(lv.id) ?? boardLabelFor(lv, undefined);
       rig?.setLevel(xr, tallWindowFor(lv.view?.portraitWindow));
-      if (ball) ball.visible = !eggCargo;
-      if (egg) egg.visible = eggCargo;
+      // Egg level (§1.4 of the skins spec): the ball and string skins are ignored, a 'ball' ribbon / strobe uses red.
+      cargoVisibility();
+      if (eggChanged) applyTrail();
       rebuildAiPath();
       rebuildStaticInk();
       resetFx();
@@ -798,7 +971,7 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
     },
 
     draw(f, dtReal) {
-      if (!gl || !stage || !rig || !level || !layout || !str || !ball || !egg || !crane) return;
+      if (!gl || !stage || !rig || !level || !layout || !str || !ball || !egg || !crane || !patBall) return;
       // NaN-safe clamps: a single bad frame must not poison the clock, the camera spring or the trail.
       const dt = dtReal > 0 ? Math.min(0.1, dtReal) : 0;
       time += dt;
@@ -846,24 +1019,25 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
       // Crane, ball, string.
       crane.setTrolleyX(x);
       crane.update(dt);
-      const cargo = isEgg ? egg : ball;
+      const cargo = isEgg ? egg : patterned ? patBall : ball;
       cargo.position.set(bx, by, 0);
       const outline = 1 + (1.15 * px) / BALL_R;
       ballLine?.scale.setScalar(outline);
       eggLine?.scale.setScalar(outline);
-      if (isEgg) {
+      patLine?.scale.setScalar(outline);
+      if (isEgg || patterned) {
+        // The egg and a patterned ball turn with the string (local +Y towards the hook); the plain ball never rotates.
         v3.set(x - bx, HOOK_Y - by, 0).normalize();
-        egg.quaternion.setFromUnitVectors(Y_UP, v3);
-        egg.visible = ballAlive;
+        cargo.quaternion.setFromUnitVectors(Y_UP, v3);
       }
+      if (isEgg) egg.visible = ballAlive;
       str.update(x, HOOK_Y, bx, by, L, slack, Math.max(0.006, 2.4 * px), time);
-      let sc: Color = C_STRING;
       if (isEgg && level.physics.egg) {
         const Tm = level.physics.egg.Tmax;
-        sc = T >= 0.9 * Tm ? C_DANGER : T >= 0.75 * Tm ? C_AMBER : C_WHITE;
+        const sc = T >= 0.9 * Tm ? C_DANGER : T >= 0.75 * Tm ? C_AMBER : C_WHITE;
         str.setColor(sc, C_INK);
       } else {
-        str.setColor(sc, sc);
+        str.setColor(strC, strEdge);
       }
       snapFlash = Math.max(0, snapFlash - dt / 0.08);
       str.setFlash(reduced ? 0 : snapFlash);
@@ -1050,7 +1224,7 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
           trail.freeze();
           const z = ph.phases[Math.min(activePhase, ph.phases.length - 1)] ?? ph.phases[0];
           if (z) {
-            particles.confetti(z.xa - 0.15, z.xb + 0.15, Math.max(0.25, lastBy), 90);
+            particles.confetti(z.xa - 0.15, z.xb + 0.15, Math.max(0.25, lastBy), 90, confettiPal, confettiShape);
             particles.sparkle(lastBx, lastBy, 0.1, 10, PAL.goal, 0.12);
           }
           goalFlash = 1;
@@ -1066,15 +1240,15 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
           const w = e.wall >= 0 ? ph.walls[e.wall] : undefined;
           if ((e.kind === CK_BALL || e.kind === CK_STRING) && w) {
             bricks?.burst(e.wall, e.x, e.y, 6);
-            particles.dust(e.x, e.y, -0.04, 12, PAL.mortar, 0.9); // behind the ball plane so the ball stays readable
-            particles.sparks(e.x, e.y, 0.2, 10, e.x < (w.x0 + w.x1) / 2 ? -1 : 1, 0.8, 1.5, PAL.brick2);
+            particles.dust(e.x, e.y, -0.04, 12, dustTint, 0.9); // behind the ball plane so the ball stays readable
+            particles.sparks(e.x, e.y, 0.2, 10, e.x < (w.x0 + w.x1) / 2 ? -1 : 1, 0.8, 1.5, sparkTint);
             const dxw = Math.min(w.x1, Math.max(w.x0, e.x));
             pendingDecal = { level: level.id, d: { x: dxw, y: Math.min(w.h - 0.03, Math.max(0.04, e.y)), z: Z_WALL_HALF + 0.004, rot: (particles.rand() - 0.5) * 0.5, size: Math.min(0.1, (w.x1 - w.x0) * 0.9) } };
           } else if (e.kind === CK_BEAM) {
             particles.sparks(e.x, BEAM_TOP - 0.1, 0.12, 22, 0, -1, 2.2);
             pendingDecal = { level: level.id, d: { x: e.x, y: 1.35, z: 0.1, rot: 0.1, size: 0.08 } };
           } else if (e.kind === CK_FLOOR) {
-            particles.dust(e.x, 0.02, 0.1, 16, PAL.floor, 0.8);
+            particles.dust(e.x, 0.02, 0.1, 16, floorDustTint, 0.8);
             pendingDecal = { level: level.id, d: { x: e.x, y: -0.08, z: Z_FLOOR_FRONT + 0.004, rot: -0.1, size: 0.09 } };
           } else if (e.kind === CK_EGG) {
             particles.yolk(lastBx, lastBy, 0.05);
@@ -1117,6 +1291,11 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
       }
       (ballLine?.material as import('three').Material | undefined)?.dispose();
       (eggLine?.material as import('three').Material | undefined)?.dispose();
+      if (patBall) {
+        patBall.geometry.dispose();
+        (patBall.material as import('three').Material).dispose();
+      }
+      (patLine?.material as import('three').Material | undefined)?.dispose();
       stage?.dispose();
       tex?.dispose();
       env?.dispose();
@@ -1137,7 +1316,8 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
       goal = null;
       blobs = null;
       str = null;
-      ball = egg = ballLine = eggLine = null;
+      ball = egg = ballLine = eggLine = patBall = patLine = null;
+      applied = null;
       ghostBatch = inkWorld = inkTop = backInk = marginInk = null;
       pts = aiPts = null;
       dprApplied = 0;
@@ -1155,6 +1335,19 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
         dprApplied = 0;
         applyQuality();
       }
+    },
+
+    setSkin(next) {
+      if (!next || !next.ball || !next.crane || !next.trail || !next.stage) return;
+      look = next;
+      // Before init: kept as pending; init builds from it. After init: only the changed parts.
+      if (gl && applied) applySkin();
+    },
+
+    skin() {
+      const out = {} as Record<SkinPart, string>;
+      for (const p of SKIN_PARTS) out[p] = applied ? applied[p] : look[p].id;
+      return out;
     },
 
     setAiMarginMm(mm) {

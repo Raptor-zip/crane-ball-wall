@@ -4,12 +4,15 @@
 //   floor  512x512  1 m tile: 10 cm grid, bold 1 m line
 //   hazard 128x32   yellow/black stripes for the rail-end bumpers
 //   paper  512x512  1 m tile: paper fibres + faint 10 cm grid for the back board
+// brick, floor, hazard and paper follow the skin (skinLooks.ts): restyle() / setHazard() repaint the same canvases.
 //   atlas  512x512  masks: R = fill, G = halo. Glyphs, ghost tag shapes, X decal, arrow, dynamic labels
 //   soft   64x64    radial falloff for blob shadows and glows
 import {
   CanvasTexture, ClampToEdgeWrapping, LinearFilter, LinearMipmapLinearFilter, NoColorSpace,
   RepeatWrapping, SRGBColorSpace,
 } from 'three';
+import { DEFAULT_LOOK } from './skinLooks';
+import type { CraneLook, StageLook } from './skinLooks';
 
 export interface UvRect { u0: number; v0: number; u1: number; v1: number; aspect: number /* w/h in px */ }
 
@@ -37,6 +40,10 @@ export type AtlasShape = 'hex' | 'circle' | 'star' | 'tri' | 'flag' | 'x' | 'arr
 export interface Textures {
   brick: CanvasTexture; floor: CanvasTexture; hazard: CanvasTexture; paper: CanvasTexture;
   atlas: Atlas; soft: CanvasTexture;
+  /** Board skin changed: redraws paper, floor and brick into the same canvases (never new textures). */
+  restyle(stage: StageLook): void;
+  /** Crane skin changed: redraws the bumper stripes (the texture's repeat stays). */
+  setHazard(a: string, b: string): void;
   dispose(): void;
 }
 
@@ -85,9 +92,102 @@ function noise(g: CanvasRenderingContext2D, w: number, h: number, r: () => numbe
   g.globalAlpha = 1;
 }
 
-function makeBrick(): CanvasTexture {
+// ---------------------------------------------------------------------------------------------
+// Skinnable canvases (skins spec §2.3, §5.1). Each is drawn by a draw*() into its one canvas, at boot and again by
+// restyle() / setHazard() into the SAME canvas (never a new texture). The default look draws exactly today's calls.
+
+/** Brick face styles; the per-instance tint carries the hue, so every base is near-white. */
+export function drawBrick(g: CanvasRenderingContext2D, style: StageLook['brickTex']): void {
   const W = 256, H = 128;
-  const [c, g] = canvas(W, H);
+  const edge = (x0: number, y0: number, x1: number, y1: number, c: string): void => {
+    const grd = g.createLinearGradient(x0, y0, x1, y1);
+    grd.addColorStop(0, c);
+    grd.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grd;
+    g.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0) || W, Math.abs(y1 - y0) || H);
+  };
+  if (style === 'block') {
+    // Concrete / cast block: flat base, fine pores, a crisp narrow bevel; no mottling.
+    const r = rng(12);
+    g.fillStyle = '#f4f0ec';
+    g.fillRect(0, 0, W, H);
+    noise(g, W, H, r, 2200, 0.16, '#4a4640', '#ffffff');
+    for (let i = 0; i < 60; i++) {
+      g.fillStyle = `rgba(50,45,40,${0.14 + r() * 0.16})`;
+      g.beginPath();
+      g.arc(r() * W, r() * H, 0.6 + r() * 1.1, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.fillStyle = 'rgba(255,255,255,0.5)';
+    g.fillRect(0, 0, W, 3);
+    g.fillStyle = 'rgba(255,255,255,0.3)';
+    g.fillRect(0, 3, 3, H - 3);
+    g.fillStyle = 'rgba(30,25,20,0.42)';
+    g.fillRect(0, H - 4, W, 4);
+    g.fillStyle = 'rgba(30,25,20,0.3)';
+    g.fillRect(W - 3, 0, 3, H - 4);
+    edge(0, 3, 0, 9, 'rgba(255,255,255,0.18)');
+    edge(0, H - 4, 0, H - 11, 'rgba(30,25,20,0.16)');
+    return;
+  }
+  if (style === 'stone') {
+    // Dressed stone: a rounded look from a radial gradient (light top-left, dark rim) plus a few chisel strokes.
+    // The box keeps its corners (the rounding is shading only).
+    const r = rng(13);
+    g.fillStyle = '#f4f0ec';
+    g.fillRect(0, 0, W, H);
+    for (let i = 0; i < 26; i++) {
+      const x = r() * W, y = r() * H, rad = 10 + r() * 26;
+      const grd = g.createRadialGradient(x, y, 0, x, y, rad);
+      const k = r() < 0.5 ? '0,0,0' : '255,255,255';
+      grd.addColorStop(0, `rgba(${k},${0.04 + r() * 0.05})`);
+      grd.addColorStop(1, `rgba(${k},0)`);
+      g.fillStyle = grd;
+      g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+    }
+    noise(g, W, H, r, 2400, 0.2, '#4a4448', '#ffffff');
+    const body = g.createRadialGradient(W * 0.4, H * 0.36, 4, W * 0.5, H * 0.5, W * 0.62);
+    body.addColorStop(0, 'rgba(255,255,255,0.34)');
+    body.addColorStop(0.45, 'rgba(255,255,255,0)');
+    body.addColorStop(0.72, 'rgba(40,32,36,0.1)');
+    body.addColorStop(1, 'rgba(40,32,36,0.55)');
+    g.fillStyle = body;
+    g.fillRect(0, 0, W, H);
+    const strokes = 3 + Math.floor(r() * 3);
+    g.lineCap = 'round';
+    for (let i = 0; i < strokes; i++) {
+      const x = W * (0.2 + r() * 0.6), y = H * (0.2 + r() * 0.6), a = r() * Math.PI, l = 14 + r() * 22;
+      const dx = Math.cos(a) * l, dy = Math.sin(a) * l * 0.5;
+      g.lineWidth = 1.6;
+      g.strokeStyle = 'rgba(45,38,40,0.3)';
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + dx, y + dy);
+      g.stroke();
+      g.lineWidth = 1.1;
+      g.strokeStyle = 'rgba(255,255,255,0.35)';
+      g.beginPath();
+      g.moveTo(x, y + 1.6);
+      g.lineTo(x + dx, y + dy + 1.6);
+      g.stroke();
+    }
+    g.lineCap = 'butt';
+    return;
+  }
+  if (style === 'print') {
+    // Printed figure: a flat near-white fill with light noise and a soft bevel; the dark joints draw the lines.
+    const r = rng(14);
+    g.fillStyle = '#f6f5f2';
+    g.fillRect(0, 0, W, H);
+    noise(g, W, H, r, 1400, 0.08, '#5a5c60', '#ffffff');
+    const b = 9;
+    edge(0, 0, 0, b, 'rgba(255,255,255,0.3)');
+    edge(0, 0, b, 0, 'rgba(255,255,255,0.2)');
+    edge(0, H, 0, H - b * 1.4, 'rgba(30,32,40,0.22)');
+    edge(W, 0, W - b, 0, 'rgba(30,32,40,0.16)');
+    return;
+  }
+  // 'clay': today's brick.
   const r = rng(11);
   // Near-white base so the per-instance colour carries the hue.
   g.fillStyle = '#f4f0ec';
@@ -112,77 +212,102 @@ function makeBrick(): CanvasTexture {
   }
   // Baked bevel: light top/left, dark bottom/right (reads as a normal map under the key light).
   const b = 9;
-  const edge = (x0: number, y0: number, x1: number, y1: number, col: string): void => {
-    const grd = g.createLinearGradient(x0, y0, x1, y1);
-    grd.addColorStop(0, col);
-    grd.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = grd;
-    g.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0) || W, Math.abs(y1 - y0) || H);
-  };
   edge(0, 0, 0, b, 'rgba(255,255,255,0.55)');
   edge(0, 0, b, 0, 'rgba(255,255,255,0.35)');
   edge(0, H, 0, H - b * 1.4, 'rgba(40,20,10,0.55)');
   edge(W, 0, W - b, 0, 'rgba(40,20,10,0.4)');
-  return tex(c, true, false);
 }
 
-function makeFloor(): CanvasTexture {
+/** 1 m floor tile: noise, the 10 cm grid (optional) with a stronger 50 cm line, the bold 1 m edge. */
+export function drawFloor(g: CanvasRenderingContext2D, st: Pick<StageLook, 'floor' | 'floorTex'>): void {
   const S = 512;
-  const [c, g] = canvas(S, S);
   const r = rng(23);
-  g.fillStyle = '#d9d4cb';
+  g.fillStyle = st.floor;
   g.fillRect(0, 0, S, S);
-  noise(g, S, S, r, 5000, 0.12, '#8d8577', '#ffffff');
-  g.fillStyle = '#c9c2b6';
-  for (let i = 1; i < 10; i++) {
-    const p = Math.round((i * S) / 10);
-    const w = i === 5 ? 3 : 2;
-    g.fillRect(p - w / 2, 0, w, S);
-    g.fillRect(0, p - w / 2, S, w);
+  noise(g, S, S, r, 5000, 0.12, st.floorTex.noise, '#ffffff');
+  g.fillStyle = st.floorTex.grid;
+  if (st.floorTex.minor) {
+    for (let i = 1; i < 10; i++) {
+      const p = Math.round((i * S) / 10);
+      const w = i === 5 ? 3 : 2;
+      g.fillRect(p - w / 2, 0, w, S);
+      g.fillRect(0, p - w / 2, S, w);
+    }
   }
-  g.fillStyle = '#b3aa9b';
+  g.fillStyle = st.floorTex.edge;
   g.fillRect(0, 0, 3, S);
   g.fillRect(S - 3, 0, 3, S);
   g.fillRect(0, 0, S, 3);
   g.fillRect(0, S - 3, S, 3);
-  return tex(c, true, true);
 }
 
-function makePaper(): CanvasTexture {
+/** 1 m board tile: paper1 base, fibres (short / kozo / wood grain / none), noise, the graph grid. */
+export function drawPaper(g: CanvasRenderingContext2D, st: Pick<StageLook, 'paper1' | 'paperTex'>): void {
   const S = 512;
-  const [c, g] = canvas(S, S);
+  const t = st.paperTex;
   const r = rng(37);
-  g.fillStyle = '#f3eee4';
+  g.fillStyle = st.paper1;
   g.fillRect(0, 0, S, S);
-  // Fibres.
-  for (let i = 0; i < 420; i++) {
-    const x = r() * S, y = r() * S, a = r() * Math.PI, l = 4 + r() * 16;
-    g.strokeStyle = r() < 0.6 ? 'rgba(150,130,100,0.10)' : 'rgba(255,255,255,0.5)';
-    g.lineWidth = 0.6 + r() * 0.6;
-    g.beginPath();
-    g.moveTo(x, y);
-    g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
-    g.stroke();
+  if (t.fibre === 'short') {
+    for (let i = 0; i < 420; i++) {
+      const x = r() * S, y = r() * S, a = r() * Math.PI, l = 4 + r() * 16;
+      g.strokeStyle = r() < 0.6 ? t.fibreDark : t.fibreLight;
+      g.lineWidth = 0.6 + r() * 0.6;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
+      g.stroke();
+    }
+  } else if (t.fibre === 'kozo') {
+    // Long, gently bent kozo (mulberry) fibres.
+    for (let i = 0; i < 160; i++) {
+      const x = r() * S, y = r() * S, a = r() * Math.PI, l = 20 + r() * 40, bend = (r() - 0.5) * 0.5 * l;
+      const ex = x + Math.cos(a) * l, ey = y + Math.sin(a) * l;
+      g.strokeStyle = r() < 0.6 ? t.fibreDark : t.fibreLight;
+      g.lineWidth = 0.5 + r() * 0.5;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.quadraticCurveTo((x + ex) / 2 - Math.sin(a) * bend, (y + ey) / 2 + Math.cos(a) * bend, ex, ey);
+      g.stroke();
+    }
+  } else if (t.fibre === 'grain') {
+    // Plywood grain: long, slightly wavy horizontal streaks (wrapped at the tile edge so the tile repeats).
+    for (let i = 0; i < 150; i++) {
+      const y = r() * S, x0 = r() * S, l = 60 + r() * 220, amp = 0.6 + r() * 2.2, ph = r() * 6.28, lw = 0.8 + r() * 1.6;
+      g.strokeStyle = r() < 0.65 ? t.fibreDark : t.fibreLight;
+      g.lineWidth = lw;
+      for (const shift of x0 + l > S ? [0, -S] : [0]) {
+        g.beginPath();
+        for (let k = 0; k <= 12; k++) {
+          const x = x0 + shift + (l * k) / 12, yy = y + Math.sin(ph + k * 0.7) * amp;
+          if (k === 0) g.moveTo(x, yy);
+          else g.lineTo(x, yy);
+        }
+        g.stroke();
+      }
+    }
   }
-  noise(g, S, S, r, 4000, 0.1, '#a89878', '#ffffff');
+  noise(g, S, S, r, 4000, 0.1, t.noiseDark, t.noiseLight);
   // Faint graph-paper grid (10 cm), a little stronger every 50 cm and 1 m.
+  const [cr, cg, cb] = t.grid.rgb;
   for (let i = 0; i <= 10; i++) {
     const p = Math.round((i * S) / 10);
     const major = i === 0 || i === 10;
-    g.fillStyle = major ? 'rgba(150,170,200,0.42)' : i === 5 ? 'rgba(150,170,200,0.30)' : 'rgba(150,170,200,0.20)';
+    const alpha = major ? t.grid.alpha[0] : i === 5 ? t.grid.alpha[1] : t.grid.alpha[2];
+    if (!(alpha > 0)) continue;
+    g.fillStyle = `rgba(${cr},${cg},${cb},${alpha})`;
     const w = major ? 1.5 : 1.2;
     g.fillRect(p - w / 2, 0, w, S);
     g.fillRect(0, p - w / 2, S, w);
   }
-  return tex(c, true, true);
 }
 
-function makeHazard(): CanvasTexture {
+/** Rail-end bumper stripes: colour a with diagonal stripes of colour b. */
+export function drawHazard(g: CanvasRenderingContext2D, a: string, b: string): void {
   const W = 128, H = 32;
-  const [c, g] = canvas(W, H);
-  g.fillStyle = '#f2b705';
+  g.fillStyle = a;
   g.fillRect(0, 0, W, H);
-  g.fillStyle = '#1e1e1e';
+  g.fillStyle = b;
   for (let x = -H; x < W + H; x += 32) {
     g.beginPath();
     g.moveTo(x, H);
@@ -192,7 +317,27 @@ function makeHazard(): CanvasTexture {
     g.closePath();
     g.fill();
   }
-  return tex(c, true, true);
+}
+
+/** A canvas texture drawn by `draw`; `redraw` repaints the same canvas and flags the texture for upload. */
+function drawn(w: number, h: number, srgb: boolean, repeat: boolean, draw: (g: CanvasRenderingContext2D) => void): {
+  texture: CanvasTexture; redraw(draw: (g: CanvasRenderingContext2D) => void): void;
+} {
+  const [c, g] = canvas(w, h);
+  draw(g);
+  const t = tex(c, srgb, repeat);
+  return {
+    texture: t,
+    redraw(d) {
+      // Start from a fresh canvas's state, so a redraw issues exactly the calls of a first draw (every base is opaque).
+      g.globalAlpha = 1;
+      g.fillStyle = '#000000';
+      g.strokeStyle = '#000000';
+      g.lineWidth = 1;
+      d(g);
+      t.needsUpdate = true;
+    },
+  };
 }
 
 function makeSoft(): CanvasTexture {
@@ -402,20 +547,30 @@ function makeAtlas(): Atlas {
   };
 }
 
-export function createTextures(): Textures {
-  const brick = makeBrick();
-  const floor = makeFloor();
-  const hazard = makeHazard();
-  const paper = makePaper();
+export function createTextures(look: { stage: StageLook; crane: Pick<CraneLook, 'hazard'> } = DEFAULT_LOOK): Textures {
+  const st = look.stage;
+  const brick = drawn(256, 128, true, false, (g) => drawBrick(g, st.brickTex));
+  const floor = drawn(512, 512, true, true, (g) => drawFloor(g, st));
+  const hz = look.crane.hazard;
+  const hazard = drawn(128, 32, true, true, (g) => drawHazard(g, hz[0], hz[1]));
+  const paper = drawn(512, 512, true, true, (g) => drawPaper(g, st));
   const atlas = makeAtlas();
   const soft = makeSoft();
   return {
-    brick, floor, hazard, paper, atlas, soft,
+    brick: brick.texture, floor: floor.texture, hazard: hazard.texture, paper: paper.texture, atlas, soft,
+    restyle(stage) {
+      paper.redraw((g) => drawPaper(g, stage));
+      floor.redraw((g) => drawFloor(g, stage));
+      brick.redraw((g) => drawBrick(g, stage.brickTex));
+    },
+    setHazard(a, b) {
+      hazard.redraw((g) => drawHazard(g, a, b));
+    },
     dispose() {
-      brick.dispose();
-      floor.dispose();
-      hazard.dispose();
-      paper.dispose();
+      brick.texture.dispose();
+      floor.texture.dispose();
+      hazard.texture.dispose();
+      paper.texture.dispose();
       atlas.dispose();
       soft.dispose();
     },

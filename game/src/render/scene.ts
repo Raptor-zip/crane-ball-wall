@@ -8,6 +8,8 @@ import {
 import type { Texture } from 'three';
 import type { ZoneDef } from '../sim/level';
 import type { Textures } from './textures';
+import { DEFAULT_LOOK } from './skinLooks';
+import type { StageLook } from './skinLooks';
 
 /** §9.1 palette (same values as src/ui/tokens.css). */
 export const PAL = {
@@ -41,12 +43,15 @@ export interface Stage {
   /** Shadow frustum around the level's x range. */
   fitShadow(x0: number, x1: number): void;
   setShadows(on: boolean): void;
+  /** Board skin: background, the board's paper-1 -> paper-2 shading (at the last fitted range), the floor tint. */
+  setLook(stage: StageLook): void;
   dispose(): void;
 }
 
-export function createScene(tex: Textures): Stage {
+export function createScene(tex: Textures, look: StageLook = DEFAULT_LOOK.stage): Stage {
+  let st = look;
   const scene = new Scene();
-  scene.background = col(PAL.paper1);
+  scene.background = col(st.paper1);
 
   const hemi = new HemisphereLight(col('#FFF8EE'), col('#CDBFA8'), 1.35);
   scene.add(hemi);
@@ -77,14 +82,16 @@ export function createScene(tex: Textures): Stage {
   board.position.set((BX0 + BX1) / 2, (BY0 + BY1) / 2, Z_BOARD);
   board.receiveShadow = false;
   scene.add(board);
+  let shadeAt: [number, number] = [1.1, 2.6];
   const shadeBoard = (cx: number, halfW: number): void => {
+    shadeAt = [cx, halfW];
     const p = boardGeo.getAttribute('position') as BufferAttribute;
     const c = boardGeo.getAttribute('color') as BufferAttribute;
     const ss = (a: number, b: number, x: number): number => {
       const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
       return t * t * (3 - 2 * t);
     };
-    const p1 = col(PAL.paper1), p2 = col(PAL.paper2);
+    const p1 = col(st.paper1), p2 = col(st.paper2);
     const r2 = p2.r / p1.r, g2 = p2.g / p1.g, b2 = p2.b / p1.b;
     for (let i = 0; i < p.count; i++) {
       const x = p.getX(i) + (BX0 + BX1) / 2, y = p.getY(i) + (BY0 + BY1) / 2;
@@ -102,7 +109,8 @@ export function createScene(tex: Textures): Stage {
   // Floor: top (y = 0) and the front cross-section (the "finger band", §9.2) in one mesh.
   // Vertex colours: the top reads light, the cross-section darkens downward like a bench edge.
   const fz0 = Z_BOARD, fz1 = Z_FLOOR_FRONT;
-  const pos: number[] = [], nrm: number[] = [], uvs: number[] = [], cols: number[] = [], idx: number[] = [];
+  const pos: number[] = [], nrm: number[] = [], uvs: number[] = [], cols: number[] = [], idx: number[] = [], shades: number[] = [];
+  const tint = (kk: number, t: StageLook['floorTint']): [number, number, number] => [kk * t[0], kk * t[1], kk * t[2]];
   const quad = (v: number[][], n: number[], uv: number[][], k: number[]): void => {
     const b = pos.length / 3;
     v.forEach((p, i) => {
@@ -110,7 +118,8 @@ export function createScene(tex: Textures): Stage {
       nrm.push(n[0] as number, n[1] as number, n[2] as number);
       uvs.push((uv[i] as number[])[0] as number, (uv[i] as number[])[1] as number);
       const kk = k[i] as number;
-      cols.push(kk, kk * 0.975, kk * 0.93);
+      shades.push(kk);
+      cols.push(...tint(kk, st.floorTint));
     });
     idx.push(b, b + 2, b + 1, b, b + 3, b + 2);
   };
@@ -151,6 +160,17 @@ export function createScene(tex: Textures): Stage {
     },
     setShadows(on: boolean) {
       key.castShadow = on;
+    },
+    setLook(next: StageLook) {
+      st = next;
+      (scene.background as Color).set(st.paper1);
+      shadeBoard(shadeAt[0], shadeAt[1]);
+      const c = floorGeo.getAttribute('color') as BufferAttribute;
+      for (let i = 0; i < shades.length; i++) {
+        const [r, g, b] = tint(shades[i] as number, st.floorTint);
+        c.setXYZ(i, r, g, b);
+      }
+      c.needsUpdate = true;
     },
     dispose() {
       boardGeo.dispose();
@@ -316,10 +336,12 @@ export interface Blobs {
   readonly mesh: InstancedMesh;
   /** Places blob i at (x, y) with a diameter and strength 0..1 (0 hides). */
   set(i: number, x: number, y: number, d: number, strength: number): void;
+  /** Shadow colour (board skin). */
+  setColor(hex: string): void;
   dispose(): void;
 }
 
-export function createBlobs(soft: Texture): Blobs {
+export function createBlobs(soft: Texture, color: string = DEFAULT_LOOK.stage.blob): Blobs {
   const N = 3;
   const geo = new PlaneGeometry(1, 1);
   geo.rotateX(-Math.PI / 2);
@@ -327,7 +349,7 @@ export function createBlobs(soft: Texture): Blobs {
   geo.setAttribute('aStr', str);
   const mat = new ShaderMaterial({
     vertexShader: BLOB_VS, fragmentShader: BLOB_FS,
-    uniforms: { uMap: { value: soft }, uColor: { value: col('#3a2a20') } },
+    uniforms: { uMap: { value: soft }, uColor: { value: col(color) } },
     transparent: true, depthWrite: false,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
@@ -346,6 +368,9 @@ export function createBlobs(soft: Texture): Blobs {
       str.setX(i, strength);
       str.needsUpdate = true;
       mesh.instanceMatrix.needsUpdate = true;
+    },
+    setColor(hex) {
+      ((mat.uniforms.uColor as { value: Color }).value).set(hex);
     },
     dispose() {
       geo.dispose();

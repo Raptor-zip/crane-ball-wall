@@ -291,3 +291,41 @@ export function confettiPalette(look: SkinLook): readonly Hex[] {
   const s = look.stage;
   return [s.brick1, s.brick2, s.mortar, look.crane.beam, '#22B573', '#D8342B', s.brick2];
 }
+
+// ---------------------------------------------------------------------------------------------- ball patterns
+
+/** Integer hash of a rounded position and a seed -> [0, 1). */
+function hash4(a: number, b: number, c: number, d: number): number {
+  let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1) ^ Math.imul(c | 0, 0x9e3779b1) ^ Math.imul(d | 0, 0x85ebca77);
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
+  h ^= h >>> 15;
+  return (h >>> 0) / 4294967296;
+}
+
+/**
+ * Which pattern layer colours the vertex at (x, y, z) on a sphere of radius R (local +Y along the string), and how
+ * much: returns [layer index or -1 for the body colour, lerp amount from the body towards the layer colour].
+ * The position is rounded to 0.1 mm before hashing, so seam and pole duplicates get the same colour.
+ */
+export function patternAt(pattern: readonly BallLayer[], x: number, y: number, z: number, R: number): [number, number] {
+  const ix = Math.round(x * 1e4), iy = Math.round(y * 1e4), iz = Math.round(z * 1e4);
+  let layer = -1, t = 0;
+  pattern.forEach((l, i) => {
+    if (l.kind === 'speckle') {
+      if (hash4(ix, iy, iz, l.seed) < l.cover) {
+        layer = i;
+        t = 0.55 + 0.45 * hash4(iz, ix, iy, l.seed * 7919 + 1);
+      }
+    } else {
+      for (const ax of l.axes) {
+        const v = ax === 'x' ? x : ax === 'y' ? y : z;
+        if (Math.abs(v) / R < l.width) {
+          layer = i;
+          t = 1;
+        }
+      }
+    }
+  });
+  return [layer, t];
+}

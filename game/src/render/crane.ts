@@ -11,6 +11,8 @@ import {
 } from 'three';
 import type { Texture } from 'three';
 import { PAL, Z_GANTRY_LEG, col } from './scene';
+import { DEFAULT_LOOK } from './skinLooks';
+import type { CraneLook } from './skinLooks';
 
 export const BEAM_BOTTOM = 1.3;
 export const BEAM_TOP = 1.4;
@@ -62,10 +64,11 @@ class Builder {
 
 const xAxis = new Vector3(1, 0, 0);
 
-function trolleyGeometry(): BufferGeometry {
+/** Trolley with baked colours. The vertex order never depends on the look (Crane.setLook recolours in place). */
+export function trolleyGeometry(look: CraneLook = DEFAULT_LOOK.crane, accentHex: string = PAL.ball): BufferGeometry {
   const b = new Builder();
-  const body = col('#33405C'), bodyTop = col('#46557A'), plate = col('#26314A');
-  const tyre = col('#1B1F27'), hub = col('#B8C0CA'), steel = col('#9AA3AE'), accent = col(PAL.ball);
+  const body = col(look.body), bodyTop = col(look.bodyTop), plate = col(look.plate);
+  const tyre = col(look.tyre), hub = col(look.hub), steel = col(look.steel), accent = col(accentHex);
   const hw = TROLLEY_HALF_W;
   // Body with a lighter top chamfer strip.
   b.box(-hw, 1.25, -0.1, hw, 1.293, 0.1, body);
@@ -95,9 +98,15 @@ function trolleyGeometry(): BufferGeometry {
   return b.build();
 }
 
-function gantryGeometry(rail: [number, number]): BufferGeometry {
+/**
+ * Gantry with baked colours. The lower flange (running rail, the beam's crash edge) keeps PAL.rail for every look;
+ * leg bands split the leg box into boxes of the same x / z extent (nothing grows).
+ */
+export function gantryGeometry(rail: [number, number], look: CraneLook = DEFAULT_LOOK.crane): BufferGeometry {
   const b = new Builder();
-  const yellow = col(PAL.gantry), yellowDark = col('#D99F00'), railC = col(PAL.rail), foot = col('#4B5563');
+  const yellow = col(look.beam), yellowDark = col(look.beamDark), railC = col(PAL.rail), foot = col(look.foot);
+  const legC = col(look.legs ?? look.beam), capC = col(look.legCap ?? look.beamDark), braceC = col(look.brace ?? look.beamDark);
+  const bands = look.legBands ? { a: col(look.legBands.a), b: col(look.legBands.b), pitch: look.legBands.pitch } : null;
   const legX = [rail[0] - 0.15, rail[1] + 0.15];
   const xa = (legX[0] as number) - 0.05, xb = (legX[1] as number) + 0.05;
   // I-beam: lower flange (running rail), web, top flange.
@@ -113,17 +122,24 @@ function gantryGeometry(rail: [number, number]): BufferGeometry {
   for (const lx of legX) {
     // Arm from the beam back to the leg top.
     b.box(lx - 0.035, BEAM_TOP - 0.07, Z_GANTRY_LEG - 0.035, lx + 0.035, BEAM_TOP, 0.0, yellow);
-    // Leg.
-    b.box(lx - 0.035, 0.012, Z_GANTRY_LEG - 0.035, lx + 0.035, BEAM_TOP, Z_GANTRY_LEG + 0.035, yellow);
+    // Leg (optionally in aviation-style bands from the foot plate up).
+    if (bands && bands.pitch > 0) {
+      let k = 0;
+      for (let y = 0.012; y < BEAM_TOP - 1e-6; y += bands.pitch, k++) {
+        b.box(lx - 0.035, y, Z_GANTRY_LEG - 0.035, lx + 0.035, Math.min(BEAM_TOP, y + bands.pitch), Z_GANTRY_LEG + 0.035, k % 2 ? bands.b : bands.a);
+      }
+    } else {
+      b.box(lx - 0.035, 0.012, Z_GANTRY_LEG - 0.035, lx + 0.035, BEAM_TOP, Z_GANTRY_LEG + 0.035, legC);
+    }
     // Knee brace in the y-z plane.
     const p0 = new Vector3(lx, 1.02, Z_GANTRY_LEG), p1 = new Vector3(lx, BEAM_TOP - 0.035, -0.12);
     const d = p1.clone().sub(p0);
     const q = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), d.clone().normalize());
-    b.add(new BoxGeometry(0.03, 1, 0.03), p0.clone().add(p1).multiplyScalar(0.5), q, new Vector3(1, d.length(), 1), yellowDark);
+    b.add(new BoxGeometry(0.03, 1, 0.03), p0.clone().add(p1).multiplyScalar(0.5), q, new Vector3(1, d.length(), 1), braceC);
     // Foot plate and bolts.
     b.box(lx - 0.085, 0, Z_GANTRY_LEG - 0.085, lx + 0.085, 0.012, Z_GANTRY_LEG + 0.085, foot);
     // Hazard-free cap on the leg top.
-    b.box(lx - 0.04, BEAM_TOP, Z_GANTRY_LEG - 0.04, lx + 0.04, BEAM_TOP + 0.008, Z_GANTRY_LEG + 0.04, yellowDark);
+    b.box(lx - 0.04, BEAM_TOP, Z_GANTRY_LEG - 0.04, lx + 0.04, BEAM_TOP + 0.008, Z_GANTRY_LEG + 0.04, capC);
   }
   return b.build();
 }
@@ -139,17 +155,29 @@ export interface Crane {
   hit(side: -1 | 1, strength: number): void;
   update(dt: number): void;
   reset(): void;
+  /**
+   * Crane skin (or the ball's accent) changed: material scalars, the trolley colours rewritten in place, and the
+   * gantry rebuilt at the current rail when the crane look itself changed. The bumper stripes are the texture's
+   * (Textures.setHazard).
+   */
+  setLook(look: CraneLook, accentHex: string): void;
   dispose(): void;
 }
 
-export function createCrane(hazard: Texture, env: Texture | null): Crane {
+export function createCrane(hazard: Texture, env: Texture | null, look: CraneLook = DEFAULT_LOOK.crane, accentHex: string = PAL.ball): Crane {
+  let cur = look;
   const group = new Group();
-  const paint = new MeshStandardMaterial({ vertexColors: true, roughness: 0.42, metalness: 0.08, envMap: env, envMapIntensity: 0.55 });
+  const paint = new MeshStandardMaterial({
+    vertexColors: true, roughness: cur.paint.roughness, metalness: cur.paint.metalness, envMap: env, envMapIntensity: cur.paint.envMapIntensity,
+  });
   const gantry = new Mesh(new BufferGeometry(), paint);
   gantry.castShadow = true;
   gantry.receiveShadow = true;
-  const tMat = new MeshStandardMaterial({ vertexColors: true, roughness: 0.38, metalness: 0.25, envMap: env, envMapIntensity: 0.8 });
-  const trolley = new Mesh(trolleyGeometry(), tMat);
+  const tMat = new MeshStandardMaterial({
+    vertexColors: true, roughness: cur.trolleyMat.roughness, metalness: cur.trolleyMat.metalness, envMap: env,
+    envMapIntensity: cur.trolleyMat.envMapIntensity,
+  });
+  const trolley = new Mesh(trolleyGeometry(cur, accentHex), tMat);
   trolley.castShadow = true;
   const bMat = new MeshStandardMaterial({ map: hazard, roughness: 0.5, metalness: 0.05 });
   hazard.repeat.set(0.5, 1);
@@ -181,7 +209,7 @@ export function createCrane(hazard: Texture, env: Texture | null): Crane {
     setRail(rail) {
       railR = [rail[0], rail[1]];
       gantry.geometry.dispose();
-      gantry.geometry = gantryGeometry(railR);
+      gantry.geometry = gantryGeometry(railR, cur);
       flex[0] = flex[1] = flexV[0] = flexV[1] = 0;
       placeBumpers();
     },
@@ -211,6 +239,25 @@ export function createCrane(hazard: Texture, env: Texture | null): Crane {
     reset() {
       flex[0] = flex[1] = flexV[0] = flexV[1] = 0;
       placeBumpers();
+    },
+    setLook(next, accent) {
+      const rebuild = next !== cur;
+      cur = next;
+      paint.roughness = next.paint.roughness;
+      paint.metalness = next.paint.metalness;
+      paint.envMapIntensity = next.paint.envMapIntensity;
+      tMat.roughness = next.trolleyMat.roughness;
+      tMat.metalness = next.trolleyMat.metalness;
+      tMat.envMapIntensity = next.trolleyMat.envMapIntensity;
+      const fresh = trolleyGeometry(next, accent);
+      const dst = trolley.geometry.getAttribute('color') as Float32BufferAttribute;
+      (dst.array as Float32Array).set(fresh.getAttribute('color').array as Float32Array);
+      dst.needsUpdate = true;
+      fresh.dispose();
+      if (rebuild) {
+        gantry.geometry.dispose();
+        gantry.geometry = gantryGeometry(railR, cur);
+      }
     },
     dispose() {
       gantry.geometry.dispose();

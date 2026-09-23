@@ -14,7 +14,11 @@ import type { Textures } from '../../src/render/textures';
 import { createScene } from '../../src/render/scene';
 import { createCrane } from '../../src/render/crane';
 import { createBricks } from '../../src/render/bricks';
-import { Particles } from '../../src/render/particles';
+import { DEFAULT_CONFETTI, Particles, S_RECT } from '../../src/render/particles';
+import { Z_GANTRY_LEG } from '../../src/render/scene';
+import { BEAM_TOP } from '../../src/render/crane';
+import { DEFAULT_LOOK, LOOKS, confettiPalette } from '../../src/render/skinLooks';
+import type { StageLook } from '../../src/render/skinLooks';
 import { hashNums, installRecorder, recorderOf } from './recorder';
 
 const LEVELS = (levelsFile as unknown as { levels: LevelDef[] }).levels;
@@ -121,5 +125,184 @@ describe('default look goldens (today)', () => {
 
   it('90 confetti pieces draw the same colours', () => {
     check('confetti', confettiHash((p) => p.confetti(1.2, 2.0, 0.5, 90)), GOLDEN.confetti);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ after the skin refactor
+
+const STAGE_LOOKS = Object.values(LOOKS.stage);
+const CRANE_LOOKS = Object.values(LOOKS.crane);
+/** Hash of the latest draw on a canvas (its log is cleared first). */
+function redrawHash(canvas: unknown, draw: () => void): string {
+  const rec = recorderOf(canvas);
+  rec.log.length = 0;
+  draw();
+  return rec.hash();
+}
+
+describe('the default look reproduces the goldens', () => {
+  it('createTextures(DEFAULT_LOOK) draws the same canvases', () => {
+    const t = createTextures(DEFAULT_LOOK);
+    expect(recorderOf(t.brick.image).hash()).toBe(GOLDEN.tex.brick);
+    expect(recorderOf(t.floor.image).hash()).toBe(GOLDEN.tex.floor);
+    expect(recorderOf(t.hazard.image).hash()).toBe(GOLDEN.tex.hazard);
+    expect(recorderOf(t.paper.image).hash()).toBe(GOLDEN.tex.paper);
+    t.dispose();
+  });
+
+  it('restyle to every board and back redraws the golden canvases (same canvases, same textures)', () => {
+    const t = createTextures(DEFAULT_LOOK);
+    const [paper, floor, brick, hazard] = [t.paper, t.floor, t.brick, t.hazard];
+    const v0 = paper.version;
+    for (const st of STAGE_LOOKS) {
+      const other = redrawHash(paper.image, () => t.restyle(st));
+      if (st.id !== DEFAULT_LOOK.stage.id) expect(other, st.id).not.toBe(GOLDEN.tex.paper);
+      expect(redrawHash(paper.image, () => t.restyle(DEFAULT_LOOK.stage)), st.id).toBe(GOLDEN.tex.paper);
+      t.restyle(st);
+      expect(redrawHash(floor.image, () => t.restyle(DEFAULT_LOOK.stage)), st.id).toBe(GOLDEN.tex.floor);
+      t.restyle(st);
+      expect(redrawHash(brick.image, () => t.restyle(DEFAULT_LOOK.stage)), st.id).toBe(GOLDEN.tex.brick);
+    }
+    for (const cr of CRANE_LOOKS) {
+      t.setHazard(cr.hazard[0], cr.hazard[1]);
+      expect(redrawHash(hazard.image, () => t.setHazard(DEFAULT_LOOK.crane.hazard[0], DEFAULT_LOOK.crane.hazard[1])), cr.id).toBe(GOLDEN.tex.hazard);
+    }
+    expect([t.paper, t.floor, t.brick, t.hazard]).toEqual([paper, floor, brick, hazard]);
+    expect(paper.version).toBeGreaterThan(v0);
+    expect(hazard.repeat.x).toBe(1);
+    t.dispose();
+  });
+
+  it('board, floor, trolley, gantry, bricks and confetti with DEFAULT_LOOK equal the goldens', () => {
+    const st = createScene(tex, DEFAULT_LOOK.stage);
+    const g = st.board.geometry;
+    expect(hashNums(g.getAttribute('color').array as ArrayLike<number>, g.getAttribute('position').array as ArrayLike<number>)).toBe(GOLDEN.board.initial);
+    st.fitShadow(-1.3, 3.5);
+    expect(hashNums(g.getAttribute('color').array as ArrayLike<number>)).toBe(GOLDEN.board.fitted);
+    expect(geoHash(st.floor.geometry, ['position', 'normal', 'uv', 'color'])).toBe(GOLDEN.floor);
+    st.dispose();
+    const cr = createCrane(tex.hazard, null, DEFAULT_LOOK.crane, DEFAULT_LOOK.ball.body);
+    expect(geoHash(cr.trolley.geometry)).toBe(GOLDEN.trolley);
+    cr.setRail([-0.6, 2.4]);
+    expect(geoHash(cr.gantry.geometry)).toBe(GOLDEN.gantry['1-1']);
+    cr.dispose();
+    for (const id of ['2-2', '4-1', '5-2'] as const) {
+      const b = createBricks(walls(id), tex.brick, DEFAULT_LOOK.stage);
+      expect(bricksHash(b.bricks), id).toBe(GOLDEN.bricks[id]);
+      b.dispose();
+    }
+    expect(confettiHash((p) => p.confetti(1.2, 2.0, 0.5, 90, DEFAULT_CONFETTI, S_RECT))).toBe(GOLDEN.confetti);
+    expect(confettiHash((p) => p.confetti(1.2, 2.0, 0.5, 90, confettiPalette(DEFAULT_LOOK), S_RECT))).toBe(GOLDEN.confetti);
+  });
+
+  it('scene.setLook to every board and back gives the golden board and floor', () => {
+    const st = createScene(tex, DEFAULT_LOOK.stage);
+    st.fitShadow(-1.3, 3.5);
+    const board = st.board.geometry, floor = st.floor.geometry;
+    const pos0 = geoHash(board, ['position', 'normal', 'uv']), fpos0 = geoHash(floor, ['position', 'normal', 'uv']);
+    for (const look of STAGE_LOOKS) {
+      st.setLook(look);
+      expect(geoHash(board, ['position', 'normal', 'uv']), look.id).toBe(pos0);
+      expect(geoHash(floor, ['position', 'normal', 'uv']), look.id).toBe(fpos0);
+      expect(new Color().copy(st.scene.background as Color).getHexString(), look.id).toBe(look.paper1.slice(1).toLowerCase());
+      st.setLook(DEFAULT_LOOK.stage);
+      expect(hashNums(board.getAttribute('color').array as ArrayLike<number>), look.id).toBe(GOLDEN.board.fitted);
+      expect(geoHash(floor, ['position', 'normal', 'uv', 'color']), look.id).toBe(GOLDEN.floor);
+    }
+    st.dispose();
+  });
+
+  it('crane.setLook to every crane and back gives the golden trolley and gantry', () => {
+    const cr = createCrane(tex.hazard, null);
+    cr.setRail([-1, 3.2]);
+    for (const look of CRANE_LOOKS) {
+      cr.setLook(look, '#384354');
+      cr.setLook(DEFAULT_LOOK.crane, DEFAULT_LOOK.ball.body);
+      expect(geoHash(cr.trolley.geometry), look.id).toBe(GOLDEN.trolley);
+      expect(geoHash(cr.gantry.geometry), look.id).toBe(GOLDEN.gantry['5-4']);
+    }
+    cr.dispose();
+  });
+
+  it('bricks.recolor to every board (same rowH) and back gives the golden instances', () => {
+    for (const id of ['2-2', '4-1', '5-2'] as const) {
+      const b = createBricks(walls(id), tex.brick);
+      for (const look of STAGE_LOOKS) {
+        b.recolor(look);
+        b.recolor(DEFAULT_LOOK.stage);
+        expect(bricksHash(b.bricks), `${id} ${look.id}`).toBe(GOLDEN.bricks[id]);
+      }
+      b.dispose();
+    }
+  });
+});
+
+describe('skins are cosmetic only (§1.2)', () => {
+  it('every crane keeps the trolley geometry and the gantry shape (bands stay inside the leg boxes)', () => {
+    const base = createCrane(tex.hazard, null);
+    const shape = (g: BufferGeometry): string => geoHash(g, ['position', 'normal']);
+    const trolley0 = shape(base.trolley.geometry);
+    for (const rail of [[-0.6, 2.4], [-1, 3.2], [-0.6, 3.6]] as [number, number][]) {
+      base.setRail(rail);
+      const gantry0 = shape(base.gantry.geometry);
+      const p0 = base.gantry.geometry.getAttribute('position');
+      const known = new Set<string>();
+      for (let i = 0; i < p0.count; i++) known.add(`${p0.getX(i).toFixed(5)},${p0.getY(i).toFixed(5)},${p0.getZ(i).toFixed(5)}`);
+      base.gantry.geometry.computeBoundingBox();
+      const box0 = base.gantry.geometry.boundingBox!.clone();
+      const legX = [rail[0] - 0.15, rail[1] + 0.15];
+      for (const look of CRANE_LOOKS) {
+        const cr = createCrane(tex.hazard, null, look, '#E0312B');
+        cr.setRail(rail);
+        expect(shape(cr.trolley.geometry), look.id).toBe(trolley0);
+        const g = cr.gantry.geometry;
+        if (!look.legBands) {
+          expect(shape(g), look.id).toBe(gantry0);
+        } else {
+          g.computeBoundingBox();
+          expect(g.boundingBox!.equals(box0), look.id).toBe(true);
+          const p = g.getAttribute('position');
+          for (let i = 0; i < p.count; i++) {
+            const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+            if (known.has(`${x.toFixed(5)},${y.toFixed(5)},${z.toFixed(5)}`)) continue;
+            const inLeg = legX.some((lx) => Math.abs(x - lx) <= 0.035 + 1e-6)
+              && y >= 0.012 - 1e-6 && y <= BEAM_TOP + 1e-6 && Math.abs(z - Z_GANTRY_LEG) <= 0.035 + 1e-6;
+            expect(inLeg, `${look.id} vertex ${x},${y},${z}`).toBe(true);
+          }
+          // +~200 triangles at most (§1.7).
+          expect((g.getIndex()!.count - base.gantry.geometry.getIndex()!.count) / 3, look.id).toBeLessThanOrEqual(200);
+        }
+        cr.dispose();
+      }
+    }
+    base.dispose();
+  });
+
+  it('bricks keep their matrices for the same rowH and stay inside the wall box for every board', () => {
+    for (const id of ['2-2', '4-1', '5-2', '5-4', '3-3'] as const) {
+      const ws = walls(id);
+      const def = createBricks(ws, tex.brick);
+      const m0 = (def.bricks.instanceMatrix.array as Float32Array).subarray(0, def.bricks.count * 16);
+      for (const look of STAGE_LOOKS as StageLook[]) {
+        const b = createBricks(ws, tex.brick, look);
+        const m = (b.bricks.instanceMatrix.array as Float32Array).subarray(0, b.bricks.count * 16);
+        if (look.rowH === DEFAULT_LOOK.stage.rowH) expect(hashNums(m), `${id} ${look.id}`).toBe(hashNums(m0));
+        // Every brick box inside its wall's slab (x0..x1, 0..h, z +-0.25).
+        for (let i = 0; i < b.bricks.count; i++) {
+          const e = m.subarray(i * 16, i * 16 + 16);
+          const sx = e[0]!, sy = e[5]!, sz = e[10]!, x = e[12]!, y = e[13]!, z = e[14]!;
+          const w = ws.find((q) => x >= q.x0 - 1e-6 && x <= q.x1 + 1e-6)!;
+          expect(w, `${id} ${look.id} brick ${i}`).toBeTruthy();
+          expect(x - sx / 2).toBeGreaterThanOrEqual(w.x0 - 1e-6);
+          expect(x + sx / 2).toBeLessThanOrEqual(w.x1 + 1e-6);
+          expect(y - sy / 2).toBeGreaterThanOrEqual(-1e-6);
+          expect(y + sy / 2).toBeLessThanOrEqual(w.h + 1e-6);
+          expect(Math.abs(z) + sz / 2).toBeLessThanOrEqual(0.25 + 1e-6);
+        }
+        expect(b.rowH).toBe(look.rowH);
+        b.dispose();
+      }
+      def.dispose();
+    }
   });
 });
