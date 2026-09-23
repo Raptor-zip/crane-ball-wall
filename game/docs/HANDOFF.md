@@ -67,7 +67,10 @@ npm run daily -- --bisect   # 日替わり84面のパー再計算（約2.7時間
 1. **実機での試遊（2 回目）**。1 回目（2026-09-23）で「難しすぎる・止めようとすると加速する・矢印キーで微調整しづらい」→ D11 / D12 で対応。
    AI パーとメダルの閾値は据え置きなので、アシスト込みで難易度がどう感じられるかを見てもらう。ユーザー本人に遊んでもらうのがいちばん確か。iPhone / Android の実機は未確認（ヘッドレスのみ）。
    特に見たい点：縦画面の操作感、最初の60秒で遊び方が伝わるか、難易度、音量バランス。
-2. **公開（M12）**。手順は下の第5節。
+2. ~~公開（M12）~~ → **2026-09-23 に公開済み**。Cloudflare Workers Builds で GitHub `Raptor-zip/crane-ball-wall` の main と連携（ルート `game`、
+   ビルド `npm run build`、デプロイ `npx wrangler d1 migrations apply yurapita --remote && npx wrangler deploy`、`NODE_VERSION=24`）。
+   **main に push すると自動で本番に出る**。D1 `yurapita` の id は `wrangler.jsonc` に記入済み。
+   残り：第5節の「デプロイ後に確認すること」（429・cpuTime など）は未確認。
 3. **未解決の細かい項目**（第6節）。
 4. **CasADi WASM を使った機能**（第7節）。ライセンス問題が解けたら。
 
