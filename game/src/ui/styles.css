@@ -1253,9 +1253,14 @@ input {
 .toast--badge {
   background: var(--gantry);
 }
-.toast--warn {
+.toast--warn,
+.toast--notice {
   background: var(--ink);
   color: var(--card);
+}
+/* Two-line toasts break evenly (no word alone on the second line). */
+.toast > span {
+  text-wrap: balance;
 }
 .toast .ico {
   width: 20px;
@@ -4042,4 +4047,288 @@ input {
 .board-partial .ico {
   width: 16px;
   height: 16px;
+}
+
+/* ---------------------------------------------------------------- ranking replays (§7.5 item 6) */
+
+/* 「1位のリプレイを見る」: the page's one prominent action, in the header so it stays in view while the list scrolls to my
+   row. tall: a full-width row of its own under the title; wide: at the end of the title row. */
+.board-wr-slot:empty {
+  display: none;
+}
+.yp[data-layout="tall"] .board-head {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+.yp[data-layout="tall"] .board-wr-slot {
+  flex: 1 0 100%;
+  min-width: 0;
+}
+.yp[data-layout="wide"] .board-wr-slot {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+}
+.board-wr {
+  display: flex;
+  width: 100%;
+  min-height: 52px;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 6px 16px;
+  text-align: left;
+}
+.board-wr .btn-stack {
+  min-width: 0;
+}
+.board-wr .btn-stack > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-wr .btn-sub {
+  margin-top: 2px;
+  font-weight: 700;
+  opacity: 0.92;
+}
+/* The sub line: #1's name gives way (ellipsis), the time stays whole. */
+.board-wr .board-wr-sub {
+  display: flex;
+}
+.board-wr-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.board-wr-time {
+  flex: 0 0 auto;
+  white-space: pre;
+}
+.board-wr-short,
+.board-wr .board-wr-subtime {
+  display: none;
+}
+/* Narrow landscape phones: 「1位のリプレイ」 over #1's time, so the page title beside it keeps its room. */
+@media (max-width: 699px) {
+  .yp[data-layout="wide"] .board-wr-long,
+  .yp[data-layout="wide"] .board-wr .board-wr-sub {
+    display: none;
+  }
+  .yp[data-layout="wide"] .board-wr-short {
+    display: inline;
+  }
+  .yp[data-layout="wide"] .board-wr .board-wr-subtime {
+    display: block;
+  }
+}
+/* The ▶ column of the ranking: narrow (the rank and the padding give back most of its width to the names); the whole
+   row is the touch target, the ▶ the keyboard's. */
+.board--play td {
+  padding-left: 5px;
+  padding-right: 5px;
+}
+.board--play td:first-child {
+  width: 2.5em;
+}
+.board .b-play {
+  width: 31px;
+  padding: 0 3px 0 0;
+  text-align: center;
+}
+.board--play th.b-play {
+  padding: 0;
+}
+.board tr.is-watch {
+  cursor: pointer;
+}
+.board tr.is-watch:hover td {
+  background: #fffdf7;
+}
+.board tr.is-me.is-watch:hover td {
+  background: #fff3c4;
+}
+.b-play-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1.5px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-2);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.board .b-play-btn .ico {
+  width: 13px;
+  height: 13px;
+  margin-left: 2px;
+  color: inherit;
+}
+.board tr.is-watch:hover .b-play-btn,
+.b-play-btn:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+/* Loading (single flight): a small spinner in place of the ▶; with reduced motion a still hourglass (a 「…」 in the
+   round button would read as a "more" menu). */
+.b-play-btn .ico-wait,
+.board-wr > .ico-wait,
+.b-play-btn.is-busy .ico,
+.board-wr.is-busy > .ico {
+  display: none;
+}
+.board .b-play-btn .ico-wait {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+}
+.b-play-btn.is-busy::after,
+.board-wr.is-busy::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  animation: yp-spin 0.8s linear infinite;
+}
+.board-wr.is-busy::before {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 2px;
+}
+@keyframes yp-spin {
+  to { transform: rotate(1turn); }
+}
+.yp--reduce .b-play-btn.is-busy::after,
+.yp--still .b-play-btn.is-busy::after,
+.yp--reduce .board-wr.is-busy::before,
+.yp--still .board-wr.is-busy::before {
+  content: none;
+}
+.yp--reduce .b-play-btn.is-busy .ico-wait,
+.yp--still .b-play-btn.is-busy .ico-wait,
+.yp--reduce .board-wr.is-busy > .ico-wait,
+.yp--still .board-wr.is-busy > .ico-wait {
+  display: block;
+}
+
+/* The replay viewer: the demo's bar and panel. Title in the card colour, the icon in the ghost's ink. */
+.demo-top--replay .btn,
+.demo-top--replay .demo-title {
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+.demo-top-gap {
+  flex: 1 1 auto;
+}
+.demo-title--replay {
+  background: var(--card);
+}
+.demo-title--replay .ico {
+  width: 18px;
+  height: 18px;
+}
+.demo-title--replay.is-wr .ico { color: var(--wr-lip); }
+.demo-title--replay.is-rival .ico { color: var(--rival-lip); }
+.demo-title--replay .num {
+  color: var(--ink-2);
+}
+.demo-who {
+  gap: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+/* In the chip the ranked time stays whole; the name is cut (last resort, demo.ts tightens the bar first). */
+.demo-who-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.demo-who-time {
+  flex: 0 0 auto;
+}
+/* A bar too narrow for everything (demo.ts measures the bar and the name in the chip): 「このゴーストと勝負」 becomes
+   「勝負」, 「12位のリプレイ」 becomes 「12位」, then ×0.5 goes, then 戻る keeps only its icon. */
+.demo-race-short,
+.demo-top--replay.is-race-short .demo-race-full,
+.demo-title-short,
+.demo-top--replay.is-tight .demo-title-text,
+.demo-top--replay.is-tighter .demo-speed {
+  display: none;
+}
+.demo-top--replay.is-race-short .demo-race-short,
+.demo-top--replay.is-tight .demo-title-short {
+  display: inline;
+}
+/* tall: the bar holds the title, 勝負 and an icon-only 戻る (its label stays for screen readers). */
+.yp[data-layout="tall"] .demo-top--replay {
+  gap: 6px;
+}
+.yp[data-layout="tall"] .demo-top--replay .demo-title {
+  padding: 8px 12px;
+  gap: 6px;
+}
+.yp[data-layout="tall"] .demo-top--replay .btn {
+  padding: 0 14px;
+}
+.yp[data-layout="tall"] .demo-back,
+.demo-top--replay.is-back-icon .demo-back {
+  width: 48px;
+  padding: 0;
+}
+.yp[data-layout="tall"] .demo-back-label,
+.demo-top--replay.is-back-icon .demo-back-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+/* 勝負 once the ball has reached the ranked time: one small pop (none with reduced motion / screenshots). */
+.demo-race.is-done {
+  animation: yp-race-pop 0.3s ease-out both;
+}
+@keyframes yp-race-pop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+.yp--reduce .demo-race.is-done,
+.yp--still .demo-race.is-done {
+  animation: none !important;
+}
+/* F(t) lines: the player (#1 pink / rival orange, the readable inks), the AI par ghost, your best. */
+.demo-line { stroke-width: 1.5; opacity: 0.8; }
+.demo-line--wr { stroke: var(--wr-lip); stroke-width: 2; opacity: 1; }
+.demo-line--rival { stroke: var(--rival-lip); stroke-width: 2; opacity: 1; }
+.demo-line--ai { stroke: #19c3ff; }
+.demo-line--you { stroke: #c99700; }
+.demo-sw--wr { background: var(--wr-lip); }
+.demo-sw--rival { background: var(--rival-lip); }
+.demo-sw--ai { background: #19c3ff; }
+.demo-sw--you { background: #c99700; }
+.demo-clock {
+  display: inline-block;
+  min-width: 3.6em;
+}
+/* The numbers' row starts with whose they are (■12位), in the ink of the numbers. */
+.demo-owner {
+  color: var(--ink);
+}
+/* The replay's numbers are its own (the results card has only yours): they stay on landscape phones, in place of the
+   hint (戻る is right above), so the strip keeps to two lines of text; 「■12位 0.84秒」 needs no 「タイム」 there, and
+   at 125 % text the peak force goes (the clock and the gap stay). */
+.yp[data-short="1"] .demo--replay .demo-nums {
+  display: flex;
+}
+.yp[data-short="1"] .demo--replay .demo-hint,
+.yp[data-short="1"] .demo--replay .demo-time-label,
+.yp-ts125 .yp[data-short="1"] .demo--replay .demo-peak {
+  display: none;
 }

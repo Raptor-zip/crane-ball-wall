@@ -7,6 +7,8 @@
 //                               | Timeout -> RESULTS (failed) | retry -> READY
 //   READY / RUNNING -(Esc, pause, hidden tab)-> PAUSED
 //   3 crashes in a row (uncleared campaign level, once) -> DEMO (auto, skippable) -> READY
+//   RESULTS (+ ranking) -(1位のリプレイ / a row's ▶)-> DEMO (the ranked replay, ×0.5, holds on its last frame)
+//     -(戻る / any input / Esc)-> RESULTS + ranking (at the row watched) | -(このゴーストと勝負)-> READY (that ghost races)
 //
 // Every other module is reached only through its §10.4 interface. Dependencies can be injected (tests);
 // by default the real modules are created, and audio / haptics / net degrade to no-ops if they fail.
@@ -14,7 +16,8 @@
 import type { DailyDef, LevelDef } from '../sim/level';
 import { HOLD_SUB, RAIL_Y, SIM_VERSION } from '../sim/constants';
 import { Mode, Status, type PoseSnap, type SimState } from '../sim/run';
-import { decodeReplay, simulateReplay } from '../sim/replay';
+import { decodeReplay, rankedScore, ReplayFlag, simulateReplay, type ReplayResult } from '../sim/replay';
+import { RANKED_MAX_TICKS } from '../sim/constants';
 import { ballClearanceM } from '../sim/display';
 import { b64urlDecode } from '../sim/b64';
 import type { Command, InputFrame, InputManager } from '../input/types';
@@ -23,14 +26,14 @@ import type { GhostKind, GhostPose, Layout, RenderFrame, Renderer, RendererExtra
 import type { AudioEngine } from '../audio/engine';
 import type { Haptics } from '../audio/haptics';
 import type { DailyView, GhostSummary, HudAnchors, HudState, ResultsData, Screen, UI, UiAction } from '../ui/ui';
-import type { Channels, CompareTracks, DemoInfo, PauseInfo, UiContext } from '../ui/context';
+import type { Channels, CompareTracks, DemoInfo, PauseInfo, ReplayAvail, ReplayLoad, ReplayReq, ReplayView, UiContext } from '../ui/context';
 import { failReasonText, getLang, levelHint, levelName, setLang, t as uiText } from '../ui/i18n/format';
 import { dailyShareText as uiDailyShareText } from '../ui/share';
 import type { LevelProgress, SaveV1, Store } from '../store/save';
 import type { Api, ResultsListener } from '../net/api';
 import { OUTBOX_MAX, dailySendDue, isDailyBoard, type PendingRun } from '../net/outbox';
-import type { BootResponse, SubmitResult } from '../shared/api';
-import { BOARD_TOP_N, dailyBoardKey, levelBoardKey } from '../shared/api';
+import type { BoardRow, BootResponse, SubmitResult } from '../shared/api';
+import { BOARD_TOP_N, dailyBoardKey, levelBoardKey, parseBoardKey } from '../shared/api';
 import { levelBin, levelPct, localRank, stampKind, type BoardSnapshot, type Standing, type StandingPhase } from '../shared/rank';
 import { DAILY_BALLS, dailyDayOpen, dayIndexAt, jstDayNumber, jstDayStartMs, pickDaily } from '../shared/daily';
 import { displayName, randomNameSeed } from '../shared/names';
@@ -89,6 +92,13 @@ export interface AppDebugState {
   challengeHash: number | null;
   /** Sim pose of the current run (E2E drivers steer with it): trolley x / v, string angle th [rad], ball centre. */
   pose: { x: number; v: number; th: number; bx: number; by: number } | null;
+  /**
+   * The ranked replay in the viewer (§7.5 item 6): its row, and what the client's re-simulation (the Worker's
+   * simulateReplay) gave: score (= t120, the acceptance rule) and stateHash. t: the viewer's sim time [s]. Null otherwise.
+   */
+  replay: { key: string; rank: number; pidh: string; t120: number; score: number | null; stateHash: number; source: 'boot' | 'local' | 'net'; kind: 'wr' | 'rival'; t: number } | null;
+  /** The ghost picked with 「このゴーストと勝負」 (it races on this level until another level opens). */
+  picked: { pidh: string; kind: GhostKind } | null;
 }
 
 export interface PlayReplayResult { status: number; score: number | null; ticks: number; state: AppState }
@@ -116,12 +126,16 @@ type StoreLike = Store & { takeStorageNotice?(): boolean };
 type ApiLike = Api & {
   lastBoot?(): BootResponse | null; readonly booting?: boolean; readonly soft?: boolean; readonly readOnly?: boolean;
   onResults?(cb: ResultsListener): () => void;
+  /** /api/ghost requests left this session (shared by the rival and the replay viewer). */
+  ghostsLeft?(): number;
 };
 /**
- * Optional UI hook (O7, duck-typed): runs the UI's own Escape / back behaviour for the screen it shows (pops a
- * settings / about / board / notes sub-screen, closes the briefing ...). Returns true when the UI handled it.
+ * Optional UI hooks (O7, duck-typed). back: runs the UI's own Escape / back behaviour for the screen it shows (pops a
+ * settings / about / board / notes sub-screen, closes the briefing ...); returns true when the UI handled it.
+ * attachContext: an injected UI (tests, another host) gets the UiContext the default UI reads through its forwarding
+ * context.
  */
-type UiLike = UI & { back?(): boolean };
+type UiLike = UI & { back?(): boolean; attachContext?(ctx: UiContext): void };
 
 export interface AppDeps {
   ui: UI;
@@ -158,6 +172,8 @@ export const TITLE_LEVEL = '2-2';
 export const CONTEXT_HINT_TICKS = 90;        // 1-1: ball over the pad, swinging above A_rest for 1.5 s (§2.2 0:10)
 export const ASSIST_OFFER_FAILS = 5;         // §3.6
 export const RIVAL_MIN_ATTEMPTS = 3;         // §7.6
+/** Verified replays of ranking rows kept for the session (the viewer, 「このゴーストと勝負」). */
+export const REPLAY_CACHE_MAX = 12;
 
 /** Menu states: Esc / P / gamepad Start mean "back" there. */
 const MENU_STATES: ReadonlySet<AppState> = new Set<AppState>(['LEVEL_SELECT', 'DAILY_HUB', 'BRIEFING', 'SETTINGS', 'ABOUT', 'LEADERBOARD', 'NOTES']);
@@ -194,13 +210,49 @@ interface Ghosts {
   rival: GhostTrack | null;
   challenge: GhostTrack | null;
   reverse: GhostTrack | null;
+  /** 「このゴーストと勝負」 (§7.6): a ranked run watched in the replay viewer (kind wr for #1, rival otherwise). */
+  picked: GhostTrack | null;
+  pickedPidh: string | null;
   showReverse: boolean;
   hideAi: boolean;
   researchSet: boolean;         // the extra "research AIs" set of levels with ai.extras (not persisted)
 }
 
 function noGhosts(): Ghosts {
-  return { ai: null, calm: null, research: [], pb: null, wr: null, rival: null, challenge: null, reverse: null, showReverse: false, hideAi: false, researchSet: false };
+  return {
+    ai: null, calm: null, research: [], pb: null, wr: null, rival: null, challenge: null, reverse: null, picked: null, pickedPidh: null,
+    showReverse: false, hideAi: false, researchSet: false,
+  };
+}
+
+/** A ranked replay re-simulated and verified for the viewer (§7.5 item 6). id = `${key}|${pidh}|${t120}`. */
+interface PreparedReplay {
+  id: string; key: string; level: LevelDef; rank: number; pidh: string; nameSeed: number; t120: number;
+  kind: 'wr' | 'rival'; track: GhostTrack; stateHash: number; res: ReplayResult; phases: { index: number; t: number }[];
+  source: 'boot' | 'local' | 'net';
+}
+
+/** The replay viewer on screen (state DEMO with a ranked replay instead of the AI demo). */
+interface Viewer {
+  p: PreparedReplay;
+  back: AppState;
+  name: string;
+  /** The AI par ghost racing alongside (null with the なし ghost set). */
+  ai: GhostTrack | null;
+  /** Show time [s] the viewer holds at: the hold completes (t120 + 0.5 s), the Success frame. */
+  end: number;
+  /** Phase events already given to the renderer (5-4). */
+  phase: number;
+  /** A rank-in stamp for the card under the viewer arrived while it was up (nobody has seen it yet). */
+  stampUnseen: boolean;
+}
+
+/** 3 ticks at |F| = Fmax: the trolley's red lamp (session SATURATE_TICKS, |q| = 127), read from a track's force. */
+function trackSaturated(tr: GhostTrack, tSec: number, Fmax: number): boolean {
+  const k = Math.min(tr.n - 1, Math.floor(Math.max(0, tSec) * tr.hz));
+  if (k < 2) return false;
+  for (let i = k - 2; i <= k; i++) if (Math.abs(tr.f[i]!) < Fmax * 0.999) return false;
+  return true;
 }
 
 // ----------------------------------------------------------------------------------------------- helpers
@@ -304,6 +356,12 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
   let uiBackBusy = false;   // a synthetic Escape is being delivered to the UI layer
   let inputPractice: boolean | null = null;   // last input.setPractice() value
   const rivalFetched = new Set<string>();
+  /** Verified ranking replays (id -> replay), least recently used first; a boot / local source that failed is not tried again. */
+  const replays = new Map<string, PreparedReplay>();
+  const replayTried = new Set<string>();
+  /** Rows the server answered with another run (the table was older than the board): row -> the answer's pidh / t120. */
+  const replayMoved = new Map<string, { pidh: string; t120: number }>();
+  let viewer: Viewer | null = null;
   let dailyGapCache: { replay: string; gapMm: number | null } | null = null;
   let pendingPb: GhostTrack | null = null;
   let dailyNet: { board: string; rank: number | null; pct: number | null } | null = null;   // from a daily submit answer (its board)
@@ -406,9 +464,12 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
       return l ? data.aiPath(l) : null;
     },
     pause: () => pauseInfo(),
+    replayAvail: (key, rank, row) => safe('replayAvail', () => replayAvail(key, rank, row), null) ?? null,
+    loadReplay: (req) => loadReplay(req),
     origin: shareOrigin(d.publicOrigin ?? import.meta.env.VITE_PUBLIC_ORIGIN, d.location === undefined ? safeLocation() : d.location),
   };
   sink.current = uiContext;
+  safe('ui.attachContext', () => (ui as UiLike).attachContext?.(uiContext));
 
   // ---- mount ----
   layout = ui.mount(root);
@@ -436,6 +497,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
   const actions: (UiAction | 'pause' | 'rewind' | 'back')[] = [
     'retry', 'next', 'demo', 'board', 'share', 'resume', 'practice', 'select', 'openLevel', 'openDaily', 'settingsChanged',
     'skip', 'rerollName', 'assistAccept', 'ghostCycle', 'aiLine', 'notes', 'mute', 'reverseHint', 'pause', 'rewind', 'back',
+    'replay', 'raceGhost',
   ];
   for (const a of actions) ui.on(a as UiAction, (payload) => handleAction(a, payload));
 
@@ -595,6 +657,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
   }
 
   function goTitle(): void {
+    dropViewer();
     state = 'TITLE';
     play = null;
     const lvl = data.level(TITLE_LEVEL) ?? data.levels[0] ?? null;
@@ -822,6 +885,14 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
       }
     }
     if (ghosts.showReverse && ghosts.reverse) out.push(ghosts.reverse);
+    // 「このゴーストと勝負」 joins every set like a challenge (§7.6): it takes the place of the set's ghost of its own kind
+    // (the boot WR, the fetched rival) and goes right after the AI, so the splits compare with it.
+    const pk = ghosts.picked;
+    if (pk) {
+      const same = out.findIndex((t) => t.kind === pk.kind);
+      if (same >= 0) out.splice(same, 1);
+      out.splice(ai && out[0] === ai ? 1 : 0, 0, pk);
+    }
     // challenge ghost joins every set; at most 3 ghosts at once (§7.6)
     if (ghosts.challenge) {
       if (out.length >= 3) out.length = 2;
@@ -1277,7 +1348,12 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
       const rank = numOrNull(r?.rank);
       if (!r || rank === null) continue;
       const kind = onCard ? card.standing!.stamp : stampKind(r.status, rank, numOrNull(r.was));
-      if (kind && !(onCard && (state === 'SUCCESS_BEAT' || state === 'RESULTS'))) {
+      // The card is on screen, or under the replay viewer: 戻る brings it back with the stamp; leaving the viewer any
+      // other way (勝負, a pasted link) makes it news then (dropViewer).
+      const underViewer = state === 'DEMO' && viewer?.back === 'RESULTS';
+      const cardUp = state === 'SUCCESS_BEAT' || state === 'RESULTS' || underViewer;
+      if (kind && onCard && underViewer) viewer!.stampUnseen = true;
+      if (kind && !(onCard && cardUp)) {
         rankNews.set(run.board, { levelId: run.level, rank, kind });
       }
     }
@@ -1336,13 +1412,16 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
 
   /** Leaving a run by other means than retry (menu, next level): counted like a retry. */
   function leaveRun(): void {
+    // The replay viewer stands on the results card: leaving it is leaving the card.
+    const from = state === 'DEMO' && viewer ? viewer.back : state;
+    dropViewer();
     if (state === 'RUNNING' && play && session?.started && play.level.world > 0) {
       updateProgress(play.level, (p) => applyOutcome(p, 'retry', session!.ticks, play!.origin === 'campaign'));
     }
     if ((state === 'PAUSED' || state === 'NOTES') && underState === 'RUNNING' && play && session?.started && play.level.world > 0) {
       updateProgress(play.level, (p) => applyOutcome(p, 'retry', session!.ticks, play!.origin === 'campaign'));
     }
-    if (state === 'RESULTS' || state === 'DAILY_HUB') {
+    if (from === 'RESULTS' || from === 'DAILY_HUB') {
       if (api) safe('api.flush', () => void api.flush('menu'));
     }
     if (state === 'PAUSED' && audio) safe('audio.resume', () => audio.resume());
@@ -1411,10 +1490,11 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     if (!play) return;
     const tr = ghosts.calm ?? ghosts.ai;
     if (!tr) {
+      dropViewer();
       enterReady(true);
       return;
     }
-    leaveRun();
+    leaveRun();   // also drops a replay viewer: this is the AI demo
     session?.retry();
     // the demo is drawn as a Running run (not the reset session's Ready): clear the crash debris of the
     // run that led here, snap the camera and start a fresh trail
@@ -1437,8 +1517,261 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
   }
 
   function endDemo(): void {
+    if (viewer) {
+      closeViewer();
+      return;
+    }
     demoTrack = null;
     enterReady(true);
+  }
+
+  // =============================================================================================== replay viewer
+
+  /**
+   * The ranking's replay viewer (§7.5 item 6). A row's replay comes from the boot WR (#1), my stored best (my row) or
+   * one /api/ghost request (cached for the session), and is played only after the client re-simulated it with the
+   * Worker's simulateReplay and it met the Worker's acceptance rule for the row's time (rankedScore). The viewer draws
+   * the simulator's own state of every tick (the recorder), so the ball does exactly what the ranked run did.
+   * Hosted by RESULTS only (the ranking opens from the results card): the finished run under it is left untouched.
+   */
+  const replayId = (key: string, pidh: string, t120: number): string => `${key}|${pidh}|${t120}`;
+
+  /** The level of a board key when a replay of it can be watched now: the loaded level on the results card. */
+  function replayLevel(key: string): LevelDef | null {
+    if (state !== 'RESULTS' || !play || !session || session.level !== play.level) return null;
+    const k = parseBoardKey(key);
+    const level = play.level;
+    if (!k || k.sim !== SIM_VERSION || data.hash(level) !== k.levelHash) return null;
+    if (k.kind === 'L') return level.world > 0 && level.id === k.levelId ? level : null;
+    // Today's daily only (practising an older daily opens today's board: not the level on screen).
+    const pick = todayPick();
+    return level.world === 0 && !!pick && pick.level.id === level.id && pick.dayIndex === k.dayIndex ? level : null;
+  }
+
+  /** The boot copy of a board (its top 10 and the rank-1 replay `wr`, one D1 row). */
+  function bootBoardOf(key: string): { top: BoardRow[]; wr?: string | null } | null {
+    const boot = api?.lastBoot?.() ?? null;
+    const k = parseBoardKey(key);
+    if (!boot || !k) return null;
+    if (k.kind === 'L') {
+      const b = boot.boards[k.levelId];
+      return b && b.key === key ? b : null;
+    }
+    return boot.daily.key === key ? boot.daily : null;
+  }
+
+  /**
+   * Re-simulates and verifies a ranked replay: the header of this board (sim, levelHash, first q, length, no assist /
+   * practice flag, as the Worker's decodeRun) and rankedScore === t120 (the Worker's simulateRun). Null when it fails.
+   */
+  function prepareReplay(source: PreparedReplay['source'], key: string, level: LevelDef, rank: number, pidh: string, nameSeed: number, t120: number, b64: string): PreparedReplay | null {
+    try {
+      const { h, qs } = decodeReplay(b64urlDecode(b64));
+      if (h.sim !== SIM_VERSION || h.levelHash !== data.hash(level) || (h.flags & (ReplayFlag.Assisted | ReplayFlag.Practice)) !== 0) return null;
+      if (qs.length === 0 || qs[0] === 0 || qs.length > RANKED_MAX_TICKS) return null;
+      const kind: 'wr' | 'rival' = rank === 1 ? 'wr' : 'rival';
+      const name = safe('displayName', () => displayName(nameSeed, pidh, lang()), '') || uiText(kind === 'wr' ? 'ghost.wr' : 'ghost.rival', undefined, lang());
+      const built = trackAndHashFromReplay(level, b64, kind, name);
+      if (rankedScore(built.nTicks, built.result) !== t120) return null;
+      const p: PreparedReplay = {
+        id: replayId(key, pidh, t120), key, level, rank, pidh, nameSeed, t120, kind, track: built.track, stateHash: built.stateHash,
+        res: built.result, phases: built.phases, source,
+      };
+      replays.delete(p.id);
+      replays.set(p.id, p);
+      while (replays.size > REPLAY_CACHE_MAX) replays.delete(replays.keys().next().value!);
+      return p;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The rank a cached replay is watched at now (the board moves): #1 is the WR ghost (star), the others the rival's. */
+  function rerank(p: PreparedReplay, rank: number): PreparedReplay {
+    p.rank = rank;
+    const kind: 'wr' | 'rival' = rank === 1 ? 'wr' : 'rival';
+    if (p.kind !== kind) {
+      p.kind = kind;
+      p.track = { ...p.track, kind };   // a new track object: a ghost picked earlier keeps its own kind
+    }
+    return p;
+  }
+
+  /** A cached replay, now the most recently used (the cache drops the least recently used), at the rank watched now. */
+  function replayHit(p: PreparedReplay, rank: number): PreparedReplay {
+    replays.delete(p.id);
+    replays.set(p.id, p);
+    return rerank(p, rank);
+  }
+
+  /** The row as the table showed it, at its rank (the key of replayMoved). */
+  const rowKey = (key: string, rank: number, pidh: string, t120: number): string => `${key}|${rank}|${pidh}|${t120}`;
+
+  /**
+   * A replay at hand without a request: watched before (also the run the server gave for a row the table showed
+   * older), #1 from the boot WR, or my own stored best. A boot / local source that fails verification is not tried
+   * again; one that passed is rebuilt when the cache has dropped it (#1 and my row never cost a request).
+   */
+  function replayAtHand(key: string, level: LevelDef, rank: number, pidh: string, nameSeed: number, t120: number): PreparedReplay | null {
+    const id = replayId(key, pidh, t120);
+    const hit = replays.get(id);
+    if (hit) return replayHit(hit, rank);
+    const moved = replayMoved.get(rowKey(key, rank, pidh, t120));
+    const got = moved ? replays.get(replayId(key, moved.pidh, moved.t120)) : undefined;
+    if (got) return replayHit(got, rank);
+    // #1 from boot (0 requests): only when boot's rank 1 is this very row (the player may have improved since boot).
+    const b = rank === 1 ? bootBoardOf(key) : null;
+    const top0 = b?.top[0];
+    if (b?.wr && top0 && top0[0] === pidh && top0[2] === t120 && !replayTried.has(`boot|${id}`)) {
+      const p = prepareReplay('boot', key, level, rank, pidh, nameSeed, t120, b.wr);
+      if (p) return p;
+      replayTried.add(`boot|${id}`);
+    }
+    // My row (0 requests): my stored best of this board when it has the row's time.
+    if (pidh === save().id.pidh && !replayTried.has(`local|${id}`)) {
+      const best = level.world === 0 ? todayBest() : progressOf(level).hash === pbHash(level) ? progressOf(level) : null;
+      if (best && best.bestSub === t120 && best.bestReplay) {
+        const p = prepareReplay('local', key, level, rank, pidh, nameSeed, t120, best.bestReplay);
+        if (p) return p;
+        replayTried.add(`local|${id}`);
+      }
+    }
+    return null;
+  }
+
+  /** Today's daily best from the save (the rack of today), or null. */
+  function todayBest(): { bestSub: number | null; bestReplay: string | null } | null {
+    const dd = save().daily;
+    const day = dayNow();
+    return rackIsOn(dd, day.dayIndex, day.jst) ? dd : null;
+  }
+
+  function replayAvail(key: string, rank: number, row: BoardRow): ReplayAvail {
+    const level = replayLevel(key);
+    if (!level) return null;
+    if (replayAtHand(key, level, rank, row[0], row[1], row[2])) return 'ready';
+    // Online and not in low-quota mode: one request. A spent budget keeps the ▶ (tapping says why, without a request).
+    return api && api.enabled && !api.lite ? 'fetch' : null;
+  }
+
+  async function loadReplay(req: ReplayReq): Promise<ReplayLoad> {
+    const level = replayLevel(req.key);
+    if (!level) return { ok: false, reason: 'stale' };
+    const near = replayAtHand(req.key, level, req.rank, req.pidh, req.nameSeed, req.t120);
+    if (near) return { ok: true, id: near.id };
+    if (!api || !api.enabled || api.lite) return { ok: false, reason: 'offline' };
+    const left = api.ghostsLeft?.() ?? 1;
+    // A row the server already answered with another run asks for that run (the api's cache has it: no request).
+    const row = rowKey(req.key, req.rank, req.pidh, req.t120);
+    const want = replayMoved.get(row) ?? { pidh: req.pidh, t120: req.t120 };
+    const g = await api.ghost(req.key, req.rank, want).catch(() => null);
+    if (disposed) return { ok: false, reason: 'stale' };
+    if (!g) return { ok: false, reason: !api.enabled || api.lite ? 'offline' : left <= 0 ? 'budget' : 'missing' };
+    // Named and timed from the answer (the board may have moved since the table was drawn), never from the tapped row.
+    const at = replayLevel(req.key);
+    if (!at || g.key !== req.key) return { ok: false, reason: 'stale' };
+    if (g.pidh !== req.pidh || g.t120 !== req.t120) {
+      // The next tap of this row plays the same run without asking again (and replayAvail says 'ready').
+      replayMoved.delete(row);
+      replayMoved.set(row, { pidh: g.pidh, t120: g.t120 });
+      while (replayMoved.size > REPLAY_CACHE_MAX * 2) replayMoved.delete(replayMoved.keys().next().value!);
+    }
+    const hit = replays.get(replayId(req.key, g.pidh, g.t120));
+    if (hit) return { ok: true, id: replayHit(hit, req.rank).id };
+    const p = prepareReplay('net', req.key, at, req.rank, g.pidh, g.nameSeed, g.t120, g.replay);
+    if (!p) {
+      if (!errorsLogged.has('replay verify')) {
+        errorsLogged.add('replay verify');
+        console.warn(`[yurapita] replay of ${req.key} #${req.rank} did not re-simulate to its ranked time`);
+      }
+      return { ok: false, reason: 'bad' };
+    }
+    return { ok: true, id: p.id };
+  }
+
+  /** The viewer's data for the UI: this player's force, the AI par ghost's, and my best's on this board. */
+  function replayView(p: PreparedReplay, name: string): ReplayView {
+    const mine = p.pidh === save().id.pidh;
+    const ai = ghosts.ai ?? data.track(p.level, 'ai');
+    // My best on this board: the one this results card may just have set (pendingPb), else the PB ghost.
+    const me = mine || play?.level !== p.level ? null : pendingPb ?? ghosts.pb;
+    const gap = p.level.physics.walls.length > 0 && Number.isFinite(p.res.minD2) ? ballClearanceM(p.res.minD2) * 1000 : NaN;
+    return {
+      id: p.id, rank: p.rank, name, t120: p.t120, kind: p.kind, mine, hz: 60, f: p.track.f, aiF: ai?.f ?? null, meF: me?.f ?? null,
+      Fmax: p.level.physics.Fmax, gapMm: Number.isFinite(gap) ? gap : null, peakF: p.res.peakF,
+    };
+  }
+
+  function startReplay(payload: unknown): void {
+    const p = replays.get(payloadId(payload) ?? '');
+    if (!p || state !== 'RESULTS' || !play || play.level !== p.level || session?.level !== p.level) return;
+    // The finished run under the results card stays as it is (no leaveRun / retry / flush): the card comes back.
+    safe('renderer.resetFx', () => renderer.resetFx());
+    renderFx.clear();
+    timeFx.clear();
+    loop.paused = false;
+    const name = p.track.label;
+    viewer = {
+      p, back: state, name, ai: ghostSetIndex() === 4 ? null : ghosts.ai ?? data.track(p.level, 'ai'),
+      end: (p.t120 + HOLD_SUB) / 120, phase: 0, stampUnseen: false,
+    };
+    demoTrack = p.track;
+    demoTime = 0;
+    demoWall = 0;
+    state = 'DEMO';
+    show({ id: 'demo', level: p.level, replay: replayView(p, name) });
+  }
+
+  /** Back to the ranking over the state the viewer came from (the results card), scrolled to the row watched. */
+  function closeViewer(): void {
+    const v = viewer;
+    if (!v) return;
+    viewer = null;
+    demoTrack = null;
+    // The replay's trail and camera go (the finished run's own strobe is not redrawn behind the card).
+    safe('renderer.resetFx', () => renderer.resetFx());
+    state = v.back;
+    reshow();
+    if (state === v.back) show({ id: 'board', key: v.p.key, focusRank: v.p.rank });
+  }
+
+  /**
+   * The viewer goes without 戻る (勝負, a pasted #c= / #l= / #d link, anything that leaves the card): the next DEMO is
+   * the AI demo again, and a rank-in stamp the card took while the viewer was up becomes news (a toast on the next
+   * select / results / daily screen), as for a card that is skipped.
+   */
+  function dropViewer(): void {
+    const v = viewer;
+    if (!v) return;
+    viewer = null;
+    demoTrack = null;
+    if (v.stampUnseen) cardStampToNews();
+  }
+
+  /** 「このゴーストと勝負」: the next attempt on this level races the replay's ghost (§7.6). */
+  function raceGhost(payload: unknown): void {
+    const v = viewer;
+    if (state !== 'DEMO' || !v || !play || play.level !== v.p.level) return;
+    const id = payloadId(payload);
+    // not my own run (the viewer offers no race for it: the PB ghost is that run)
+    if ((id !== null && id !== v.p.id) || v.p.pidh === save().id.pidh) return;
+    dropViewer();
+    state = v.back;
+    ghosts.picked = v.p.track;
+    ghosts.pickedPidh = v.p.pidh;
+    ui.toast(ct('toast.raceGhost', { name: v.name }), 'info');
+    retry();
+  }
+
+  /** 5-4: the goal zone moves on when the replay completes a phase (the renderer's 'phase' effect, not the bus). */
+  function viewerPhases(): void {
+    const v = viewer;
+    if (!v) return;
+    while (v.phase < v.p.phases.length && v.p.phases[v.phase]!.t <= demoTime) {
+      const e: GameEvent = { t: 'phase', index: v.p.phases[v.phase]!.index };
+      v.phase++;
+      safe('renderer.fx', () => renderer.fx(e));
+    }
   }
 
   function skip(): void {
@@ -1713,31 +2046,40 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     if (!b || b.key !== key) return;
     rivalFetched.add(level.id);
     const pbSub = p.bestSub;
-    const pickRank = (top: readonly (readonly [string, number, number, ...number[]])[], cutoff: number | null): number | null => {
+    /** The record just above my PB: its rank and the row the answer must be (a cached answer of an older board is
+     *  not it); 'full': somewhere in 11..100, the full board tells. */
+    type Pick = { rank: number; pidh?: string; t120: number } | 'full' | null;
+    const pick = (top: readonly (readonly [string, number, number, ...number[]])[], cutoff: number | null): Pick => {
       const me = save().id.pidh;
-      const faster = top.filter((r) => r[2] < pbSub && r[0] !== me).length;
-      if (faster < top.length || top.length < 10) return faster >= 1 ? faster : null; // rank of the record just above me
-      if (cutoff !== null && pbSub > cutoff) return 100;
-      return -1; // somewhere in 11..100: needs the full board
+      const faster = top.filter((r) => r[2] < pbSub && r[0] !== me);
+      if (faster.length < top.length || top.length < 10) {
+        const r = faster[faster.length - 1];
+        return r ? { rank: faster.length, pidh: r[0], t120: r[2] } : null;
+      }
+      if (cutoff !== null && pbSub > cutoff) {
+        const r = top[99];
+        return r ? { rank: 100, pidh: r[0], t120: r[2] } : { rank: 100, t120: cutoff };
+      }
+      return 'full';
     };
-    let rank = pickRank(b.top, b.cutoff);
-    const fetchGhost = (r: number): void => {
-      void api.ghost(key, r).then((g) => {
-        if (!g || disposed) return;
+    const fetchGhost = (w: { rank: number; pidh?: string; t120: number }): void => {
+      void api.ghost(key, w.rank, { pidh: w.pidh, t120: w.t120 }).then((g) => {
+        if (!g || disposed || g.t120 >= pbSub) return;
         const name = safe('displayName', () => displayName(g.nameSeed, g.pidh, lang()), '') || uiText('ghost.rival', undefined, lang());
         const tr = safe('rival ghost', () => trackFromReplay(level, g.replay, 'rival', name), null);
         if (tr && play?.level === level) ghosts.rival = tr;
       });
     };
-    if (rank === null) return;
-    if (rank > 0) {
-      fetchGhost(rank);
+    const first = pick(b.top, b.cutoff);
+    if (first === null) return;
+    if (first !== 'full') {
+      fetchGhost(first);
       return;
     }
     void api.board(key).then((full) => {
       if (!full) return;
-      rank = pickRank(full.top, full.cutoff);
-      if (rank !== null && rank > 0) fetchGhost(Math.min(100, rank));
+      const w = pick(full.top, full.cutoff);
+      if (w !== null && w !== 'full') fetchGhost({ ...w, rank: Math.min(100, w.rank) });
     });
   }
 
@@ -2009,6 +2351,12 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
       case 'back':
         handleCommand('back');
         return;
+      case 'replay':
+        startReplay(payload);
+        return;
+      case 'raceGhost':
+        raceGhost(payload);
+        return;
     }
   }
 
@@ -2214,9 +2562,15 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
         }
       }
     } else if (state === 'DEMO' && demoTrack) {
-      demoWall += dtReal;
-      demoTime += dtReal * DEMO_SPEED;
-      if (demoTime > showEnd(demoTrack, DEMO_TAIL_S)) endDemo();
+      demoWall += dtReal;   // the skip guard (commands of the input manager) also runs in the replay viewer
+      if (viewer) {
+        // The replay viewer holds on the Success frame (the hold completes) and waits for 戻る / 勝負.
+        demoTime = Math.min(demoTime + dtReal * DEMO_SPEED, viewer.end);
+        viewerPhases();
+      } else {
+        demoTime += dtReal * DEMO_SPEED;
+        if (demoTime > showEnd(demoTrack, DEMO_TAIL_S)) endDemo();
+      }
     } else if (state === 'TITLE' && ghosts.ai) {
       titleTime += dtReal;
       if (titleTime > showEnd(ghosts.ai, TITLE_TAIL_S)) {
@@ -2245,13 +2599,19 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     const phys = level.physics;
     const s = session.run.s;
 
-    // ghosts (the AI demo drives the player's own crane; its ghost rides on it only for the AI tag)
+    // ghosts (the AI demo / a ranked replay drives the player's own crane; its ghost rides on it only for the tag; the
+    // replay viewer races the AI par ghost alongside)
     if (state === 'DEMO' && demoTrack) {
       shown.length = 0;
       shownPoses.length = 0;
       poseAt(demoTrack, demoTime, demoPose);
-      demoPose.label = aiLabel(demoTrack.label, lang());
+      demoPose.label = viewer ? viewer.name : aiLabel(demoTrack.label, lang());
       shownPoses.push(demoPose);
+      if (viewer?.ai) {
+        poseAt(viewer.ai, demoTime, poses[0]!);
+        poses[0]!.label = labelOf(viewer.ai);
+        shownPoses.push(poses[0]!);
+      }
     } else if (state === 'TITLE') {
       shown.length = 0;
       shownPoses.length = 0;
@@ -2297,7 +2657,8 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     rf.ampDeg = session.ampDeg();
     rf.reqDeg = session.reqDeg();
     rf.nextWall = session.nextWall();
-    rf.timeScale = loop.timeScale * renderFx.scale();
+    // a show at ×0.5 (demo, replay): the trail's 0.1 s strobe and the particles run on sim time
+    rf.timeScale = state === 'DEMO' ? DEMO_SPEED : loop.timeScale * renderFx.scale();
     rf.status = s.status;
     rf.showAiLine = aiLineOn();
     rf.showMargin = rf.showAiLine;
@@ -2309,6 +2670,8 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
       rf.status = showStatus(showTrack, showT);
       rf.holdFrac = showHoldFrac(showTrack, showT);
       rf.F = demoCur.F;
+      // the replay viewer: the trolley's red lamp is the player's (not the finished run's under the results card)
+      if (viewer) rf.saturated = trackSaturated(showTrack, showT, phys.Fmax);
       rf.targetX = null;
       rf.near = null;
       rf.reqDeg = null;
@@ -2319,15 +2682,20 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     // HUD
     const aiShown = shown.find((g) => g.track.kind === 'ai');
     const fin = session.result();
-    // the clock: running substeps; after a success the final time (the 0.5 s hold is not part of it, §4.6)
+    // the clock: running substeps; after a success the final time (the 0.5 s hold is not part of it, §4.6). A show's
+    // clock stops on its finish time when the hold starts (it never runs on through the hold and jumps back).
+    const showSub = demoTrack ? Math.round(demoTime * 120) : 0;
     hud.timeSub = state === 'DEMO' && demoTrack
-      ? (rf.status === Status.Success && demoTrack.finishSub !== null ? demoTrack.finishSub : Math.round(demoTime * 120))
+      ? (demoTrack.finishSub !== null && Number.isFinite(demoTrack.finishSub) ? Math.min(showSub, demoTrack.finishSub) : showSub)
       : fin && fin.status === Status.Success && fin.score !== null ? fin.score
         : session.started ? s.substep : 0;
     hud.running = state === 'RUNNING';
     hud.F = rf.F;
     hud.Fmax = phys.Fmax;
-    hud.aiF = state === 'DEMO' && demoTrack ? forceAt(demoTrack, demoTime) : aiShown ? forceAt(aiShown.track, ghostTime(alpha)) : null;
+    // the force bar's AI mark: the AI demo's own force; in the replay viewer the AI par ghost's (not the player's)
+    hud.aiF = state === 'DEMO' && demoTrack
+      ? (viewer ? (viewer.ai ? forceAt(viewer.ai, demoTime) : null) : forceAt(demoTrack, demoTime))
+      : aiShown ? forceAt(aiShown.track, ghostTime(alpha)) : null;
     hud.saturated = rf.saturated;
     hud.ampDeg = rf.ampDeg;
     hud.restDeg = phys.restDeg;
@@ -2414,6 +2782,11 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
       events: eventCount,
       challengeHash: ghosts.challenge ? challengeHash : null,
       pose: s ? { x: s.x, v: s.v, th: s.th, bx: s.bx, by: s.by } : null,
+      replay: viewer ? {
+        key: viewer.p.key, rank: viewer.p.rank, pidh: viewer.p.pidh, t120: viewer.p.t120, score: viewer.p.res.score,
+        stateHash: viewer.p.stateHash, source: viewer.p.source, kind: viewer.p.kind, t: demoTime,
+      } : null,
+      picked: ghosts.picked && ghosts.pickedPidh ? { pidh: ghosts.pickedPidh, kind: ghosts.picked.kind } : null,
     };
   }
 
@@ -2516,7 +2889,8 @@ function forwardingContext(get: () => UiContext | null): UiContext {
     get summary() { return get()?.summary; },
     get origin() { return get()?.origin; },
     boot: fwd('boot'), fetchBoard: fwd('fetchBoard'), daily: fwd('daily'), unlocked: fwd('unlocked'), briefing: fwd('briefing'),
-    demo: fwd('demo'), compare: fwd('compare'), aiPath: fwd('aiPath'), pause: fwd('pause'),
+    demo: fwd('demo'), compare: fwd('compare'), aiPath: fwd('aiPath'), pause: fwd('pause'), replayAvail: fwd('replayAvail'),
+    loadReplay: fwd('loadReplay'),
   } as UiContext;
 }
 

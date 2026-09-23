@@ -8,7 +8,7 @@ import type { Standing } from '../shared/rank';
 import type { SaveV1 } from '../store/save';
 import levelsFile from '../data/levels.json';
 import summaryFile from '../data/ghosts_summary.json';
-import type { PauseInfo, ScreenEnv, SummaryEntry, UiContext } from './context';
+import type { PauseInfo, ReplayView, ScreenEnv, SummaryEntry, UiContext } from './context';
 import { HUD_BAND, computeLayout, sameLayout, tallPanelH } from './layout';
 import { createHud } from './hud';
 import type { Hud } from './hud';
@@ -33,7 +33,7 @@ import { renderNotesScreen } from './screens/notes';
 
 // BoardRow is defined next to the API wire types (the Worker must not depend on src/ui); re-exported here.
 export type { BoardRow } from '../shared/api';
-export type { UiContext, PauseInfo, SummaryEntry, DemoInfo, CompareTracks } from './context';
+export type { UiContext, PauseInfo, SummaryEntry, DemoInfo, CompareTracks, ReplayView, ReplayReq, ReplayLoad, ReplayAvail } from './context';
 
 /**
  * Optional per-frame screen anchors for the world-following meters (§9.3). CSS px relative to the UI root
@@ -59,8 +59,12 @@ export interface HudState {
 }
 export type Screen =
   | { id: 'title' } | { id: 'select'; world: number } | { id: 'briefing'; level: LevelDef; ai: GhostSummary }
-  | { id: 'hud' } | { id: 'pause' } | { id: 'results'; data: ResultsData } | { id: 'demo'; level: LevelDef }
-  | { id: 'board'; key: string } | { id: 'daily'; data: DailyView } | { id: 'settings' } | { id: 'about' } | { id: 'notes'; world: number };
+  | { id: 'hud' } | { id: 'pause' } | { id: 'results'; data: ResultsData }
+  // replay: the ranking's replay viewer (§7.5 item 6); without it the AI demo
+  | { id: 'demo'; level: LevelDef; replay?: ReplayView }
+  // focusRank: back from the replay viewer, scrolled to that row (its ▶ focused, no second flash of my row)
+  | { id: 'board'; key: string; focusRank?: number }
+  | { id: 'daily'; data: DailyView } | { id: 'settings' } | { id: 'about' } | { id: 'notes'; world: number };
 export interface GhostSummary { parSub: number; planT: number; peakF: number; minGapMm: number; pumps: number; calmPath: Float32Array }
 export interface ResultsData {
   level: LevelDef; ok: boolean; score: number | null; parSub: number; pbSub: number | null; wrSub: number | null;
@@ -77,7 +81,9 @@ export type UiAction = 'retry' | 'next' | 'demo' | 'board' | 'share' | 'resume' 
   | 'ghostCycle' | 'aiLine' | 'notes' | 'mute' | 'reverseHint'
   | 'pause'    // O7 addition (non-breaking): the HUD ⏸ button (§9.3). Without a listener the UI falls back to a synthetic Escape key.
   | 'rewind'   // O7 addition (non-breaking): practice mode "5 s rewind" button (§3.5).
-  | 'back';    // Escape on the level select: back to the title (the same as Esc / gamepad B from outside the layer).
+  | 'back'     // Escape on the level select: back to the title (the same as Esc / gamepad B from outside the layer).
+  | 'replay'   // {id}: watch a ranking row's replay (UiContext.loadReplay answered ok) in the demo viewer (§7.5 item 6).
+  | 'raceGhost'; // {id}: 「このゴーストと勝負」 in the replay viewer: the next attempt races that run's ghost.
 export interface UiElements { canvas: HTMLCanvasElement; sceneEl: HTMLElement; deckEl: HTMLElement | null }
 export interface UI {
   mount(root: HTMLElement): Layout;              // UI creates the canvas and, when tall, the deck element
@@ -86,7 +92,7 @@ export interface UI {
   show(s: Screen): void;
   hud(h: HudState): void;                        // once per frame (diffed into the DOM)
   fx(e: GameEvent, screenPos?: { x: number; y: number }): void;
-  toast(text: string, kind?: 'info' | 'badge' | 'warn'): void;
+  toast(text: string, kind?: 'info' | 'badge' | 'warn' | 'notice'): void;
   on(a: UiAction, cb: (payload?: unknown) => void): void;
   /**
    * Esc / gamepad B from outside the UI layer (core): closes the settings / about / notes / board sub-screen on

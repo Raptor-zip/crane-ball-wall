@@ -13,7 +13,7 @@ export { Mode, Status, CrashKind, createRun, resetRun, copyState, restoreState, 
 export type { CrashInfo, NearInfo, SimState, PoseSnap, Run } from './sim/run';
 export { Ev, SimEvents } from './sim/events';
 export { sincos, atan2k } from './sim/detmath';
-export { DeviceTag, ReplayFlag, encodeReplay, decodeReplay, simulateReplay } from './sim/replay';
+export { DeviceTag, ReplayFlag, encodeReplay, decodeReplay, simulateReplay, rankedScore } from './sim/replay';
 export type { ReplayHeader, ReplayResult, ReplayRecorder } from './sim/replay';
 export { b64urlEncode, b64urlDecode } from './sim/b64';
 export { ballClearanceM, levelFacts } from './sim/display';

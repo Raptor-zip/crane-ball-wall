@@ -279,7 +279,7 @@ export function createPopups(root: HTMLElement): Popups {
 export interface ToastArea { x0: number; x1: number; top?: number; bottom?: number; limit: number; max?: number }
 
 export interface Toasts {
-  show(text: string, kind?: 'info' | 'badge' | 'warn'): void;
+  show(text: string, kind?: 'info' | 'badge' | 'warn' | 'notice'): void;
   clear(): void;
   /**
    * The free area changed (screen, layout, a card opened): re-place the stack. Visible toasts that no longer fit go
@@ -289,7 +289,7 @@ export interface Toasts {
   /** Toasts waiting for room. */
   pending(): number;
   /** Drops the visible and waiting toasts of one kind (badges belong to the run and its results card). */
-  drop(kind: 'info' | 'badge' | 'warn'): void;
+  drop(kind: 'info' | 'badge' | 'warn' | 'notice'): void;
 }
 
 const TOAST_MS = 2900;
@@ -306,7 +306,7 @@ const TOAST_SEEN_MS = 1200;
 export function createToasts(root: HTMLElement, area: () => ToastArea | null = () => null): Toasts {
   const box = h('div', { class: 'yp-toasts', role: 'status', 'aria-live': 'polite' });
   root.appendChild(box);
-  interface Item { text: string; kind: 'info' | 'badge' | 'warn'; at: number; el: HTMLElement | null; timer: number; shownAt: number }
+  interface Item { text: string; kind: 'info' | 'badge' | 'warn' | 'notice'; at: number; el: HTMLElement | null; timer: number; shownAt: number }
   const queue: Item[] = [];
   const shown: Item[] = [];
   let current: ToastArea | null = null;
@@ -353,7 +353,8 @@ export function createToasts(root: HTMLElement, area: () => ToastArea | null = (
   }
 
   function make(it: Item): HTMLElement {
-    const ic: IconName = it.kind === 'badge' ? 'star' : it.kind === 'warn' ? 'offline' : 'check';
+    // info: done (✓); warn: no connection; notice: something did not work, not the connection (ⓘ).
+    const ic: IconName = it.kind === 'badge' ? 'star' : it.kind === 'warn' ? 'offline' : it.kind === 'notice' ? 'info' : 'check';
     return h('div', { class: `toast toast--${it.kind}` }, icon(ic), h('span', null, it.text));
   }
 

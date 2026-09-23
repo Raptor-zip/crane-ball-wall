@@ -3,7 +3,7 @@
 // daily_pool.json (daily levels and their par).
 import { SIM_VERSION, REPLAY_MAX_BYTES, RANKED_MAX_TICKS } from '../src/sim/constants';
 import { levelHash, type DailyDef, type DailyPoolFile, type LevelDef, type LevelPhysics, type LevelsFile } from '../src/sim/level';
-import { decodeReplay, simulateReplay, ReplayFlag } from '../src/sim/replay';
+import { decodeReplay, rankedScore, simulateReplay, ReplayFlag } from '../src/sim/replay';
 import { Status } from '../src/sim/run';
 import { b64urlDecode } from '../src/sim/b64';
 import { ballClearanceM } from '../src/sim/display';
@@ -215,13 +215,14 @@ export type Simulated =
 
 /**
  * Success must happen on the last tick: nTicks = ceil((score + 59) / 2) (§4.6), and score must equal the claim.
- * gapUm is null on levels without walls.
+ * The rule is src/sim/replay.ts rankedScore, shared with the client's replay viewer (it plays a ranked replay only
+ * when it holds). gapUm is null on levels without walls.
  */
 export function simulateRun(target: Target, qs: Int8Array, claimed: number): Simulated {
   const r = simulateReplay(target.phys, qs);
-  const score = r.status === Status.Success ? r.score : null;
-  if (score === null || score !== claimed || qs.length !== Math.ceil((score + 59) / 2)) {
-    return { ok: false, reason: 'mismatch', got: score, status: r.status, ticks: r.ticks };
+  const score = rankedScore(qs.length, r);
+  if (score === null || score !== claimed) {
+    return { ok: false, reason: 'mismatch', got: r.status === Status.Success ? r.score : null, status: r.status, ticks: r.ticks };
   }
   let gapUm: number | null = null;
   if (target.phys.walls.length > 0) {

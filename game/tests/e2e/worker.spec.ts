@@ -7,7 +7,8 @@
 //   - POST /api/submit with a 1-1 replay is accepted (rank 1); a replay with one q flipped is a mismatch, and the
 //     same inputs under a second secret are a 'dup' (§7.8 step 6);
 //   - in the browser: clear 1-1 -> the rank-in send at the success tick -> accepted, 「世界一！」 on the card; the
-//     ranking screen shows the run as 「あなた」 (flashed); a second visitor gets the WR ghost from boot;
+//     ranking screen shows the run as 「あなた」 (flashed); a second visitor gets the WR ghost from boot and watches
+//     #1's replay from its ranking (boot's wr, re-simulated to the accepted run's stateHash, no /api/ghost);
 //   - a seeded 1-1 board (100-row top, 150 counted players) and the hourly rebuild (/__scheduled): a slow clear shows
 //     「世界 約N位」 and the ranking pins 「あなた 約N位」; a faster clear enters the top 100 with 「ランクイン！」 (§9.4).
 import { spawn, spawnSync } from 'node:child_process';
@@ -296,6 +297,27 @@ test('in the game: clear 1-1 online, the rank-in send submits, the ranking shows
   expect(wr, 'the WR ghost set is available online').toBe(true);
   await p2.waitForTimeout(400);
   await shot(p2, info, 'worker-wr-ghost');
+
+  // ... and watches #1 from the ranking of its own results card (§7.5 item 6): the replay is boot's wr (no /api/ghost),
+  // re-simulated by the client to the run the Worker accepted (the Node reference's score and stateHash). (The
+  // visitor's own clear copies the first player's inputs: the Worker rejects it as a dup, it never lands on the board.)
+  const ghostReqs: string[] = [];
+  p2.on('request', (rq) => {
+    if (rq.url().includes('/api/ghost/')) ghostReqs.push(rq.url());
+  });
+  expect((await playReplay(p2, '1-1', bot.replay)).state).toBe('RESULTS');
+  await p2.locator('section.res').getByRole('button', { name: /ランキング/ }).click();
+  const watch = p2.locator('.page-head .board-wr');
+  await expect(watch).toBeVisible();
+  await expect(watch).toContainText((bot.score / 120).toFixed(3));
+  await watch.click();
+  const viewing = await waitForState(p2, (s) => s.state === 'DEMO' && s.replay !== null, 'the replay viewer on #1');
+  expect(viewing.replay).toMatchObject({ key: KEY_11, rank: 1, pidh, t120: bot.score, score: bot.score, stateHash: bot.stateHash, source: 'boot', kind: 'wr' });
+  await waitForState(p2, (s) => !!s.replay && s.replay.t >= (bot.score + 60) / 120 - 1e-6, 'held on the Success frame', 60_000);
+  await shot(p2, info, 'worker-replay-wr');
+  await p2.keyboard.press('Escape');
+  await waitForState(p2, (s) => s.state === 'RESULTS' && s.replay === null, 'back to the ranking');
+  expect(ghostReqs).toEqual([]);
   await ctx2.close();
 
   info.annotations.push({ type: 'player', description: pidh });

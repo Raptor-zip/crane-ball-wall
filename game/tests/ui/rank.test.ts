@@ -199,10 +199,11 @@ describe('results card: the rank row in the card', () => {
     expect(root.querySelector('.res-online .chip--ai')).not.toBeNull();
   });
 
-  it('the stamp is pressed once per card: .is-new on the first render only, not after a rotation or the ranking', () => {
+  it('the stamp is pressed once per card: .is-new on the first render only, not after a rotation or the ranking', async () => {
     mount();
     const data = results(standing({ rank: 37, was: 49, exact: true, phase: 'confirmed', stamp: 'up' }));
     ui.show({ id: 'results', data });
+    await Promise.resolve();
     const st = root.querySelector<HTMLElement>('.stamp--rank')!;
     expect(st.classList.contains('is-new')).toBe(true);
     // pressed after the count-up and the medal fly (~900 ms after the card opened)
@@ -218,6 +219,19 @@ describe('results card: the rank row in the card', () => {
     // a new card animates again
     ui.show({ id: 'results', data: results(standing({ rank: 37, exact: true, phase: 'confirmed', stamp: 'in' })) });
     expect(root.querySelector('.stamp--rank')!.classList.contains('is-new')).toBe(true);
+  });
+
+  it('a card drawn and covered at once (back from the replay viewer: the card, then the ranking) presses when it shows', async () => {
+    mount();
+    const data = results(standing({ rank: 37, exact: true, phase: 'confirmed', stamp: 'in' }));
+    ui.show({ id: 'results', data });
+    ui.show({ id: 'board', key: KEY });
+    await Promise.resolve();
+    ui.show({ id: 'results', data });
+    expect(root.querySelector('.stamp--rank')!.classList.contains('is-new')).toBe(true);
+    await Promise.resolve();
+    ui.show({ id: 'results', data });
+    expect(root.querySelector('.stamp--rank')!.classList.contains('is-new')).toBe(false);
   });
 
   it('an answer that arrives later is pressed at once (no extra wait)', () => {

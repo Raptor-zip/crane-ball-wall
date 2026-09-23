@@ -6,9 +6,10 @@ import type { Layout, RenderFrame, Renderer } from '../../src/render/renderer';
 import type { HudState, Screen, UI, UiAction, UiElements } from '../../src/ui/ui';
 import type { SaveV1, Store } from '../../src/store/save';
 import { defaultSave } from '../../src/store/save';
-import type { Api, FlushReason, ResultsListener } from '../../src/net/api';
+import type { Api, FlushReason, GhostOpts, ResultsListener } from '../../src/net/api';
+import type { UiContext } from '../../src/ui/context';
 import type { PendingRun } from '../../src/net/outbox';
-import type { BootResponse, SubmitResponse, SubmitResult } from '../../src/shared/api';
+import type { BootResponse, GhostResponse, SubmitResponse, SubmitResult } from '../../src/shared/api';
 import type { LevelDef } from '../../src/sim/level';
 
 export const LAYOUT: Layout = { kind: 'wide', w: 1280, h: 720, dpr: 1, scene: { x: 0, y: 0, w: 1280, h: 720 }, deck: null, hudTop: 56 };
@@ -19,6 +20,11 @@ export class FakeUI implements UI {
   toasts: { text: string; kind?: string }[] = [];
   fxs: GameEvent[] = [];
   handlers = new Map<string, ((p?: unknown) => void)[]>();
+  /** The UiContext core hands to the UI (app.ts attachContext). */
+  ctx: UiContext | null = null;
+  attachContext(ctx: UiContext): void {
+    this.ctx = ctx;
+  }
   mount(): Layout {
     return LAYOUT;
   }
@@ -39,7 +45,7 @@ export class FakeUI implements UI {
   fx(e: GameEvent): void {
     this.fxs.push(e);
   }
-  toast(text: string, kind?: 'info' | 'badge' | 'warn'): void {
+  toast(text: string, kind?: 'info' | 'badge' | 'warn' | 'notice'): void {
     this.toasts.push({ text, kind });
   }
   on(a: UiAction, cb: (payload?: unknown) => void): void {
@@ -178,8 +184,20 @@ export class FakeApi implements Api {
   enqueue(r: PendingRun): void {
     this.queued.push(r);
   }
-  ghost(): Promise<null> {
-    return Promise.resolve(null);
+  /** Every /api/ghost call (the rival and the replay viewer). */
+  ghostCalls: { key: string; rank: number; opts?: GhostOpts }[] = [];
+  /** The answer of ghost() (default: null). */
+  ghostReply: ((key: string, rank: number, opts?: GhostOpts) => Promise<GhostResponse | null>) | null = null;
+  /** ghostsLeft() (NetApi extra): requests left this session. */
+  left = 3;
+  ghost(key: string, rank: number, opts?: GhostOpts): Promise<GhostResponse | null> {
+    this.ghostCalls.push(opts ? { key, rank, opts } : { key, rank });
+    if (this.left <= 0) return Promise.resolve(null);
+    this.left--;
+    return this.ghostReply ? this.ghostReply(key, rank, opts) : Promise.resolve(null);
+  }
+  ghostsLeft(): number {
+    return this.left;
   }
   board(): Promise<null> {
     return Promise.resolve(null);

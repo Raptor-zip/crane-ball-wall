@@ -8,7 +8,7 @@ import type { GhostKind, GhostPose } from '../render/renderer';
 import { RAIL_Y } from '../sim/constants';
 import { Ev, type SimEvents } from '../sim/events';
 import { Mode, Status, type SimState } from '../sim/run';
-import { decodeReplay, simulateReplay } from '../sim/replay';
+import { decodeReplay, simulateReplay, type ReplayHeader, type ReplayResult } from '../sim/replay';
 import { b64urlDecode } from '../sim/b64';
 import { decodeChannelValues } from './ghostcodec';
 import { createSplitTracker, type SplitTracker } from './splits';
@@ -153,13 +153,39 @@ export function trackFromReplay(level: LevelDef, replay: string, kind: GhostKind
   return trackAndHashFromReplay(level, replay, kind, label).track;
 }
 
-/** trackFromReplay plus the replay's stateHash (simulateReplay, the Worker's check): tests compare it (§10.7 M11). */
-export function trackAndHashFromReplay(level: LevelDef, replay: string, kind: GhostKind, label: string): { track: GhostTrack; stateHash: number } {
-  const { qs } = decodeReplay(b64urlDecode(replay));
+/** A replay re-simulated into a ghost track (trackAndHashFromReplay). */
+export interface ReplayTrack {
+  track: GhostTrack;
+  /** simulateReplay's stateHash (the Worker's check; tests compare it, §10.7 M11). */
+  stateHash: number;
+  /** The whole simulateReplay result (score, minD2, peakF, ...): the same single simulation that made the track. */
+  result: ReplayResult;
+  header: ReplayHeader;
+  /** Number of q values (ticks) in the replay. */
+  nTicks: number;
+  /** Goal phases completed before the last (5-4): phase index and the sim time [s] of its PhaseDone. */
+  phases: { index: number; t: number }[];
+}
+
+/**
+ * trackFromReplay plus what the single simulateReplay call found. The recorder only copies the sim state after each
+ * tick, so every sample is the simulator's own state of that tick (the Worker's re-simulation, not a reconstruction).
+ */
+export function trackAndHashFromReplay(level: LevelDef, replay: string, kind: GhostKind, label: string): ReplayTrack {
+  const { h, qs } = decodeReplay(b64urlDecode(replay));
   const rec = createTrackRecorder(level, Math.min(MAX_TRACK_SAMPLES, qs.length + 1));
   rec.begin(startPose(level));
-  const res = simulateReplay(level.physics, qs, { onTick: (_tick, s, ev) => rec.push(s, ev) });
-  return { track: rec.finish(kind, label, res.status === Status.Success && res.score !== null ? res.score : null), stateHash: res.stateHash };
+  const phases: { index: number; t: number }[] = [];
+  const res = simulateReplay(level.physics, qs, {
+    onTick: (_tick, s, ev) => {
+      rec.push(s, ev);
+      for (let k = 0; k < ev.n; k++) if (ev.kind[k] === Ev.PhaseDone) phases.push({ index: ev.a[k]!, t: ev.sub[k]! / 120 });
+    },
+  });
+  return {
+    track: rec.finish(kind, label, res.status === Status.Success && res.score !== null ? res.score : null),
+    stateHash: res.stateHash, result: res, header: h, nTicks: qs.length, phases,
+  };
 }
 
 // ------------------------------------------------------------------------------------ transforms

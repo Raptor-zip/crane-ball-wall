@@ -4,7 +4,7 @@ import { b64urlDecode, b64urlEncode } from '../../src/sim/b64';
 import { MAX_SUB, RANKED_MAX_TICKS, REPLAY_MAX_BYTES, SIM_VERSION } from '../../src/sim/constants';
 import { levelHash } from '../../src/sim/level';
 import {
-  decodeReplay, DeviceTag, encodeReplay, REPLAY_MAX_TICKS, ReplayFlag, simulateReplay, type ReplayHeader,
+  decodeReplay, DeviceTag, encodeReplay, rankedScore, REPLAY_MAX_TICKS, ReplayFlag, simulateReplay, type ReplayHeader,
 } from '../../src/sim/replay';
 import { SimEvents } from '../../src/sim/events';
 import { createRun, Status, stepTick } from '../../src/sim/run';
@@ -197,5 +197,28 @@ describe('simulateReplay', () => {
     const r0 = simulateReplay(p, new Int8Array(0));
     expect(r0.status).toBe(Status.Ready);
     expect(r0.ticks).toBe(0);
+  });
+});
+
+describe('rankedScore (the acceptance rule the Worker and the replay viewer share)', () => {
+  it('is the score of a run that succeeds on its last tick, null otherwise', () => {
+    const p = fixedLevel('1-1');
+    const qs = runBot(p, bangBang(17, 11)(p), 900);
+    const res = simulateReplay(p, qs);
+    expect(rankedScore(qs.length, res)).toBe(res.score);
+    // a replay with ticks after the success tick re-simulates to the same result, but it is not the ranked run
+    const longer = Int8Array.from([...qs, 5, 5]);
+    expect(rankedScore(longer.length, simulateReplay(p, longer))).toBeNull();
+    // cut before the end: Running
+    const short = qs.slice(0, qs.length - 1);
+    expect(rankedScore(short.length, simulateReplay(p, short))).toBeNull();
+    // a crash / timeout / unfinished run has no ranked time
+    expect(rankedScore(5, { status: Status.Crash, score: null })).toBeNull();
+    expect(rankedScore(3600, { status: Status.Timeout, score: null })).toBeNull();
+    expect(rankedScore(3, { status: Status.Running, score: null })).toBeNull();
+    // odd and even scores: nTicks = ceil((score + 59) / 2)
+    expect(rankedScore(146, { status: Status.Success, score: 233 })).toBe(233);
+    expect(rankedScore(147, { status: Status.Success, score: 234 })).toBe(234);
+    expect(rankedScore(146, { status: Status.Success, score: 234 })).toBeNull();
   });
 });
