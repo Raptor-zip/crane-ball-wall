@@ -1245,7 +1245,9 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     if (r.status === 'rejected') return { ...s, phase: r.reason === 'lite' ? 'held' : 'local' };
     const srvRank = numOrNull(r.rank);
     let rank = srvRank ?? s.rank;
-    if (r.status === 'unranked' && srvRank === null && rank !== null && rank <= BOARD_TOP_N) rank = null;   // outside the top 100
+    // A counted run inside the top 100 always gets its exact rank back, so an answer without one (unranked, or an
+    // accepted / notBetter run outside the top with no usable histogram) means the local top-100 guess was wrong.
+    if (srvRank === null && rank !== null && rank <= BOARD_TOP_N) rank = null;
     const nSrv = numOrNull(r.n) ?? s.n;
     const n = nSrv === null ? rank : Math.max(nSrv, rank ?? 0);
     const pct = rank !== null && rank > BOARD_TOP_N ? numOrNull(r.pct) ?? (n !== null ? levelPct(rank, n) : null) : null;

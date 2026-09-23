@@ -3157,10 +3157,12 @@ input {
   font: 800 1.15rem/1.25 var(--font-num);
 }
 .stat-val small {
+  display: inline-block;      /* 「上位9.6%」 / "Top 9.6%" moves to the next line whole, never split */
   font-family: var(--font-head);
   font-size: 0.7em;
   color: var(--ink-2);
   margin-left: 4px;
+  white-space: nowrap;
 }
 .btnrow {
   display: grid;
@@ -3888,8 +3890,10 @@ input {
   font: 800 28px/1 var(--font-num);
   letter-spacing: -0.03em;
 }
+/* The world-record stamp: the pink --wr ring; its words in the deeper --wr-lip so they read (WCAG AA) on the card. */
 .stamp--wr {
   --stamp: var(--wr);
+  color: var(--wr-lip);
 }
 .rank-up {
   display: inline-flex;
@@ -3897,7 +3901,7 @@ input {
   padding: 3px 9px;
   border-radius: 999px;
   background: #eaf1ff;
-  color: var(--ahead);
+  color: var(--ahead-lip);
   font: 800 0.95rem/1.1 var(--font-num);
   white-space: nowrap;
 }
@@ -3911,6 +3915,9 @@ input {
 .rank-up.is-new {
   animation: yp-rise 0.35s ease-out var(--rank-delay, 0ms) both;
 }
+.res-rank-sub.is-new {
+  animation: yp-fade-in 0.3s ease var(--rank-delay, 0ms) both;
+}
 @keyframes yp-stamp-press {
   0% { transform: rotate(-5deg) scale(1.9); opacity: 0; }
   45% { transform: rotate(-5deg) scale(0.94); opacity: 1; }
@@ -3921,12 +3928,14 @@ input {
   from { opacity: 0; }
 }
 .yp--reduce .stamp--rank.is-new,
-.yp--reduce .rank-up.is-new {
+.yp--reduce .rank-up.is-new,
+.yp--reduce .res-rank-sub.is-new {
   animation: yp-fade-in 0.3s ease both !important;
   animation-delay: var(--rank-delay, 0ms) !important;
 }
 .yp--still .stamp--rank.is-new,
-.yp--still .rank-up.is-new {
+.yp--still .rank-up.is-new,
+.yp--still .res-rank-sub.is-new {
   animation: none !important;
 }
 
@@ -3942,8 +3951,9 @@ input {
 .board tr.is-me td:last-child {
   border-right-width: 2px;
 }
+/* --flash-delay: negative when the full list replaces the instant one mid-flash (the flash carries on, board.ts). */
 .board tr.is-me.is-flash td {
-  animation: yp-me-flash 1.4s ease-out both;
+  animation: yp-me-flash 1.4s ease-out var(--flash-delay, 0ms) both;
 }
 @keyframes yp-me-flash {
   from { background: var(--pb-solid); }

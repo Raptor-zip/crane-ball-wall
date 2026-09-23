@@ -23,6 +23,20 @@ const stamped = new WeakSet<ResultsData>();
 
 /** The rank stamp is pressed after the count-up (650 ms) and the medal fly, or when the answer arrives if later. */
 const STAMP_AT_MS = 900;
+/** How long the first-crown 「AIが負けた理由」 card waits for a rank-in answer that is still on its way. */
+const AI_LOST_WAIT_MS = 3500;
+
+/** Scrolls the card just enough that `row` is fully inside it (nothing when it already is). */
+function revealRow(scroll: HTMLElement, row: HTMLElement, smooth: boolean): void {
+  const s = scroll.getBoundingClientRect();
+  const r = row.getBoundingClientRect();
+  const pad = 8;
+  let dy = Math.max(0, r.bottom - (s.bottom - pad));
+  dy = Math.min(dy, Math.max(0, r.top - (s.top + pad)));   // never push the row's top out
+  if (dy < 1) return;
+  if (typeof scroll.scrollBy === 'function') scroll.scrollBy({ top: dy, behavior: smooth ? 'smooth' : 'auto' });
+  else scroll.scrollTop += dy;
+}
 
 /** What the rank row shows; the row is re-rendered only when this changes (checked on HUD frames). */
 export function standingKey(s: Standing | null | undefined): string {
@@ -52,18 +66,23 @@ export function renderRankRow(el: HTMLElement, s: Standing, press: { delayMs: nu
     const meta: string[] = [];
     if (s.stamp === 'in' && s.was !== null && s.was > BOARD_TOP_N) meta.push(t('results.rankFrom', { n: cnt(s.was) }));
     if (s.n !== null && s.n >= s.rank) meta.push(t('results.rankOf', { n: cnt(s.n) }));
-    const up = s.stamp === 'up' && s.was !== null && s.was > s.rank ? h('span', { class: 'rank-up', 'aria-hidden': 'true' }, t('results.rankUpBy', { n: cnt(s.was - s.rank) })) : null;
+    const climb = s.stamp === 'up' && s.was !== null && s.was > s.rank ? s.was - s.rank : null;
+    const up = climb !== null ? h('span', { class: 'rank-up', 'aria-hidden': 'true' }, t('results.rankUpBy', { n: cnt(climb) })) : null;
+    const subs = meta.map((m) => h('span', { class: 'res-rank-sub' }, m));
     if (press) {
-      stamp.classList.add('is-new');
-      stamp.style.setProperty('--rank-delay', `${Math.round(press.delayMs)}ms`);
-      if (up) {
-        up.classList.add('is-new');
-        up.style.setProperty('--rank-delay', `${Math.round(press.delayMs + 350)}ms`);
-      }
+      // The meta lines (N人中, 約N位から) come with the stamp, not before it: alone they read as loose fragments.
+      const at = (x: HTMLElement, ms: number): void => {
+        x.classList.add('is-new');
+        x.style.setProperty('--rank-delay', `${Math.round(press.delayMs + ms)}ms`);
+      };
+      at(stamp, 0);
+      for (const m of subs) at(m, 150);
+      if (up) at(up, 350);
     }
+    const aria = t('results.rankAria', { stamp: word, n: cnt(s.rank) });
     el.append(stamp,
-      h('div', { class: 'res-rank-side' }, up, ...meta.map((m) => h('span', { class: 'res-rank-sub' }, m))),
-      h('span', { class: 'sr-only' }, t('results.rankAria', { stamp: word, n: cnt(s.rank) })));
+      h('div', { class: 'res-rank-side' }, up, ...subs),
+      h('span', { class: 'sr-only' }, climb !== null ? `${aria} ${t('results.rankUpAria', { n: cnt(climb) })}` : aria));
     return;
   }
   if (!s.forPb) {
@@ -82,7 +101,10 @@ export function renderRankRow(el: HTMLElement, s: Standing, press: { delayMs: nu
     // Outside the top 100: always an estimate from the histogram (約), with the crowd size and 上位 x %.
     el.append(main(t('results.rankApprox', { n: cnt(r) })),
       ...sub(s.n !== null ? t('results.rankOf', { n: cnt(s.n) }) : null, s.pct !== null ? t('results.rankTop', { p: fmtPct(s.pct) }) : null));
-    if (s.forPb && s.was !== null && s.was > r) el.append(h('span', { class: 'rank-up rank-up--muted' }, t('results.rankUpByApprox', { n: cnt(s.was - r) })));
+    if (s.forPb && s.was !== null && s.was > r) {
+      el.append(h('span', { class: 'rank-up rank-up--muted', 'aria-hidden': 'true' }, t('results.rankUpByApprox', { n: cnt(s.was - r) })),
+        h('span', { class: 'sr-only' }, t('results.rankUpApproxAria', { n: cnt(s.was - r) })));
+    }
     return;
   }
   if (s.phase === 'pending') {
@@ -316,6 +338,8 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
   let rankEl: HTMLElement | null = null;
   let rankKey = '';
   let syncRank: (() => void) | null = null;
+  /** performance.now() when this card's rank stamp has finished landing (null: no stamp pressed on this card). */
+  let stampLandsAt: number | null = null;
   const lv = data.level;
   const run = env.lastRun();
   const unrecorded = run.practice || run.assist;
@@ -376,8 +400,17 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
       if (st.phase === 'confirmed' && st.stamp && !stamped.has(data)) {
         stamped.add(data);
         press = { delayMs: still ? 0 : Math.max(0, openAt + STAMP_AT_MS - performance.now()) };
+        if (!still) stampLandsAt = performance.now() + press.delayMs + (reduce ? 300 : 450);
       }
       renderRankRow(rankEl, st, press);
+      if (press) {
+        // A short card (a phone held sideways) can have the row below the fold: bring it in just before the press.
+        const row = rankEl;
+        const lead = reduce || still ? 0 : 280;
+        window.setTimeout(() => {
+          if (row.isConnected) revealRow(scroll, row, !reduce && !still);
+        }, Math.max(0, press.delayMs - lead));
+      }
     };
     syncRank();
 
@@ -428,7 +461,7 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
           h('span', { class: 'badge-dot' }, BADGE_GLYPH[b]), t(`badge.${b}` as 'badge.kamihitoe')))));
     }
     const onlineChips = h('div', { class: 'res-online' },
-      data.aiBeaten !== null ? h('span', { class: 'chip chip--ai' }, icon('crown'), t('results.aiBeaten', { n: data.aiBeaten })) : null);
+      data.aiBeaten !== null ? h('span', { class: 'chip chip--ai' }, icon('crown'), t('results.aiBeaten', { n: fmtCount(data.aiBeaten) })) : null);
     if (onlineChips.childElementCount) scroll.append(onlineChips);
 
     // Footer buttons.
@@ -457,12 +490,27 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
     scroll.append(keys.el);
     if (!online) foot.querySelector('.res-row')!.setAttribute('style', 'grid-template-columns:repeat(2,minmax(0,1fr))');
 
-    // "Why the AI lost" (first crown ever, once, §5.4).
+    // "Why the AI lost" (first crown ever, once, §5.4). A first crown is often a rank-in too: the card waits for the
+    // rank stamp to land (and for a rank-in answer still on its way, up to AI_LOST_WAIT_MS) so it never covers it.
     const save = env.save();
     if (data.crown && save && !save.seen.aiLostCard) {
-      window.setTimeout(() => {
-        if (root.isConnected && card.isConnected) openAiLostCard(root, env, lv);
-      }, reduce || still ? 0 : 1100);
+      const openAiLost = (): void => {
+        if (!root.isConnected || !card.isConnected) return;
+        if (!still) {
+          syncRank?.();
+          const now = performance.now();
+          if (stampLandsAt !== null && now < stampLandsAt + 250) {
+            window.setTimeout(openAiLost, stampLandsAt + 250 - now);
+            return;
+          }
+          if (data.standing?.phase === 'pending' && now - openAt < AI_LOST_WAIT_MS) {
+            window.setTimeout(openAiLost, 200);
+            return;
+          }
+        }
+        openAiLostCard(root, env, lv);
+      };
+      window.setTimeout(openAiLost, reduce || still ? 0 : 1100);
     }
   } else {
     card.append(h('div', { class: 'res-stamp', 'aria-hidden': 'true' }, h('div', { class: 'stamp stamp--sm stamp--fail' }, '×')));

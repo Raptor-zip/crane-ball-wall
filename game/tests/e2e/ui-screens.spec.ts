@@ -434,7 +434,7 @@ for (const vp of [{ width: 360, height: 740, touch: true, ts: '' }, { width: 360
               expect(hit(stamp, (await rects(page, '.res-stamp .stamp'))[0]!)).toBe(false);
               expect(await page.locator('.res-rank .sr-only').textContent()).toMatch(lang === 'ja' ? /世界\d+位/ : /World #\d+/);
             } else {
-              expect(await page.locator('.res-rank').textContent()).toMatch(lang === 'ja' ? /約|見込み/ : /~/);
+              expect(await page.locator('.res-rank').textContent()).toMatch(lang === 'ja' ? /約/ : /~/);
             }
           } else {
             // the pinned row is on screen, inside the page, and marks its rank as an estimate (or has none)
@@ -458,7 +458,7 @@ test.describe('world rank: the stamp choreography', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
   test('a late answer: 見込み first, then the stamp is pressed and the ↑n pill rises after it', async ({ page }) => {
     await open(page, 'screen=results&rank=up&arrive=1200&lang=ja');
-    await expect(page.locator('.res-rank')).toContainText('37位の見込み・確認中…');
+    await expect(page.locator('.res-rank')).toContainText('約37位の見込み・確認中…');
     await expect(page.locator('.stamp--rank.is-new')).toBeVisible({ timeout: 5000 });
     await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector('.rank-up')!).opacity), { timeout: 3000 }).toBe('1');
     const t = await page.evaluate(() => getComputedStyle(document.querySelector('.stamp--rank')!).transform);
@@ -467,6 +467,26 @@ test.describe('world rank: the stamp choreography', () => {
   test('motion off: the stamp fades in (no press)', async ({ page }) => {
     await open(page, 'screen=results&rank=in&lang=ja&motion=off');
     expect(await page.evaluate(() => getComputedStyle(document.querySelector('.stamp--rank')!).animationName)).toBe('yp-fade-in');
+  });
+});
+
+test.describe('world rank: a short landscape card', () => {
+  test.use({ viewport: { width: 568, height: 320 }, hasTouch: true });
+  test('the card scrolls the rank row into view before the stamp is pressed (it starts below the fold)', async ({ page }) => {
+    await open(page, 'screen=results&rank=up&lang=ja');
+    const cut = (): Promise<boolean> => page.evaluate(() => {
+      const s = document.querySelector('.res-scroll')!.getBoundingClientRect();
+      const r = document.querySelector('.res-rank')!.getBoundingClientRect();
+      return r.bottom > s.bottom + 0.5;
+    });
+    await expect.poll(cut, { timeout: 3000 }).toBe(false);
+    // it got there by scrolling: at 568x320 the row opens below the fold
+    expect(await page.evaluate(() => document.querySelector('.res-scroll')!.scrollTop)).toBeGreaterThan(0);
+    const time = await page.evaluate(() => {
+      const s = document.querySelector('.res-scroll')!.getBoundingClientRect();
+      return document.querySelector('.res-time')!.getBoundingClientRect().bottom > s.top;
+    });
+    expect(time).toBe(true);          // the time is still on the card
   });
 });
 

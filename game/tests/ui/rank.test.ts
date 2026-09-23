@@ -121,11 +121,11 @@ describe('results: the rank row (every row of GAME_DESIGN.md §9.4)', () => {
     ['estimate', { rank: 342, pct: 32.2, candidate: false }, '世界 約342位1,065人中・上位32.2%', 'World ~#342of 1,065 · Top 32.2%', false],
     ['estimate, up', { rank: 342, pct: 32.2, was: 400, candidate: false }, '↑約58', '↑~58', false],
     ['confirmed estimate', { rank: 342, pct: 32.2, candidate: false, phase: 'confirmed' }, '世界 約342位', 'World ~#342', false],
-    ['pending', { rank: 37, phase: 'pending' }, '37位の見込み・確認中…', '~#37 expected · checking…', false],
+    ['pending', { rank: 37, phase: 'pending' }, '約37位の見込み・確認中…', '~#37 expected · checking…', false],
     ['pending range', { phase: 'pending' }, 'ランクイン圏内・確認中…', 'Top-100 range · checking…', false],
     ['queued', { rank: 37, phase: 'queued' }, '約37位・送信待ち', '~#37 · not sent yet', false],
     ['queued, no number', { phase: 'queued' }, '送信待ち', 'Not sent yet', false],
-    ['held', { rank: 37, phase: 'held' }, '37位相当・今日は反映されません', '~#37 · not counted today', false],
+    ['held', { rank: 37, phase: 'held' }, '約37位相当・今日は反映されません', '~#37 · not counted today', false],
     ['out', { candidate: false, n: null }, '100位圏外', 'Outside the top 100', false],
     ['non-PB', { forPb: false, rank: 342, pct: 32.2, candidate: false }, '自己ベスト世界 約342位', 'Your bestWorld ~#342', false],
   ];
@@ -136,10 +136,10 @@ describe('results: the rank row (every row of GAME_DESIGN.md §9.4)', () => {
       const te = text(s, 'en');
       expect(tj).toContain(ja);
       expect(te).toContain(en);
-      // 約 / ~ on every number that is not the server's own top-100 rank (the wait rows say it in words)
+      // 約 / ~ on every number that is not the server's own top-100 rank (§7.7: local estimates included)
       if (exact) {
         expect(tj.replace(/約342位から/, '')).not.toMatch(/約/);
-      } else if (s.rank !== null && s.phase !== 'pending' && s.phase !== 'held') {
+      } else if (s.rank !== null) {
         expect(tj).toMatch(/約/);
         expect(te).toMatch(/~/);
       }
@@ -156,6 +156,12 @@ describe('results: the rank row (every row of GAME_DESIGN.md §9.4)', () => {
     expect(el.querySelector('.stamp--rank.stamp--wr')).not.toBeNull();
     expect(el.querySelector('.sr-only')!.textContent).toBe('世界一！ 世界1位');
     expect(el.querySelector('.stamp--rank')!.getAttribute('aria-hidden')).toBe('true');
+    // the climb is read out too (the ↑n pill itself is aria-hidden)
+    renderRankRow(el, standing({ rank: 37, was: 49, exact: true, phase: 'confirmed', stamp: 'up' }), null);
+    expect(el.querySelector('.sr-only')!.textContent).toBe('ランクアップ！ 世界37位 12位アップ');
+    renderRankRow(el, standing({ rank: 342, pct: 32.2, was: 400, candidate: false }), null);
+    expect(el.querySelector('.rank-up')!.getAttribute('aria-hidden')).toBe('true');
+    expect(el.querySelector('.sr-only')!.textContent).toBe('約58位アップ');
     renderRankRow(el, standing({ forPb: false, rank: 342, pct: 32.2, candidate: false }), null);
     expect(el.classList.contains('res-rank--muted')).toBe(true);
   });
@@ -178,7 +184,7 @@ describe('results card: the rank row in the card', () => {
     const row = root.querySelector('.res-rank')!;
     expect(row.previousElementSibling!.classList.contains('res-time')).toBe(true);
     expect(row.getAttribute('aria-live')).toBe('polite');
-    expect(rowText()).toBe('37位の見込み・確認中…');
+    expect(rowText()).toBe('約37位の見込み・確認中…');
     // the same standing: nothing is re-rendered
     const main = row.querySelector('.res-rank-main');
     for (let i = 0; i < 12; i++) ui.hud(hudState());
@@ -202,6 +208,9 @@ describe('results card: the rank row in the card', () => {
     // pressed after the count-up and the medal fly (~900 ms after the card opened)
     expect(parseInt(st.style.getPropertyValue('--rank-delay'), 10)).toBeGreaterThan(800);
     expect(root.querySelector<HTMLElement>('.rank-up.is-new')).not.toBeNull();
+    // the meta line (1,065人中) comes in with the stamp, not before it
+    const sub = root.querySelector<HTMLElement>('.res-rank-sub.is-new')!;
+    expect(parseInt(sub.style.getPropertyValue('--rank-delay'), 10)).toBeGreaterThan(parseInt(st.style.getPropertyValue('--rank-delay'), 10));
     // the same ResultsData rendered again (rotation, back from the ranking): final state, no animation
     ui.show({ id: 'results', data });
     expect(root.querySelector('.stamp--rank')!.classList.contains('is-new')).toBe(false);
@@ -224,6 +233,47 @@ describe('results card: the rank row in the card', () => {
     expect(st.style.getPropertyValue('--rank-delay')).toBe('0ms');
   });
 
+  it('first crown: 「AIが負けた理由」 opens after the rank stamp has landed (and waits for an answer on its way)', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    save.seen.aiLostCard = false;
+    const scrim = (): Element | null => root.querySelector('.yp-layer[data-kind="scrim"][role="dialog"]');
+    mount();
+    // stamp pressed at 900 ms for 450 ms: not at the old 1100 ms, but once it has landed
+    ui.show({ id: 'results', data: results(standing({ rank: 1, exact: true, phase: 'confirmed', stamp: 'wr' }), { crown: true }) });
+    vi.advanceTimersByTime(1200);
+    expect(scrim()).toBeNull();
+    vi.advanceTimersByTime(500);
+    expect(scrim()).not.toBeNull();
+    // a rank-in answer still on its way: wait for it, then for its stamp
+    root.replaceChildren();
+    save.seen.aiLostCard = false;   // (opening it marks it seen)
+    mount();
+    const data = results(standing({ rank: 1, phase: 'pending' }), { crown: true });
+    ui.show({ id: 'results', data });
+    vi.advanceTimersByTime(2000);
+    expect(scrim()).toBeNull();
+    data.standing = standing({ rank: 1, exact: true, phase: 'confirmed', stamp: 'wr' });
+    vi.advanceTimersByTime(300);
+    expect(root.querySelector('.stamp--rank.is-new')).not.toBeNull();
+    expect(scrim()).toBeNull();
+    vi.advanceTimersByTime(800);
+    expect(scrim()).not.toBeNull();
+    // no answer at all: it does not wait forever
+    root.replaceChildren();
+    save.seen.aiLostCard = false;
+    mount();
+    ui.show({ id: 'results', data: results(standing({ rank: 1, phase: 'pending' }), { crown: true }) });
+    vi.advanceTimersByTime(3800);
+    expect(scrim()).not.toBeNull();
+    // no rank row: as before, 1.1 s
+    root.replaceChildren();
+    save.seen.aiLostCard = false;
+    mount();
+    ui.show({ id: 'results', data: results(null, { crown: true }) });
+    vi.advanceTimersByTime(1150);
+    expect(scrim()).not.toBeNull();
+  });
+
   it('reduced motion: the stamp fades (CSS), still: the final frame', () => {
     save.settings.motion = 'off';
     mount();
@@ -231,8 +281,8 @@ describe('results card: the rank row in the card', () => {
     expect(root.querySelector('.yp')!.classList.contains('yp--reduce')).toBe(true);
     expect(root.querySelector('.stamp--rank.is-new')).not.toBeNull();
     const css = readFileSync(resolve(process.cwd(), 'src/ui/styles.css'), 'utf8');
-    expect(css).toMatch(/\.yp--reduce \.stamp--rank\.is-new,\s*\.yp--reduce \.rank-up\.is-new \{\s*animation: yp-fade-in 0\.3s/);
-    expect(css).toMatch(/\.yp--still \.stamp--rank\.is-new,\s*\.yp--still \.rank-up\.is-new \{\s*animation: none !important/);
+    expect(css).toMatch(/\.yp--reduce \.stamp--rank\.is-new,\s*\.yp--reduce \.rank-up\.is-new,\s*\.yp--reduce \.res-rank-sub\.is-new \{\s*animation: yp-fade-in 0\.3s/);
+    expect(css).toMatch(/\.yp--still \.stamp--rank\.is-new,\s*\.yp--still \.rank-up\.is-new,\s*\.yp--still \.res-rank-sub\.is-new \{\s*animation: none !important/);
     expect(css).toMatch(/@keyframes yp-stamp-press/);
   });
 
@@ -284,7 +334,7 @@ describe('ranking screen', () => {
     await flush();
     expect(root.querySelectorAll('table.board tbody tr[data-rank]')).toHaveLength(100);
     expect(root.querySelectorAll('.skel')).toHaveLength(0);
-    expect(root.querySelector('.board-sum')!.textContent).toContain('参加 1065人');
+    expect(root.querySelector('.board-sum')!.textContent).toContain('参加 1,065人');   // the same format as the rank row
   });
 
   it('my row: is-me, a one-time flash and a scroll to the middle', async () => {
@@ -298,10 +348,11 @@ describe('ranking screen', () => {
       expect(scroll).toHaveBeenCalledTimes(1);
       expect(scroll.mock.calls[0]![0]).toMatchObject({ block: 'center', behavior: 'smooth' });
       await flush();
-      // the full list keeps my row but does not flash or jump again
-      const again = root.querySelector('tr.is-me')!;
+      // the full list keeps my row: the flash carries on where it was (negative delay), no second jump
+      const again = root.querySelector<HTMLElement>('tr.is-me')!;
       expect(again).not.toBe(first);
-      expect(again.classList.contains('is-flash')).toBe(false);
+      expect(again.classList.contains('is-flash')).toBe(true);
+      expect(Number.parseFloat(again.style.getPropertyValue('--flash-delay'))).toBeLessThanOrEqual(0);
       expect(scroll).toHaveBeenCalledTimes(1);
       expect(root.querySelector('.board-pin')).toBeNull();
     } finally {
@@ -363,6 +414,8 @@ describe('ranking screen', () => {
     let pin = root.querySelector('.board-pin')!;
     expect(pin.textContent).toContain('反映待ち');
     expect(pin.textContent).not.toMatch(/\d+位/);
+    // its time belongs among the rows: no 「⋮」 (that would read as "below #100")
+    expect(root.querySelector('tr.is-gap')).toBeNull();
     // outside the top 100 with no histogram yet
     save.levels['2-2']!.bestSub = 900;
     save.levels['2-2']!.sentSub = 900;
@@ -372,6 +425,7 @@ describe('ranking screen', () => {
     await flush();
     pin = root.querySelector('.board-pin')!;
     expect(pin.textContent).toContain('100位圏外');
+    expect(root.querySelector('tr.is-gap')).not.toBeNull();
   });
 
   it('no pinned row for a best on another level hash, or without a best', () => {

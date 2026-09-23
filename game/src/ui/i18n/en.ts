@@ -136,6 +136,8 @@ export const en: Record<I18nKey, string> = {
   'results.stampWr': 'World #1!',
   'results.stampWrAgain': 'New world record!',
   'results.rankAria': '{stamp} World #{n}',
+  'results.rankUpAria': 'up {n} places',
+  'results.rankUpApproxAria': 'up about {n} places',
   'results.rankSep': ' · ',
   'results.aiBeaten': '{n} players beat the AI here',
   'results.retry': 'Again',

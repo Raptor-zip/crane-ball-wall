@@ -25,6 +25,9 @@ export function safeName(nameSeed: number, pidh: string): string {
   return `#${String(num).padStart(4, '0')}`;
 }
 
+/** The one-time flash of my row (styles.css yp-me-flash). */
+const ME_FLASH_MS = 1400;
+
 /** Closest-gap column: '—' on levels without walls (gapUm < 0, NO_WALL_GAP_UM), empty when unknown. */
 export function gapCell(gapUm: number | null | undefined): string {
   if (gapUm === null || gapUm === undefined || !Number.isFinite(gapUm) || gapUm >= 1e7) return '';
@@ -215,7 +218,8 @@ export function renderBoardScreen(root: HTMLElement, screen: Extract<Screen, { i
   const still = !!root.closest('.yp--still');
   const save = env.save();
   const me = save?.id.pidh ?? null;
-  let flashed = false;
+  /** performance.now() when my row started its one flash (null: not yet on this screen). */
+  let flashAt: number | null = null;
   let alive = true;
 
   const pinOf = (v: BoardView): PinInfo | null => {
@@ -231,8 +235,8 @@ export function renderBoardScreen(root: HTMLElement, screen: Extract<Screen, { i
   /** The table and the pinned row always come from the same snapshot. */
   const show = (v: BoardView, tail: HTMLElement[]): void => {
     sumRow.replaceChildren(
-      h('span', { class: 'chip' }, icon('list'), t('board.players', { n: v.n })),
-      h('span', { class: 'chip chip--ai' }, icon('crown'), t('board.aiBeaten', { n: v.aiBeaten })),
+      h('span', { class: 'chip' }, icon('list'), t('board.players', { n: fmtCount(v.n) })),
+      h('span', { class: 'chip chip--ai' }, icon('crown'), t('board.aiBeaten', { n: fmtCount(v.aiBeaten) })),
       h('span', { class: 'chip' }, t('board.par', { t: fmtTime(v.par) })));
     const pin = pinOf(v);
     const body: HTMLElement[] = [];
@@ -240,18 +244,28 @@ export function renderBoardScreen(root: HTMLElement, screen: Extract<Screen, { i
       body.push(h('div', { class: 'empty' }, icon('trophy'), t('board.empty')));
     } else {
       const table = boardTable(v.top, { mePidh: me, parSub: v.par, partial: !v.complete });
-      if (pin && v.complete && v.top.length >= BOARD_TOP_N) {
+      // 「⋮」 says "further down": only for a pin that is below the 100th row (an estimate or 100位圏外), not for a time
+      // that belongs among the rows (反映待ち / 未送信 with no rank).
+      if (pin && (pin.rank !== null || pin.status === 'out') && v.complete && v.top.length >= BOARD_TOP_N) {
         table.querySelector('tbody')!.appendChild(h('tr', { class: 'is-gap', 'aria-hidden': 'true' }, h('td', { colspan: 4 }, '⋮')));
       }
       body.push(table);
     }
     list.replaceChildren(...body, ...tail, ...(pin ? [pinRow(pin)] : []));
     const mine = list.querySelector<HTMLElement>('tr.is-me');
-    if (mine && !flashed) {
+    if (!mine) return;
+    if (flashAt === null) {
       // Once per screen: the instant render and the full list can both hold my row.
-      flashed = true;
+      flashAt = performance.now();
       if (!reduce && !still) mine.classList.add('is-flash');
       mine.scrollIntoView?.({ block: 'center', behavior: reduce || still ? 'auto' : 'smooth' });
+      return;
+    }
+    // The full list replaced the instant one while my row was still flashing: the new row carries on from there.
+    const run = performance.now() - flashAt;
+    if (!reduce && !still && run < ME_FLASH_MS) {
+      mine.classList.add('is-flash');
+      mine.style.setProperty('--flash-delay', `${-Math.round(run)}ms`);
     }
   };
 

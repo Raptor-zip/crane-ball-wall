@@ -146,13 +146,34 @@ describe('the rank row (Standing) and the rank-in send (§7.9, §9.4)', () => {
     expect(card(r2).standing).toMatchObject({ phase: 'confirmed', rank: 342, n: 1065, pct: 32.2, was: 360, exact: false, candidate: false, stamp: null });
   });
 
-  it('never stamps or calls a rank exact without the server\'s own number (an old server answers accepted without rank)', async () => {
+  it('never stamps or calls a rank exact without the server\'s own number (an answer without rank drops the local top-100 guess)', async () => {
     const api = new FakeApi();
     api.bootRes = bootWith({ '1-1': {} });
     answerAtOnce(api, { rank: undefined, was: undefined, counted: undefined });
     const r = await rig(api);
     await r.app.playReplay('1-1', REPLAY);
-    expect(card(r).standing).toMatchObject({ phase: 'confirmed', rank: 1, exact: false, stamp: null });
+    expect(card(r).standing).toMatchObject({ phase: 'confirmed', rank: null, exact: false, candidate: false, stamp: null });
+  });
+
+  it('accepted / notBetter with rank null (outside the top, stale boot): the local 約51 is dropped, not kept as confirmed', async () => {
+    // Stale boot: cutoff above SCORE (so the PB is a local candidate), 50 counted players; the server's top is full.
+    const h = new Array<number>(LEVEL_HIST_BINS).fill(0);
+    for (let i = 0; i < 50; i++) h[levelBin(60 + i)]! += 1;
+    const top: BootBoard['top'] = Array.from({ length: 10 }, (_, i) => [`c${String(i).padStart(15, '0')}`, 1, 60 + i, -1, 1, 1]);
+    for (const status of ['accepted', 'notBetter'] as const) {
+      const api = new FakeApi();
+      api.bootRes = bootWith({ '1-1': { n: 50, cutoff: SCORE + 60, top, hist: trimHist(h) } });
+      let reply!: (x: SubmitResponse | null) => void;
+      api.flushReply = (reason) => (reason === 'rankIn' ? new Promise((ok) => { reply = ok; }) : Promise.resolve(null));
+      const r = await rig(api);
+      await r.app.playReplay('1-1', REPLAY);
+      expect(card(r).standing).toMatchObject({ phase: 'pending', rank: 51, candidate: true, exact: false });
+      const { run, result } = answerFor(api, K11, { status, rank: null, n: 51, cutoff: SCORE - 5, aiBeaten: true });
+      api.answer([run], [result]);
+      reply({ ok: true, lite: false, results: [result] });
+      await ticks();
+      expect(card(r).standing, status).toMatchObject({ phase: 'confirmed', rank: null, candidate: false, exact: false, stamp: null });
+    }
   });
 
   it('a PB outside the top 100: no rank-in; a local estimate (>= 101, with 上位 %) from the boot histogram', async () => {
