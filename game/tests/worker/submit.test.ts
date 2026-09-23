@@ -1,7 +1,9 @@
-// POST /api/submit on level boards: verification (§7.8 steps 2-5) and ranking writes (steps 6-7). Owner: O9.
+// POST /api/submit on level boards: verification (§7.8 steps 2-5), ranking writes (steps 6-7), the level histogram
+// position (plays.t120) and the soft / lite valves (steps 9b, 10). Owner: O9.
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SubmitResponse, SubmitResult, SubmitRun } from '../../src/shared/api';
+import { LEVEL_HIST_BINS, estimateLevelRank, levelBin, levelPct, stampKind, trimHist } from '../../src/shared/rank';
 import { ReplayFlag, simulateReplay } from '../../src/sim/replay';
 import { BALL_R, SIM_VERSION } from '../../src/sim/constants';
 import { levelHash } from '../../src/sim/level';
@@ -10,8 +12,8 @@ import { jstDate, pendingForTest } from '../../worker/limits';
 import { setParOverrideForTest } from '../../worker/verify';
 import { runFingerprint } from '../../worker/dup';
 import {
-  NOW, awayFromMinuteBoundary, boardRow, encode, fakeRows, freshIp, level, levelKey, pidhOf, proxyDb, request, resetAll,
-  playRow, runRow, seedBoard, submit, successBot, wallBots, type BotRun,
+  BOARD_UPDATE_SQL, NOW, awayFromMinuteBoundary, boardRow, dailyAt, encode, fakeDailyPool, fakeRows, freshIp, level, levelKey, pidhOf,
+  proxyDb, request, resetAll, playRow, runRow, seedBoard, seedPlays, submit, successBot, wallBots, type BotRun,
 } from './helpers';
 
 const P11 = level('1-1').physics;
@@ -38,6 +40,27 @@ function sameTimePair(): [BotRun, BotRun] {
   if (!pair) throw new Error('sameTimePair: no tie found');
   return pair;
 }
+let binPair: [BotRun, BotRun] | null = null;
+/** [slower, faster]: two 1-1 runs in the same level histogram bin (the mid run and a later start of it). */
+function sameBinPair(): [BotRun, BotRun] {
+  if (binPair) return binPair;
+  const faster = b().mid;
+  for (let w = 1; w <= 12 && !binPair; w++) {
+    const r = successBot(P11, { moveS: 6, waitTicks: w });
+    if (r.t120 > faster.t120 && levelBin(r.t120) === levelBin(faster.t120)) binPair = [r, faster];
+  }
+  if (!binPair) throw new Error('sameBinPair: none found');
+  return binPair;
+}
+/** The dense level histogram of `times`. */
+function histOf(times: readonly number[]): number[] {
+  const h = new Array<number>(LEVEL_HIST_BINS).fill(0);
+  for (const t of times) h[levelBin(t)]! += 1;
+  return h;
+}
+const setWr = async (n: number, k = 'wr'): Promise<void> => {
+  await env.DB.prepare('INSERT INTO counters (k, n) VALUES (?, ?)').bind(`${k}:${jstDate(NOW)}`, n).run();
+};
 const run11 = (bot: BotRun, over: Partial<SubmitRun> = {}): SubmitRun =>
   ({ board: KEY, level: '1-1', replay: bot.replay, t120: bot.t120, device: 1, ...over });
 
@@ -61,8 +84,8 @@ describe('accepted', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('Cache-Control')).toBe('no-store');
     expect(await res.json()).toEqual({
-      ok: true, lite: false,
-      results: [{ board: KEY, status: 'accepted', rank: 1, n: 1, cutoff: null, aiBeaten: false }],
+      ok: true, lite: false, soft: false,
+      results: [{ board: KEY, status: 'accepted', rank: 1, n: 1, cutoff: null, aiBeaten: false, was: null, counted: bot.t120 }],
     });
     const br = (await boardRow(KEY))!;
     expect(br.ver).toBe(1);
@@ -76,7 +99,8 @@ describe('accepted', () => {
     expect(rr.gap_um).toBeNull();
     expect(rr.peak_cn).toBeGreaterThan(0);
     expect(b64urlEncode(Uint8Array.from(rr.replay!))).toBe(bot.replay);
-    expect(pendingForTest().wr).toBeGreaterThanOrEqual(3);
+    expect(await playRow(KEY, pidhOf(1))).toEqual({ created: NOW, t120: bot.t120 });   // the histogram position
+    expect(pendingForTest().wr).toBeGreaterThanOrEqual(4);
   });
 
   it('keeps the earlier submission ahead on equal times and counts n once per person', async () => {
@@ -217,20 +241,56 @@ describe('rejected', () => {
 });
 
 describe('top 100', () => {
-  it('unranked below the 100th without beating the AI: only the plays row is written', async () => {
+  it('unranked below the 100th without beating the AI: only the plays row (with its time) is written', async () => {
     setParOverrideForTest({ '1-1': 100 });
     await seedBoard(KEY, fakeRows(100, 10));
     const p = proxyDb(env.DB);
+    const t = b().fast.t120;
     const res = await submit(request(1, [run11(b().fast)]), { env: { DB: p.db } });
-    expect((await results(res))[0]).toEqual({ board: KEY, status: 'unranked', rank: null, n: 100, cutoff: 109, aiBeaten: false });
-    expect(p.sqls.every((s) => s.startsWith('SELECT') || s.startsWith('INSERT OR IGNORE INTO plays'))).toBe(true);
+    // No level histogram yet (NULL until the first rebuild): no rank estimate.
+    expect((await results(res))[0]).toEqual({ board: KEY, status: 'unranked', rank: null, n: 100, cutoff: 109, aiBeaten: false, was: null, counted: t });
+    expect(p.sqls.filter((x) => !x.startsWith('SELECT'))).toEqual([expect.stringMatching(/^INSERT INTO plays /)]);
     expect((await boardRow(KEY))!.ver).toBe(0);
     expect(await runRow(KEY, pidhOf(1))).toBeNull();
-    expect(await playRow(KEY, pidhOf(1))).not.toBeNull();
+    expect((await playRow(KEY, pidhOf(1)))!.t120).toBe(t);
     expect(pendingForTest().wr).toBe(1);
   });
 
-  it('plays: one row per board and player, kept from the first verified run', async () => {
+  it('with a level histogram (500 counted) the out-of-top rank is the shared estimate, with pct; hist is not written', async () => {
+    setParOverrideForTest({ '1-1': 100 });
+    const rows = fakeRows(100, 10);
+    const h = histOf([...rows.map((r) => r[2]), ...Array.from({ length: 400 }, (_, i) => 300 + 3 * i)]);
+    await seedBoard(KEY, rows, { n: 500, hist: trimHist(h) });
+    const t = b().fast.t120;
+    const e = estimateLevelRank(h, 109, t, null)!;
+    expect(e.rank).toBeGreaterThan(100);
+    const n = Math.max(500, e.n, e.rank);
+    expect(await one(1, run11(b().fast))).toEqual({
+      board: KEY, status: 'unranked', rank: e.rank, n, cutoff: 109, aiBeaten: false, was: null, counted: t, pct: levelPct(e.rank, n),
+    });
+    const br = (await boardRow(KEY))!;
+    expect([br.hist, br.n, br.ver]).toEqual([JSON.stringify(trimHist(h)), 500, 0]);
+  });
+
+  it('out of the top: a resend is notBetter; a faster run in the same bin writes nothing; a new bin writes 1 row', async () => {
+    setParOverrideForTest({ '1-1': 100 });
+    await seedBoard(KEY, fakeRows(100, 10));
+    const [slower, faster] = sameBinPair();
+    const { fast } = b();
+    expect(levelBin(fast.t120)).not.toBe(levelBin(faster.t120));
+    expect(await one(1, run11(slower))).toMatchObject({ status: 'unranked', counted: slower.t120 });
+    const w = pendingForTest().wr;
+    expect(await one(1, run11(slower))).toMatchObject({ status: 'notBetter', rank: null, counted: slower.t120 });
+    expect(await one(1, run11(faster))).toMatchObject({ status: 'unranked', rank: null, counted: slower.t120 });
+    expect(pendingForTest().wr).toBe(w);
+    expect((await playRow(KEY, pidhOf(1)))!.t120).toBe(slower.t120);
+    expect(await one(1, run11(fast))).toMatchObject({ status: 'unranked', counted: fast.t120 });
+    expect(pendingForTest().wr).toBe(w + 1);
+    expect((await playRow(KEY, pidhOf(1)))!.t120).toBe(fast.t120);
+    expect((await boardRow(KEY))!.ver).toBe(0);
+  });
+
+  it('plays: one row per board and player; its created stays from the first verified run', async () => {
     setParOverrideForTest({ '1-1': 100 });
     await seedBoard(KEY, fakeRows(100, 10));
     const first = await playRow(KEY, pidhOf(1));
@@ -250,11 +310,11 @@ describe('top 100', () => {
     expect(await playRow(KEY, pidhOf(1))).toBeNull();
   });
 
-  it('accepts a first AI-beaten run below the 100th with a NULL replay; a second one is unranked', async () => {
+  it('accepts a first AI-beaten run below the 100th with a NULL replay; a faster one in a new bin moves only plays', async () => {
     setParOverrideForTest({ '1-1': 5000 });
     await seedBoard(KEY, fakeRows(100, 10));
     const { fast, slow } = b();
-    expect(await one(1, run11(slow))).toEqual({ board: KEY, status: 'accepted', rank: null, n: 101, cutoff: 109, aiBeaten: true });
+    expect(await one(1, run11(slow))).toEqual({ board: KEY, status: 'accepted', rank: null, n: 101, cutoff: 109, aiBeaten: true, was: null, counted: slow.t120 });
     const br = (await boardRow(KEY))!;
     expect(br.ai_beaten).toBe(1);
     expect(br.n).toBe(101);
@@ -263,10 +323,65 @@ describe('top 100', () => {
     const rr = (await runRow(KEY, pidhOf(1)))!;
     expect(rr.t120).toBe(slow.t120);
     expect(rr.replay).toBeNull();
-    // Already counted as AI-beaten: a better run that still misses the top 100 is unranked and not written.
-    expect(await one(1, run11(fast))).toMatchObject({ status: 'unranked', rank: null, aiBeaten: true });
+    expect((await playRow(KEY, pidhOf(1)))!.t120).toBe(slow.t120);
+    // Already counted as AI-beaten: a better run that still misses the top 100 is unranked; only its histogram position moves.
+    expect(levelBin(fast.t120)).not.toBe(levelBin(slow.t120));
+    expect(await one(1, run11(fast))).toMatchObject({ status: 'unranked', rank: null, aiBeaten: true, counted: fast.t120 });
     expect((await boardRow(KEY))!.ai_beaten).toBe(1);
+    expect((await boardRow(KEY))!.ver).toBe(br.ver);
     expect((await runRow(KEY, pidhOf(1)))!.t120).toBe(slow.t120);
+    expect((await playRow(KEY, pidhOf(1)))!.t120).toBe(fast.t120);
+  });
+
+  it('a top-100 entry answers was null (stamp in); an improvement answers the old exact rank (stamp up)', async () => {
+    await seedBoard(KEY, fakeRows(100, 400, 3));   // 400, 403, ..., 697
+    const { fast, mid } = b();
+    const r1 = await one(1, run11(mid));
+    expect(r1).toMatchObject({ status: 'accepted', rank: 87, was: null, counted: mid.t120 });
+    expect(stampKind(r1.status, r1.rank!, r1.was!)).toBe('in');
+    const r2 = await one(1, run11(fast));
+    expect(r2).toMatchObject({ status: 'accepted', rank: 29, was: 87, counted: fast.t120 });
+    expect(stampKind(r2.status, r2.rank!, r2.was!)).toBe('up');
+    expect((await boardRow(KEY))!.n).toBe(101);   // n + 1 once, for the new player
+  });
+
+  it('a level prev is ignored (level clients never send one; the answer is the same with it)', async () => {
+    setParOverrideForTest({ '1-1': 100 });
+    await seedBoard(KEY, fakeRows(100, 10));
+    const withPrev = await one(1, run11(b().fast, { prev: 5000 }));
+    expect(withPrev).toEqual(await one(2, run11(b().fast)));
+    expect((await playRow(KEY, pidhOf(1)))!.t120).toBe(b().fast.t120);
+  });
+
+  it('a level write never touches hist and adds to n: a rebuild between the read and the write is kept', async () => {
+    await seedBoard(KEY, fakeRows(5, 2000), { n: 7, hist: [0, 0, 3, 4] });
+    const p = proxyDb(env.DB, async (sqls) => {
+      // the hourly rebuild's write (no ver bump) lands between this request's read and its write batch
+      if (sqls.some((x) => x.startsWith(BOARD_UPDATE_SQL))) await env.DB.prepare('UPDATE boards SET n = 12 WHERE board = ?').bind(KEY).run();
+    });
+    expect((await results(await submit(request(1, [run11(b().fast)]), { env: { DB: p.db } })))[0]).toMatchObject({ status: 'accepted', rank: 1 });
+    const br = (await boardRow(KEY))!;
+    expect([br.n, br.hist, br.ver]).toEqual([13, '[0,0,3,4]', 1]);
+  });
+
+  it('SQL_READ_OWN: exactly one row, primary-key reads only (1,000 plays rows on the board)', async () => {
+    setParOverrideForTest({ '1-1': 100 });
+    await seedBoard(KEY, fakeRows(100, 10));
+    await seedPlays(KEY, 1000);
+    const p = proxyDb(env.DB);
+    await submit(request(1, [run11(b().fast)]), { env: { DB: p.db } });
+    const sql = p.sqls.find((x) => x.startsWith('SELECT r.t120'))!;
+    const cases: [string, object][] = [
+      [pidhOf(1), { run_t120: null, has_run: 0, has_play: 1, play_t120: b().fast.t120 }],
+      ['p000000000000005', { run_t120: null, has_run: 0, has_play: 1, play_t120: 1005 }],
+      [fakeRows(1, 10)[0]![0], { run_t120: 10, has_run: 1, has_play: 0, play_t120: null }],
+      ['0123456789abcdef', { run_t120: null, has_run: 0, has_play: 0, play_t120: null }],
+    ];
+    for (const [pidh, row] of cases) {
+      const r = await env.DB.prepare(sql).bind(KEY, pidh).all();
+      expect(r.results).toEqual([row]);
+      expect(r.meta.rows_read).toBeLessThanOrEqual(3);
+    }
   });
 
   it('sets the replay of the player who falls to rank 101 to NULL', async () => {
@@ -284,22 +399,68 @@ describe('top 100', () => {
   });
 });
 
+describe('soft valve (50k, §7.8 step 9b)', () => {
+  it('an out-of-top first send writes nothing: unranked, counted null, soft: true', async () => {
+    await setWr(50_001);
+    setParOverrideForTest({ '1-1': 100 });
+    await seedBoard(KEY, fakeRows(100, 10));
+    const p = proxyDb(env.DB);
+    const j = (await (await submit(request(1, [run11(b().fast)]), { env: { DB: p.db } })).json()) as SubmitResponse;
+    expect([j.lite, j.soft]).toEqual([false, true]);
+    expect(j.results[0]).toEqual({ board: KEY, status: 'unranked', rank: null, n: 100, cutoff: 109, aiBeaten: false, was: null, counted: null });
+    expect(p.sqls.every((x) => x.startsWith('SELECT'))).toBe(true);
+    expect(await playRow(KEY, pidhOf(1))).toBeNull();
+    expect(pendingForTest().wr).toBe(0);
+  });
+
+  it('a top-100 entry still writes, its plays row included', async () => {
+    await setWr(50_001, 'req');
+    await seedBoard(KEY, fakeRows(100, 1100));
+    expect(await one(1, run11(b().fast))).toMatchObject({ status: 'accepted', rank: 1, counted: b().fast.t120 });
+    expect((await playRow(KEY, pidhOf(1)))!.t120).toBe(b().fast.t120);
+    expect((await runRow(KEY, pidhOf(1)))!.t120).toBe(b().fast.t120);
+  });
+
+  it('a daily first send is accepted without its population row', async () => {
+    const d = dailyAt(fakeDailyPool(), NOW);
+    const drun: SubmitRun = { board: d.key, level: d.levelId, replay: b().fast.replay, t120: b().fast.t120, device: 1, tries: 1, balls: 'O----' };
+    await setWr(50_001);
+    expect(await one(1, drun)).toMatchObject({ status: 'accepted', rank: 1 });
+    expect(await playRow(d.key, pidhOf(1))).toBeNull();
+    // Not soft: the same first send brings its population row (no time on daily boards).
+    await resetAll();
+    expect(await one(1, drun)).toMatchObject({ status: 'accepted', rank: 1 });
+    expect(await playRow(d.key, pidhOf(1))).toEqual({ created: NOW, t120: null });
+  });
+});
+
 describe('lite safety valve', () => {
   it('above 80k estimated writes only level runs reaching the top 10 are accepted', async () => {
-    await env.DB.prepare('INSERT INTO counters (k, n) VALUES (?, ?)').bind(`wr:${jstDate(NOW)}`, 80_001).run();
+    await setWr(80_001);
     await seedBoard(KEY, fakeRows(10, 10));
     const { fast } = b();
     const res = (await (await submit(request(1, [run11(fast)]))).json()) as SubmitResponse;
-    expect(res.lite).toBe(true);
+    expect([res.lite, res.soft]).toEqual([true, true]);
     expect(res.results[0]).toEqual({ board: KEY, status: 'rejected', reason: 'lite' });
+    expect(await playRow(KEY, pidhOf(1))).toBeNull();
     await env.DB.prepare('DELETE FROM runs').run();
     await env.DB.prepare('DELETE FROM boards').run();
     await seedBoard(KEY, fakeRows(9, 10));
-    expect(await one(1, run11(fast))).toMatchObject({ status: 'accepted', rank: 10 });
+    expect(await one(1, run11(fast))).toMatchObject({ status: 'accepted', rank: 10, counted: fast.t120 });
+  });
+
+  it('an out-of-top level run is rejected lite (it stays queued on the client), not unranked, and writes no plays row', async () => {
+    await setWr(80_001);
+    setParOverrideForTest({ '1-1': 100 });
+    await seedBoard(KEY, fakeRows(100, 10));
+    const p = proxyDb(env.DB);
+    expect((await results(await submit(request(1, [run11(b().fast)]), { env: { DB: p.db } })))[0]).toEqual({ board: KEY, status: 'rejected', reason: 'lite' });
+    expect(p.sqls.every((x) => x.startsWith('SELECT'))).toBe(true);
+    expect(await playRow(KEY, pidhOf(1))).toBeNull();
   });
 
   it('also triggers on estimated requests', async () => {
-    await env.DB.prepare('INSERT INTO counters (k, n) VALUES (?, ?)').bind(`req:${jstDate(NOW)}`, 80_001).run();
+    await setWr(80_001, 'req');
     await seedBoard(KEY, fakeRows(10, 10));
     expect(await one(1, run11(b().fast))).toMatchObject({ status: 'rejected', reason: 'lite' });
   });

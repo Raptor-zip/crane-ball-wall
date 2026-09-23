@@ -1,14 +1,16 @@
 // GET /api/boot?day=<dayIndex> (GAME_DESIGN.md §7.7). Owner: O9.
 // 30 s isolate memo -> Cache API (custom domains only; a no-op on workers.dev; skipped by local dev) -> D1:
 // one `WHERE board IN (...)` statement for the 18 level boards + today's daily, and the counters row(s).
+// Level boards carry their histogram (written by the hourly rebuild, worker/hist.ts) once it has one: 0 extra rows read.
 import type { Env } from '../index';
 import { Db, apiError, blobBytes, cutoffOf, json, parseHist, parseTop, publicRow } from '../db';
-import { allowRequest, clientKey, countersStatement, estimateUsage, isLite, nowMs } from '../limits';
+import { allowRequest, clientKey, countersStatement, estimateUsage, isLite, isSoft, nowMs } from '../limits';
 import { dailyTarget, levelTargets, type Target } from '../verify';
 import { dayIndexAt, jstDayNumber } from '../../src/shared/daily';
 import { b64urlEncode } from '../../src/sim/b64';
 import { SIM_VERSION } from '../../src/sim/constants';
 import { BOOT_TOP_N, HIST_BINS, type BootBoard, type BootDaily, type BootResponse } from '../../src/shared/api';
+import { LEVEL_HIST_BINS, sumHist, trimHist } from '../../src/shared/rank';
 
 export const BOOT_CACHE_CONTROL = 'public, max-age=60, stale-while-revalidate=300';
 export const BOOT_MEMO_MS = 30_000;
@@ -90,10 +92,15 @@ async function buildBoot(env: Env, now: number, day: number): Promise<BootRespon
   for (const t of levels) {
     const r = rows.get(t.key);
     const top = parseTop(r?.top);
-    boards[t.levelId] = {
+    const b: BootBoard = {
       key: t.key, n: r?.n ?? 0, aiBeaten: r?.ai_beaten ?? 0, par: t.par,
       cutoff: cutoffOf(top), top: top.slice(0, BOOT_TOP_N).map(publicRow), wr: wrString(r?.wr),
     };
+    if (r?.hist) {
+      const h = parseHist(r.hist, LEVEL_HIST_BINS);
+      if (sumHist(h) > 0) b.hist = trimHist(h);
+    }
+    boards[t.levelId] = b;
   }
   let dailyOut: BootDaily;
   if (daily) {
@@ -106,7 +113,7 @@ async function buildBoot(env: Env, now: number, day: number): Promise<BootRespon
     dailyOut = { key: '', n: 0, cleared: 0, aiBeaten: 0, par: 0, top: [], hist: new Array<number>(HIST_BINS).fill(0), wr: null };
   }
   return {
-    v: 1, sim: SIM_VERSION, now, day, lite: isLite(usage), readOnly: env.READ_ONLY === '1',
+    v: 1, sim: SIM_VERSION, now, day, lite: isLite(usage), soft: isSoft(usage), readOnly: env.READ_ONLY === '1',
     boards, daily: dailyOut,
   };
 }

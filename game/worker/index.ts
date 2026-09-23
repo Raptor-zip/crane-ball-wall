@@ -1,11 +1,12 @@
-// Worker entry: /api/* router and cron (GAME_DESIGN.md §7.7, §10.5). Owner: O9.
+// Worker entry: /api/* router and the two crons (GAME_DESIGN.md §7.7, §10.5). Owner: O9.
 // Static assets never reach this code (assets.run_worker_first = ["/api/*"]), so they cost no Worker requests.
 import { handleBoot } from './routes/boot';
 import { handleSubmit } from './routes/submit';
 import { handleBoard } from './routes/board';
 import { handleGhost } from './routes/ghost';
 import { handleBench } from './routes/bench';
-import { runCron } from './cron';
+import { CRON_HIST, runCron } from './cron';
+import { runHistRebuild } from './hist';
 import { warmup } from './warmup';
 import { Db, apiError } from './db';
 import { counterFlushDue, flushCounters, noteRequest, nowMs } from './limits';
@@ -67,9 +68,12 @@ export default {
     return res;
   },
   async scheduled(controller, env, ctx): Promise<void> {
-    ctx.waitUntil(runCron(env, controller.scheduledTime).then(
+    // CRON_HIST: the hourly level histogram rebuild; anything else (CRON_DAILY): the daily runs cleanup.
+    const hist = controller.cron === CRON_HIST;
+    const job: Promise<unknown> = hist ? runHistRebuild(env, controller.scheduledTime) : runCron(env, controller.scheduledTime);
+    ctx.waitUntil(job.then(
       () => undefined,
-      (e: unknown) => console.error(JSON.stringify({ evt: 'cron-failed', err: String(e) })),
+      (e: unknown) => console.error(JSON.stringify({ evt: hist ? 'hist-rebuild-failed' : 'cron-failed', err: String(e) })),
     ));
   },
 } satisfies ExportedHandler<Env>;

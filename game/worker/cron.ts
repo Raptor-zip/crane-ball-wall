@@ -1,9 +1,15 @@
-// Daily cron 30 15 * * * (00:30 JST): delete daily runs rows older than 15 days (GAME_DESIGN.md §7.7). Owner: O9.
-// A primary-key range DELETE (LIKE would not use the key). boards rows of old dailies are small and stay.
+// Cron triggers (GAME_DESIGN.md §7.7 構成). Owner: O9.
+// Daily 30 15 * * * (00:30 JST): delete daily runs rows older than 15 days. A primary-key range DELETE (LIKE would not
+// use the key). boards rows of old dailies are small and stay.
+// Hourly 7 * * * *: the level histogram rebuild (worker/hist.ts). worker/index.ts scheduled() dispatches on the cron
+// string; both must match wrangler.jsonc "triggers.crons" (tests/data/wrangler_crons.test.ts).
 import type { Env } from './index';
 import { Db, rowsWritten } from './db';
 import { jstDate } from './limits';
 import { dayIndexAt } from '../src/shared/daily';
+
+export const CRON_DAILY = '30 15 * * *';
+export const CRON_HIST = '7 * * * *';
 
 export const DAILY_KEEP_DAYS = 15;
 

@@ -5,6 +5,7 @@
 //   worker-4  a forged daily `prev` resent again and again
 //   worker-5  submits that end early still reach the request counter
 //   worker-6  a write batch that committed before its error surfaced is answered, not deferred
+//   plays     the level histogram position (plays.t120): one row per identity, only faster, once per bin
 import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -19,9 +20,10 @@ import { allowRequest, jstDate, pendingForTest, rateKey } from '../../worker/lim
 import { decide, type DecideInput } from '../../worker/routes/submit';
 import { setParOverrideForTest } from '../../worker/verify';
 import type { Env } from '../../worker/index';
+import { levelBin } from '../../src/shared/rank';
 import {
   BOARD_UPDATE_SQL, NOW, awayFromMinuteBoundary, boardRow, call, dailyAt, encode, fakeDailyPool, fakeRows, level, levelKey,
-  pidhOf, proxyDb, request, resetAll, runRow, seedBoard, submit, successBot, type BotRun,
+  pidhOf, playRow, proxyDb, request, resetAll, runRow, seedBoard, submit, successBot, type BotRun,
 } from './helpers';
 
 const P11 = level('1-1').physics;
@@ -331,10 +333,10 @@ describe('worker-4: a forged daily prev', () => {
 
   it('decide keeps ai_beaten <= cleared <= n whatever prev says', () => {
     const d: DecideInput = {
-      kind: 'D', board: 'D:00009:00000000:s1', par: 3000, lite: false, now: NOW, pidh: 'fresh', nameSeed: 1, device: 1,
+      kind: 'D', board: 'D:00009:00000000:s1', par: 3000, lite: false, soft: false, now: NOW, pidh: 'fresh', nameSeed: 1, device: 1,
       t120: 500, gapUm: null, peakCn: 1000, replay: null, fp: null, prev: MAX_RANKED_T120,
       state: { exists: true, ver: 3, top: fakeRows(100, 10), n: 5, cleared: 5, aiBeaten: 5, hist: new Array<number>(150).fill(0) },
-      own: null,
+      own: null, play: null,
     };
     const r = decide(d);
     expect(r.write).toBe(true);
@@ -371,7 +373,7 @@ describe('worker-6: a committed write batch whose answer was lost', () => {
       prepare: (sql: string) => real.prepare(sql),
       batch: async (stmts: D1PreparedStatement[]) => {
         const r = await real.batch(stmts);
-        // the write batch (boards INSERT / UPDATE first); the read batch writes only its trailing plays row
+        // the write batch (boards INSERT / UPDATE first); the read batch writes nothing
         if (lost === 0 && r.slice(0, 2).some((x) => (x.meta?.changes ?? 0) > 0)) {
           lost++;
           throw new Error('D1_ERROR: Network connection lost.');
@@ -388,6 +390,43 @@ describe('worker-6: a committed write batch whose answer was lost', () => {
     err.mockRestore();
   });
 
+  it('a level run: the guarded plays row is written once, and the resend is notBetter with counted = t', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const real = env.DB;
+    let lost = 0;
+    const flaky = {
+      prepare: (sql: string) => real.prepare(sql),
+      batch: async (stmts: D1PreparedStatement[]) => {
+        const r = await real.batch(stmts);
+        if (lost === 0 && r.slice(0, 2).some((x) => (x.meta?.changes ?? 0) > 0)) {
+          lost++;
+          throw new Error('D1_ERROR: Network connection lost.');
+        }
+        return r;
+      },
+    } as unknown as D1Database;
+    const t = wr().t120;
+    expect(await first(await submit(request(1, [run11(wr())]), { env: { DB: flaky } }))).toMatchObject({ status: 'accepted', rank: 1, counted: t });
+    expect(lost).toBe(1);
+    const plays = await env.DB.prepare('SELECT COUNT(*) AS n, MIN(t120) AS t FROM plays WHERE board = ?').bind(KEY).first<{ n: number; t: number }>();
+    expect([plays!.n, plays!.t]).toEqual([1, t]);
+    expect(await first(await submit(request(1, [run11(wr())])))).toMatchObject({ status: 'notBetter', rank: 1, counted: t });
+    err.mockRestore();
+  });
+
+  it('a level write batch that failed without committing leaves no plays time behind: the resend still enters the top', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let fail = true;
+    const p = proxyDb(env.DB, async (sqls) => {
+      if (fail && sqls.some((s) => s.startsWith(BOARD_UPDATE_SQL))) throw new Error('D1_ERROR: simulated');
+    });
+    expect(await first(await submit(request(1, [run11(wr())]), { env: { DB: p.db } }))).toMatchObject({ status: 'deferred' });
+    expect(await playRow(KEY, pidhOf(1))).toBeNull();
+    fail = false;
+    expect(await first(await submit(request(1, [run11(wr())])))).toMatchObject({ status: 'accepted', rank: 1, counted: wr().t120 });
+    err.mockRestore();
+  });
+
   it('a write batch that failed without committing is still deferred', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const p = proxyDb(env.DB, async (sqls) => {
@@ -397,5 +436,57 @@ describe('worker-6: a committed write batch whose answer was lost', () => {
     expect(p.sqls).toContain('SELECT tok FROM boards WHERE board = ?');
     expect((await boardRow(dailyAt(POOL, NOW).key))?.n ?? 0).toBe(0);
     err.mockRestore();
+  });
+});
+
+// ---- plays: the level histogram position ----
+
+describe('plays: the level histogram position (plays.t120)', () => {
+  beforeEach(async () => {
+    setParOverrideForTest({ '1-1': 100 });   // nobody beats the "AI": every run below the 100th is out of the top
+    await seedBoard(KEY, fakeRows(100, 10));
+  });
+  const slow = (): BotRun => successBot(P11, { moveS: 10 });
+
+  it('30 fresh secrets posting one slow valid run write 30 plays rows in total (1 row each), nothing else', async () => {
+    const p = proxyDb(env.DB);
+    const before = pendingForTest().wr;
+    for (let i = 0; i < 30; i++) {
+      expect(await first(await submit(freshBody([run11(slow())], i), { env: { DB: p.db } }))).toMatchObject({ status: 'unranked', counted: slow().t120 });
+    }
+    const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM plays WHERE board = ? AND t120 = ?').bind(KEY, slow().t120).first<{ n: number }>();
+    expect(n!.n).toBe(30);
+    expect(p.sqls.filter((s) => !s.startsWith('SELECT'))).toHaveLength(30);
+    expect(pendingForTest().wr - before).toBe(30);
+    const br = (await boardRow(KEY))!;
+    expect([br.ver, br.n]).toEqual([0, 100]);
+  });
+
+  it('one identity cannot move its time slower, and moves it at most once per bin', async () => {
+    const fast = wr(), mid = successBot(P11, { moveS: 6 });
+    // Ever-faster runs inside mid's bin, slowest first: only the first one writes.
+    const inBin: BotRun[] = [];
+    for (let w = 12; w >= 0; w--) {
+      const r = w === 0 ? mid : successBot(P11, { moveS: 6, waitTicks: w });
+      if (levelBin(r.t120) === levelBin(mid.t120) && (inBin.length === 0 || r.t120 < inBin.at(-1)!.t120)) inBin.push(r);
+    }
+    expect(inBin.length).toBeGreaterThanOrEqual(3);
+    const p = proxyDb(env.DB);
+    for (const r of inBin) await submit(request(1, [run11(r)]), { env: { DB: p.db } });
+    expect(p.sqls.filter((s) => s.startsWith('INSERT INTO plays'))).toHaveLength(1);
+    expect((await playRow(KEY, pidhOf(1)))!.t120).toBe(inBin[0]!.t120);
+    // A faster bin moves it; a slower run after that is notBetter and leaves it.
+    expect(await first(await submit(request(1, [run11(fast)])))).toMatchObject({ status: 'unranked', counted: fast.t120 });
+    expect(await first(await submit(request(1, [run11(slow())])))).toMatchObject({ status: 'notBetter', counted: fast.t120 });
+    expect((await playRow(KEY, pidhOf(1)))!.t120).toBe(fast.t120);
+    // The statement itself: a slower time, a NULL time and a wrong tok change nothing.
+    const upsert = p.sqls.find((s) => s.startsWith('INSERT INTO plays'))!;
+    const changes = async (...a: unknown[]): Promise<number> => (await env.DB.prepare(upsert).bind(...a).run()).meta.changes;
+    expect(await changes(KEY, pidhOf(1), NOW, fast.t120 + 500, null)).toBe(0);
+    expect(await changes(KEY, pidhOf(1), NOW, null, null)).toBe(0);
+    expect(await changes(KEY, pidhOf(1), NOW, 20, 'not-the-tok')).toBe(0);
+    expect(await changes(KEY, pidhOf(2), NOW, 20, 'not-the-tok')).toBe(0);
+    expect((await playRow(KEY, pidhOf(1)))!.t120).toBe(fast.t120);
+    expect(await playRow(KEY, pidhOf(2))).toBeNull();
   });
 });

@@ -3,11 +3,11 @@ import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SubmitResponse, SubmitRun } from '../../src/shared/api';
 import { DAILY_EPOCH, DAY_MS } from '../../src/shared/daily';
-import { Db } from '../../worker/db';
+import { Db, STATEMENTS_PER_RUN } from '../../worker/db';
 import { setSubmitIsolateForTest } from '../../worker/routes/submit';
 import {
   BOARD_UPDATE_SQL, NOW, boardRow, concurrentWrite, dailyAt, fakeDailyPool, fakeRows, level, levelKey, longBot, pidhOf,
-  proxyDb, request, resetAll, runRow, seedBoard, submit, successBot, wallBots, type BotRun,
+  playRow, proxyDb, request, resetAll, runRow, seedBoard, submit, successBot, wallBots, type BotRun,
 } from './helpers';
 
 const POOL = fakeDailyPool();
@@ -76,7 +76,7 @@ describe('optimistic lock (steps 7-8)', () => {
     expect((await runRow(KEY, pidhOf(1)))!.t120).toBe(bots().short.t120);
   });
 
-  it('two conflicts in a row -> deferred, and the EXISTS(tok) guard kept runs untouched', async () => {
+  it('two conflicts in a row -> deferred, and the EXISTS(tok) guard kept runs and plays untouched', async () => {
     const p = proxyDb(env.DB, async (sqls) => {
       if (sqls.some((s) => s.startsWith(BOARD_UPDATE_SQL))) await concurrentWrite(KEY);
     });
@@ -86,6 +86,10 @@ describe('optimistic lock (steps 7-8)', () => {
     expect(br.tok).toBe('other');
     expect(br.top).toBe('[]');
     expect(await runRow(KEY, pidhOf(1))).toBeNull();
+    // Both write batches carried the plays upsert; neither wrote it, so the resend is not taken for notBetter.
+    expect(p.sqls.filter((s) => s.startsWith('INSERT INTO plays'))).toHaveLength(2);
+    expect(await playRow(KEY, pidhOf(1))).toBeNull();
+    expect(await statuses(await submit(request(1, [lvl(bots().short)])))).toEqual(['accepted']);
   });
 
   it('a conflict never lets the runs write through when another request of the same ver won', async () => {
@@ -103,6 +107,7 @@ describe('optimistic lock (steps 7-8)', () => {
 
 describe('D1 statement budget (step 1)', () => {
   it('Db.canStartRun: used + 13 + 1 <= 49', () => {
+    expect(STATEMENTS_PER_RUN).toBe(13);
     const db = new Db(env.DB);
     db.used = 35;
     expect(db.canStartRun()).toBe(true);
@@ -126,10 +131,47 @@ describe('D1 statement budget (step 1)', () => {
     });
     const res = await submit(request(1, runs), { env: { DB: p.db } });
     expect(await statuses(res)).toEqual(['deferred', 'deferred', 'deferred', 'deferred']);
-    // counters read + 4 runs x 2 attempts x (read 2 + UPDATE + upsert + drop) = 41 (+1 if the counters flush).
-    expect(p.count()).toBeGreaterThanOrEqual(41);
+    // counters read + 3 runs x 2 attempts x (read 2 + UPDATE + upsert + drop + plays) = 37 (+1 if the counters flush);
+    // then 37 + 13 + 1 > 49, so the budget defers the 4th run before it starts.
+    expect(p.count()).toBeGreaterThanOrEqual(37);
     expect(p.count()).toBeLessThan(50);
+    expect(p.sqls.filter((s) => s.startsWith('SELECT ver'))).toHaveLength(6);
     for (const r of runs) expect(await runRow(r.board, pidhOf(1))).toBeNull();
+  });
+
+  it('per run: attempt 0 uses <= 7 statements (read 2 + write 5), the retry <= 6 (read 2 + write 4)', async () => {
+    // Each read batch starts an attempt; everything up to the next read batch belongs to it.
+    const attempts = async (seed: () => Promise<void>, key: string, run: SubmitRun): Promise<number[]> => {
+      await resetAll({ pool: POOL });
+      await seed();
+      const sizes: number[] = [];
+      let conflicts = 0;
+      const p = proxyDb(env.DB, async (sqls) => {
+        if (sqls[0]!.startsWith('SELECT ver')) sizes.push(0);
+        sizes[sizes.length - 1]! += sqls.length;
+        if (conflicts === 0 && sqls.some((s) => s.startsWith(BOARD_UPDATE_SQL))) {
+          conflicts++;
+          await concurrentWrite(key);
+        }
+      });
+      expect(await statuses(await submit(request(1, [run]), { env: { DB: p.db } }))).toEqual(['accepted']);
+      return sizes;
+    };
+    const { short } = bots();
+    const d = dailyAt(POOL, NOW);
+    const all = [
+      // A new board: read 2 + INSERT boards + UPDATE + runs + plays, then read 2 + UPDATE + runs + plays.
+      await attempts(async () => undefined, KEY, lvl(short)),
+      await attempts(async () => undefined, d.key, daily(short)),
+      // A full board: read 2 + UPDATE + runs + drop + plays on both attempts.
+      await attempts(() => seedBoard(KEY, fakeRows(100, 3000)), KEY, lvl(short)),
+    ];
+    expect(all).toEqual([[6, 5], [6, 5], [6, 6]]);
+    for (const [first, retry] of all) {
+      expect(first!).toBeLessThanOrEqual(7);
+      expect(retry!).toBeLessThanOrEqual(6);
+      expect(first! + retry!).toBeLessThanOrEqual(STATEMENTS_PER_RUN);
+    }
   });
 
   it('defers the remaining runs when the next one could exceed the budget', async () => {

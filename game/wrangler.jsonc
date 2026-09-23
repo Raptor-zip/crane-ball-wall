@@ -25,7 +25,8 @@
     { "name": "RL_SUBMIT", "namespace_id": "1001", "simple": { "limit": 6, "period": 60 } },
     { "name": "RL_READ", "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } }
   ],
-  "triggers": { "crons": ["30 15 * * *"] },
+  // 00:30 JST daily cleanup + hourly level histogram rebuild (worker/cron.ts CRON_DAILY / CRON_HIST): 2 of the 5 free triggers.
+  "triggers": { "crons": ["30 15 * * *", "7 * * * *"] },
   "observability": { "enabled": true },
   "vars": { "DEV": "0", "READ_ONLY": "0" }
 }

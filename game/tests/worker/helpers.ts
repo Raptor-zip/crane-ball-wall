@@ -266,8 +266,16 @@ export async function boardRow(key: string): Promise<{ ver: number; top: string;
   return env.DB.prepare('SELECT * FROM boards WHERE board = ?').bind(key).first();
 }
 
-export async function playRow(key: string, pidh: string): Promise<{ created: number } | null> {
-  return env.DB.prepare('SELECT created FROM plays WHERE board = ? AND pidh = ?').bind(key, pidh).first();
+export async function playRow(key: string, pidh: string): Promise<{ created: number; t120: number | null } | null> {
+  return env.DB.prepare('SELECT created, t120 FROM plays WHERE board = ? AND pidh = ?').bind(key, pidh).first();
+}
+
+/** Inserts `count` plays rows on `key` with pidh "p<15 digits>" and t120 = t0 + i (one statement). */
+export async function seedPlays(key: string, count: number, t0: number | null = 1000): Promise<void> {
+  await env.DB.prepare(
+    'INSERT INTO plays (board, pidh, created, t120) WITH RECURSIVE s(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM s WHERE i < ?2 - 1) ' +
+      "SELECT ?1, 'p' || substr('000000000000000' || i, -15, 15), 1, ?3 + i FROM s",
+  ).bind(key, count, t0).run();
 }
 
 export async function runRow(key: string, pidh: string): Promise<{ t120: number | null; replay: number[] | null; tries: number; balls: string | null; name_seed: number; gap_um: number | null; peak_cn: number | null } | null> {

@@ -4,9 +4,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { dailyPendingRun, levelPendingRun, nTicksForScore, takeBatch, type PendingRun } from '../../src/net/outbox';
 import type { SubmitRequest, SubmitResponse } from '../../src/shared/api';
 import { DeviceTag } from '../../src/sim/replay';
+import { setParOverrideForTest } from '../../worker/verify';
 import {
-  NOW, dailyAt, fakeDailyPool, level, levelKey, pidhOf, request, resetAll, runRow, secretOf, submit, successBot,
-  wallBots, type BotRun,
+  NOW, dailyAt, fakeDailyPool, fakeRows, level, levelKey, pidhOf, playRow, request, resetAll, runRow, secretOf, seedBoard, submit,
+  successBot, wallBots, type BotRun,
 } from './helpers';
 
 const POOL = fakeDailyPool(3000);
@@ -56,5 +57,29 @@ describe('client outbox -> /api/submit', () => {
     const r2 = (await (await submit(request(7, forced, 4321))).json()) as SubmitResponse;
     expect(r2.results[0]).toMatchObject({ status: 'notBetter', rank: 1 });
     expect((await runRow(d.key, pidhOf(7)))!.balls).toBe('XOGXX');
+  });
+
+  it('a batch with a top-100 run first and an out-of-top level run is answered run by run (level answers carry counted)', async () => {
+    // The out-of-top run is what the client will send lazily (§7.9); the rank-in run rides first (BatchOptions.first, PR2:
+    // here the earlier queuedAt puts it there). The wire form is the current client's: v 1, no prev on level runs.
+    setParOverrideForTest({ '1-1': 100 });
+    await seedBoard(levelKey('1-1'), fakeRows(100, 10));
+    const b11: BotRun = successBot(level('1-1').physics, { moveS: 4.5 });
+    const [wall] = wallBots(1) as [{ levelId: string; bot: BotRun }];
+    const outbox: PendingRun[] = [
+      levelPendingRun(levelKey('1-1'), '1-1', b11.replay, b11.t120, DeviceTag.Mouse, NOW - 1000),
+      levelPendingRun(levelKey(wall.levelId), wall.levelId, wall.bot.replay, wall.bot.t120, DeviceTag.Keyboard, NOW - 2000),
+    ];
+    const runs = takeBatch(outbox);
+    expect(runs.map((r) => r.board)).toEqual([levelKey(wall.levelId), levelKey('1-1')]);
+    for (const r of runs) expect('prev' in r).toBe(false);
+    const j = (await (await submit({ v: 1, secret: secretOf(8), nameSeed: 99, runs } satisfies SubmitRequest)).json()) as SubmitResponse;
+    expect(j).toMatchObject({ ok: true, lite: false, soft: false });
+    expect(j.results).toEqual([
+      { board: levelKey(wall.levelId), status: 'accepted', rank: 1, n: 1, cutoff: null, aiBeaten: expect.any(Boolean), was: null, counted: wall.bot.t120 },
+      { board: levelKey('1-1'), status: 'unranked', rank: null, n: 100, cutoff: 109, aiBeaten: false, was: null, counted: b11.t120 },
+    ]);
+    expect((await playRow(levelKey('1-1'), pidhOf(8)))!.t120).toBe(b11.t120);
+    expect(await runRow(levelKey('1-1'), pidhOf(8))).toBeNull();
   });
 });

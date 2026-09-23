@@ -6,25 +6,29 @@
 //   3  replay decoding and limits (badReplay, tooLong)        verify.ts decodeRun
 //   4  re-simulation (mismatch)                               verify.ts simulateRun
 //   5  gap_um / peak_cn                                       verify.ts simulateRun
-//   6  read boards row + own runs row, rank in `top`, dups    decide(), dup.ts
-//      (and INSERT OR IGNORE the plays row: the play population, whatever the rank)
-//   7  one DB.batch: UPDATE boards (optimistic lock, per-request tok) + EXISTS-guarded runs writes
+//   6  read boards row + own runs and plays rows (one row),   decide(), dup.ts
+//      rank in `top`, dups; levels: notBetter against min(runs, plays.t120) first, then the level rules (1)-(5)
+//   7  one DB.batch: UPDATE boards (optimistic lock, per-request tok) + EXISTS-guarded runs and plays writes;
+//      a decision without a boards write runs its plays upsert (and the daily touch) as one small batch
 //   8  one retry on a ver conflict, then `deferred`
 //   9  isolate counters flushed every 50 rows / 100 requests
-//   10 lite safety valve
+//   9b soft valve (50k): optional writes stop (histogram moves, out-of-top placements, daily / dup plays rows)
+//   10 lite safety valve (80k): level runs other than top-10 entries are `rejected: lite`
 import type { Env } from '../index';
 import {
   Db, STATEMENTS_COUNTERS, STATEMENT_LIMIT, apiError, cutoffOf, json, parseHist, parseTop, randomTok, rowsWritten, type TopRow,
 } from '../db';
 import { isDuplicateRun, runFingerprint } from '../dup';
-import { counterFlushDue, countersStatement, estimateUsage, flushCounters, isLite, noteWrites, nowMs, allowRequest, clientKey } from '../limits';
+import {
+  counterFlushDue, countersStatement, estimateUsage, flushCounters, isLite, isSoft, noteWrites, nowMs, allowRequest, clientKey,
+} from '../limits';
 import { decodeRun, resolveBoard, simulateRun, type Target } from '../verify';
 import {
-  BOARD_TOP_N, MAX_RANKED_T120, NO_WALL_GAP_UM, SUBMIT_MAX_BYTES, SUBMIT_MAX_RUNS, histBin, pctFromHist,
+  BOARD_TOP_N, HIST_BINS, MAX_RANKED_T120, NO_WALL_GAP_UM, SUBMIT_MAX_BYTES, SUBMIT_MAX_RUNS, histBin, pctFromHist,
   type SubmitResponse, type SubmitResult, type SubmitRun,
 } from '../../src/shared/api';
 import { isValidSecret, pidhFromSecret } from '../../src/shared/names';
-import { estimateDailyRank } from '../../src/shared/rank';
+import { LEVEL_HIST_BINS, estimateDailyRank, estimateLevelRank, levelBin, levelPct } from '../../src/shared/rank';
 
 /** Substeps verified per request (§7.10 CPU: 5400 = one 45 s run). */
 export const CPU_SUBSTEPS = 5400;
@@ -56,8 +60,9 @@ export async function handleSubmit(req: Request, env: Env, _ctx: ExecutionContex
   const db = new Db(env.DB);
   const usage = estimateUsage(await db.all<{ k: string; n: number }>(countersStatement(db, now)), now);
   const lite = isLite(usage);
+  const soft = isSoft(usage);   // lite implies soft
   const ctx: RunCtx = {
-    db, now, lite, tok: randomTok(), pidh: pidhFromSecret(body.secret)!, nameSeed: body.nameSeed,
+    db, now, lite, soft, tok: randomTok(), pidh: pidhFromSecret(body.secret)!, nameSeed: body.nameSeed,
     ua: req.headers.get('User-Agent') ?? '', rows: 0,
   };
 
@@ -121,7 +126,7 @@ export async function handleSubmit(req: Request, env: Env, _ctx: ExecutionContex
   noteWrites(ctx.rows, now);
   if (counterFlushDue(now)) await flushCounters(db, env, now);
 
-  const out: SubmitResponse = { ok: true, lite, results };
+  const out: SubmitResponse = { ok: true, lite, soft, results };
   return json(out, 200, { 'Cache-Control': 'no-store' });
 }
 
@@ -216,7 +221,7 @@ export function parseRequest(text: string): ParsedRequest | null {
 // ---- Steps 6-8 ----
 
 interface RunCtx {
-  db: Db; now: number; lite: boolean; tok: string; pidh: string; nameSeed: number; ua: string;
+  db: Db; now: number; lite: boolean; soft: boolean; tok: string; pidh: string; nameSeed: number; ua: string;
   rows: number;   // rows written by this request (step 9)
 }
 
@@ -225,30 +230,42 @@ interface Candidate {
   t120: number | null; gapUm: number | null; peakCn: number | null; device: number; replay: Uint8Array | null; fp: string | null;
 }
 
+/** hist: the daily 150-bin histogram, or the level histogram (LEVEL_HIST_BINS; read-only here, the hourly rebuild writes it). */
 export interface BoardState { exists: boolean; ver: number; top: TopRow[]; n: number; cleared: number; aiBeaten: number; hist: number[] }
 
 export interface DecideInput {
-  kind: 'L' | 'D'; board: string; par: number; lite: boolean; now: number;
+  kind: 'L' | 'D'; board: string; par: number; lite: boolean; soft: boolean; now: number;
   pidh: string; nameSeed: number; device: number;
   t120: number | null; gapUm: number | null; peakCn: number | null; replay: Uint8Array | null;
   fp: string | null;                   // fingerprint of the run's inputs (dup.ts); null without a replay
-  prev: number | null | undefined;     // daily only (§7.7 `prev`)
+  prev: number | null | undefined;     // daily only (§7.7 `prev`); place() never passes one for a level board
   state: BoardState;
   own: { t120: number | null } | null;   // own runs row
+  play: { t120: number | null } | null;  // own plays row (t120: the level histogram position; null = not counted)
 }
 
 export interface RunsRow {
   t120: number; gapUm: number | null; peakCn: number | null; device: number; replay: Uint8Array | null; created: number;
 }
 
+/**
+ * `play`: the plays statement of this decision. undefined = none; null = a population row without a time (only when the
+ * player has no plays row yet); a number = upsert that histogram time (plays.t120 only ever gets faster).
+ */
 export type Decision =
-  | { write: false; result: SubmitResult; touchOwn: boolean }   // touchOwn: daily notBetter updates balls/tries of an existing row
+  | {
+    write: false; result: SubmitResult;
+    touchOwn: boolean;                // daily notBetter updates balls/tries of an existing row
+    play?: number | null;             // written alone (no tok), in one batch with the touch
+  }
   | {
     write: true; result: SubmitResult;
     top: TopRow[]; n: number; cleared: number; aiBeaten: number; hist: number[] | null;
+    nDelta?: number;                  // level boards: n is written relative (n = n + nDelta; the hourly rebuild owns its value)
     wr: Uint8Array | null;            // new rank-1 replay (null keeps the current one)
     runs: RunsRow | null;             // runs row to upsert (null: a daily first send outside the top 100, or without success)
     drop: string | null;              // pidh that fell to rank 101 (its replay is set to NULL)
+    play?: number | null;             // written inside the tok-guarded batch
   };
 
 const minOf = (...xs: (number | null | undefined)[]): number | null => {
@@ -270,32 +287,62 @@ export function decide(d: DecideInput): Decision {
 
   if (d.kind === 'L') {
     const t = d.t120!;
-    const ownBest = minOf(d.own?.t120, ownTop?.[2]);
+    const counted = d.play?.t120 ?? null;                    // histogram position (plays.t120)
+    const ownBest = minOf(d.own?.t120, ownTop?.[2]);         // ranking record (top 100 / AI-beaten)
+    const known = minOf(ownBest, counted);
     const pos = countAtOrBelow(others, t);
     const rank = pos + 1;
     const inTop = rank <= BOARD_TOP_N;
-    const alreadyBeaten = ownBest !== null && ownBest < d.par;
-    if (!inTop && (t >= d.par || alreadyBeaten)) {
-      return { write: false, touchOwn: false, result: { board: d.board, status: 'unranked', rank: null, n: s.n, cutoff, aiBeaten: t < d.par } };
+    const firstAi = t < d.par && !(ownBest !== null && ownBest < d.par);
+    const est = (x: number, own: number | null): { rank: number; n: number } | null => estimateLevelRank(s.hist, cutoff, x, own);
+    // Rank before this run: exact inside the top 100, else the estimate of the counted time (null when not counted).
+    const was = ownRank ?? (counted !== null ? est(counted, counted)?.rank ?? null : null);
+    const res = (status: 'accepted' | 'unranked' | 'notBetter', rk: number | null, cnt: number | null, nAfter: number,
+      e: { n: number } | null): SubmitResult => {
+      const n = Math.max(nAfter, e?.n ?? 0, rk ?? 0);
+      const r: SubmitResult = { board: d.board, status, rank: rk, n, cutoff, aiBeaten: t < d.par, was, counted: cnt };
+      if (rk !== null && rk > BOARD_TOP_N) r.pct = levelPct(rk, n);
+      return r;
+    };
+    // (1) Not faster than what the server already knows for this player. A runs holder without a histogram position is
+    //     placed at its runs time (self-healing for players the seed or an old isolate missed): 1 row, once.
+    if (known !== null && t >= known) {
+      const heal = counted === null && ownBest !== null && !d.soft && !d.lite;
+      const e = est(known, counted);
+      return {
+        write: false, touchOwn: false, play: heal ? ownBest : undefined,
+        result: res('notBetter', ownRank ?? e?.rank ?? null, heal ? ownBest : counted, s.n, e),
+      };
     }
-    if (ownBest !== null && t >= ownBest) {
-      return { write: false, touchOwn: false, result: { board: d.board, status: 'notBetter', rank: ownRank, n: s.n, cutoff, aiBeaten: t < d.par } };
-    }
-    // Another player's top-100 run with the same inputs (dup.ts): the copy is neither ranked nor counted as AI-beaten.
-    if (d.fp !== null && isDuplicateRun(d.fp, t, others)) return rejectDup(d.board);
-    if (d.lite && rank > LITE_TOP) {
+    const popOnly = d.play === null && !d.soft && !d.lite ? null : undefined;
+    // (2) Another player's top-100 run with the same inputs (dup.ts): the copy is neither ranked nor counted as
+    //     AI-beaten. Only runs that would write boards are checked, as before.
+    if ((inTop || firstAi) && d.fp !== null && isDuplicateRun(d.fp, t, others)) return { ...rejectDup(d.board), play: popOnly };
+    // (3) lite: only top-10 entries. Everything else stays queued on the client; nothing is written, not even plays.
+    if (d.lite && !(inTop && rank <= LITE_TOP)) {
       return { write: false, touchOwn: false, result: { board: d.board, status: 'rejected', reason: 'lite' } };
     }
-    const row = topRow(d, t);
-    const { top, drop } = inTop ? insertRow(others, pos, row) : { top: s.top, drop: null };
-    const n = s.n + (d.own ? 0 : 1);
-    const aiBeaten = s.aiBeaten + (t < d.par && !alreadyBeaten ? 1 : 0);
+    const moves = counted === null || levelBin(t) !== levelBin(counted);
+    // (4) Top 100 or first AI-beaten: the boards write, plus the histogram position when its bin changes (kept under soft).
+    if (inTop || firstAi) {
+      const { top, drop } = inTop ? insertRow(others, pos, topRow(d, t)) : { top: s.top, drop: null };
+      const nDelta = counted === null && ownBest === null ? 1 : 0;   // a brand-new placement
+      const e = est(t, counted);
+      const result = res('accepted', inTop ? rank : e?.rank ?? null, moves ? t : counted, s.n + nDelta, e);
+      result.cutoff = cutoffOf(top);
+      return {
+        write: true, top, n: s.n + nDelta, nDelta, cleared: s.cleared, aiBeaten: s.aiBeaten + (firstAi ? 1 : 0), hist: null,
+        wr: inTop && rank === 1 ? d.replay : null,
+        runs: { t120: t, gapUm: d.gapUm, peakCn: d.peakCn, device: d.device, replay: inTop ? d.replay : null, created: d.now },
+        drop, play: moves ? t : undefined, result,
+      };
+    }
+    // (5) Outside the top 100: only the histogram position, when its bin changes and the day is not soft. 0 or 1 row.
+    const place = moves && !d.soft;
+    const e = est(t, counted);
     return {
-      write: true, top, n, cleared: s.cleared, aiBeaten, hist: null,
-      wr: inTop && rank === 1 ? d.replay : null,
-      runs: { t120: t, gapUm: d.gapUm, peakCn: d.peakCn, device: d.device, replay: inTop ? d.replay : null, created: d.now },
-      drop,
-      result: { board: d.board, status: 'accepted', rank: inTop ? rank : null, n, cutoff: cutoffOf(top), aiBeaten: t < d.par },
+      write: false, touchOwn: false, play: place ? t : undefined,
+      result: res('unranked', e?.rank ?? null, place ? t : counted, s.n, e),
     };
   }
 
@@ -303,22 +350,24 @@ export function decide(d: DecideInput): Decision {
   // accepted resend (prev present), AI-beaten run or improvement of a player with a runs row writes a runs row (without
   // a replay outside the top 100), so from then on the server's own record decides and a forged prev cannot be used
   // again and again (it would move a histogram count and add an AI-beaten person on every resend).
+  // Every answer carries the population row of a player who has none yet (skipped under soft: boards.n counts them).
+  const play = d.play === null && !d.soft ? null : undefined;
   const ownBest = minOf(d.own?.t120, ownTop?.[2], d.own || ownTop ? undefined : d.prev);
   const firstSend = d.prev === undefined && !d.own && !ownTop;
   if (d.t120 === null) {
     // Participation without success: counts in n only (no hist, no ranking, no runs row).
-    if (!firstSend) return { write: false, touchOwn: !!d.own, result: { board: d.board, status: 'notBetter', rank: ownRank, n: s.n } };
+    if (!firstSend) return { write: false, touchOwn: !!d.own, play, result: { board: d.board, status: 'notBetter', rank: ownRank, n: s.n } };
     const n = s.n + 1;
     return {
-      write: true, top: s.top, n, cleared: s.cleared, aiBeaten: s.aiBeaten, hist: s.hist, wr: null, runs: null, drop: null,
+      write: true, top: s.top, n, cleared: s.cleared, aiBeaten: s.aiBeaten, hist: s.hist, wr: null, runs: null, drop: null, play,
       result: { board: d.board, status: 'accepted', rank: null, n },
     };
   }
   const t = d.t120;
   if (ownBest !== null && t >= ownBest) {
-    return { write: false, touchOwn: !!d.own, result: { board: d.board, status: 'notBetter', rank: ownRank, n: s.n } };
+    return { write: false, touchOwn: !!d.own, play, result: { board: d.board, status: 'notBetter', rank: ownRank, n: s.n } };
   }
-  if (d.fp !== null && isDuplicateRun(d.fp, t, others)) return rejectDup(d.board);
+  if (d.fp !== null && isDuplicateRun(d.fp, t, others)) return { ...rejectDup(d.board), play };
   const pos = countAtOrBelow(others, t);
   const rank = pos + 1;
   const inTop = rank <= BOARD_TOP_N;
@@ -342,7 +391,7 @@ export function decide(d: DecideInput): Decision {
   }
   const result: SubmitResult = { board: d.board, status: 'accepted', rank: inTop ? rank : estimateDailyRank(hist, t), n };
   if (pct !== null) result.pct = pct;
-  return { write: true, top, n, cleared, aiBeaten, hist, wr: inTop && rank === 1 ? d.replay : null, runs, drop, result };
+  return { write: true, top, n, cleared, aiBeaten, hist, wr: inTop && rank === 1 ? d.replay : null, runs, drop, play, result };
 }
 
 /** The stored top row of this run (with the input fingerprint when there is one). */
@@ -366,11 +415,29 @@ function insertRow(others: readonly TopRow[], pos: number, row: TopRow): { top: 
 }
 
 const SQL_READ_BOARD = 'SELECT ver, top, n, cleared, ai_beaten, hist FROM boards WHERE board = ?';
-const SQL_READ_OWN = 'SELECT t120 FROM runs WHERE board = ? AND pidh = ?';
-const SQL_PLAY = 'INSERT OR IGNORE INTO plays (board, pidh, created) VALUES (?, ?, ?)';
+/** The own runs and plays rows (primary keys, 2 rows read) as exactly one row, whether they exist or not. */
+const SQL_READ_OWN =
+  'SELECT r.t120 AS run_t120, r.pidh IS NOT NULL AS has_run, p.pidh IS NOT NULL AS has_play, p.t120 AS play_t120 ' +
+  'FROM (SELECT ?1 AS board, ?2 AS pidh) k ' +
+  'LEFT JOIN runs r ON r.board = k.board AND r.pidh = k.pidh LEFT JOIN plays p ON p.board = k.board AND p.pidh = k.pidh';
+/**
+ * The plays row (§7.7 「面のヒストグラム」). ?4 NULL = a population row without a time (an existing row keeps its time).
+ * ?5 = the request tok inside a write batch (guarded like runs: nothing is written when our boards update lost), NULL
+ * when it runs alone. The time only ever gets faster; a write that changes nothing costs 0 rows.
+ */
+const SQL_UPSERT_PLAY =
+  'INSERT INTO plays (board, pidh, created, t120) SELECT ?1, ?2, ?3, ?4 ' +
+  'WHERE ?5 IS NULL OR EXISTS (SELECT 1 FROM boards WHERE board = ?1 AND tok = ?5) ' +
+  'ON CONFLICT (board, pidh) DO UPDATE SET t120 = excluded.t120 ' +
+  'WHERE excluded.t120 IS NOT NULL AND (plays.t120 IS NULL OR excluded.t120 < plays.t120)';
 const SQL_NEW_BOARD = 'INSERT OR IGNORE INTO boards (board, par) VALUES (?, ?)';
+/** Daily boards: n, cleared and hist are absolute (decided from the row read in this request). */
 const SQL_UPDATE_BOARD =
   'UPDATE boards SET ver = ver + 1, tok = ?, top = ?, n = ?, cleared = ?, ai_beaten = ?, hist = ?, wr = COALESCE(?, wr), par = ?, updated = ? ' +
+  'WHERE board = ? AND ver = ?';
+/** Level boards: n is relative (the hourly rebuild owns its absolute value, worker/hist.ts) and hist is never written here. */
+const SQL_UPDATE_LEVEL =
+  'UPDATE boards SET ver = ver + 1, tok = ?, top = ?, n = n + ?, ai_beaten = ?, wr = COALESCE(?, wr), par = ?, updated = ? ' +
   'WHERE board = ? AND ver = ?';
 const BETTER = 'runs.t120 IS NULL OR excluded.t120 < runs.t120';
 const SQL_UPSERT_RUN =
@@ -388,45 +455,55 @@ const SQL_DROP_REPLAY =
 const SQL_TOUCH_OWN = 'UPDATE runs SET name_seed = ?, tries = ?, balls = ? WHERE board = ? AND pidh = ?';
 const SQL_READ_TOK = 'SELECT tok FROM boards WHERE board = ?';
 
-/** Steps 6-8 for one verified run. */
+interface BoardRead { ver: number; top: string; n: number; cleared: number; ai_beaten: number; hist: string | null }
+interface OwnRead { run_t120: number | null; has_run: number; has_play: number; play_t120: number | null }
+
+/**
+ * Steps 6-8 for one verified run. Statements: read 2 every attempt; a write decision adds at most 5 (new board, UPDATE,
+ * runs, drop, plays) on attempt 0 and 4 on the retry (the board exists by then): 13 = STATEMENTS_PER_RUN. A decision
+ * without a boards write adds at most 2 (plays, daily touch).
+ */
 async function place(c: RunCtx, target: Target, run: SubmitRun, cand: Candidate): Promise<SubmitResult> {
   const { db } = c;
   const key = target.key;
   const tries = run.tries ?? 1;
   const balls = run.balls ?? null;
+  const bins = target.kind === 'L' ? LEVEL_HIST_BINS : HIST_BINS;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const reads = [db.prepare(SQL_READ_BOARD).bind(key), db.prepare(SQL_READ_OWN).bind(key, c.pidh)];
-    // The play population counts every verified run once per board and player, ranked or not (first attempt only).
-    if (attempt === 0) reads.push(db.prepare(SQL_PLAY).bind(key, c.pidh, c.now));
-    const readRes = await db.batch(reads);
-    const [bRes, oRes] = readRes;
-    if (attempt === 0) c.rows += rowsWritten(readRes.slice(2));
-    const b = (bRes!.results[0] ?? null) as { ver: number; top: string; n: number; cleared: number; ai_beaten: number; hist: string | null } | null;
-    const own = (oRes!.results[0] ?? null) as { t120: number | null } | null;
+    const [bRes, oRes] = await db.batch([db.prepare(SQL_READ_BOARD).bind(key), db.prepare(SQL_READ_OWN).bind(key, c.pidh)]);
+    const b = (bRes!.results[0] ?? null) as BoardRead | null;
+    const o = oRes!.results[0] as OwnRead | undefined;
+    const own = o?.has_run ? { t120: o.run_t120 } : null;
+    const play = o?.has_play ? { t120: o.play_t120 } : null;
     const state: BoardState = b
-      ? { exists: true, ver: b.ver, top: parseTop(b.top), n: b.n, cleared: b.cleared, aiBeaten: b.ai_beaten, hist: parseHist(b.hist) }
-      : { exists: false, ver: 0, top: [], n: 0, cleared: 0, aiBeaten: 0, hist: parseHist(null) };
+      ? { exists: true, ver: b.ver, top: parseTop(b.top), n: b.n, cleared: b.cleared, aiBeaten: b.ai_beaten, hist: parseHist(b.hist, bins) }
+      : { exists: false, ver: 0, top: [], n: 0, cleared: 0, aiBeaten: 0, hist: parseHist(null, bins) };
     const dec = decide({
-      kind: target.kind, board: key, par: target.par, lite: c.lite && target.kind === 'L', now: c.now,
+      kind: target.kind, board: key, par: target.par, lite: c.lite && target.kind === 'L', soft: c.soft, now: c.now,
       pidh: c.pidh, nameSeed: c.nameSeed, device: cand.device,
       t120: cand.t120, gapUm: cand.gapUm, peakCn: cand.peakCn, replay: cand.replay, fp: cand.fp,
-      prev: target.kind === 'D' ? run.prev : undefined, state, own,
+      prev: target.kind === 'D' ? run.prev : undefined, state, own, play,
     });
     if (!dec.write) {
-      if (dec.touchOwn) {
-        const r = await db.run(db.prepare(SQL_TOUCH_OWN).bind(c.nameSeed, tries, balls, key, c.pidh));
-        c.rows += rowsWritten([r]);
-      }
+      // No boards write: the plays upsert stands alone (no tok), with the daily balls/tries touch in the same batch.
+      const stmts: D1PreparedStatement[] = [];
+      if (dec.play !== undefined) stmts.push(db.prepare(SQL_UPSERT_PLAY).bind(key, c.pidh, c.now, dec.play, null));
+      if (dec.touchOwn) stmts.push(db.prepare(SQL_TOUCH_OWN).bind(c.nameSeed, tries, balls, key, c.pidh));
+      if (stmts.length > 0) c.rows += rowsWritten(await db.batch(stmts));
       return dec.result;
     }
-    // Step 7: one batch; the runs writes only take effect if this request's boards update did.
+    // Step 7: one batch; the runs and plays writes only take effect if this request's boards update did.
     const stmts: D1PreparedStatement[] = [];
     if (!state.exists) stmts.push(db.prepare(SQL_NEW_BOARD).bind(key, target.par));
     const updIdx = stmts.length;
-    stmts.push(db.prepare(SQL_UPDATE_BOARD).bind(
-      c.tok, JSON.stringify(dec.top), dec.n, dec.cleared, dec.aiBeaten, dec.hist ? JSON.stringify(dec.hist) : null,
-      dec.wr, target.par, c.now, key, state.ver,
-    ));
+    stmts.push(target.kind === 'L'
+      ? db.prepare(SQL_UPDATE_LEVEL).bind(
+        c.tok, JSON.stringify(dec.top), dec.nDelta ?? 0, dec.aiBeaten, dec.wr, target.par, c.now, key, state.ver,
+      )
+      : db.prepare(SQL_UPDATE_BOARD).bind(
+        c.tok, JSON.stringify(dec.top), dec.n, dec.cleared, dec.aiBeaten, dec.hist ? JSON.stringify(dec.hist) : null,
+        dec.wr, target.par, c.now, key, state.ver,
+      ));
     if (dec.runs) {
       const r = dec.runs;
       stmts.push(db.prepare(SQL_UPSERT_RUN).bind(
@@ -434,6 +511,9 @@ async function place(c: RunCtx, target: Target, run: SubmitRun, cand: Candidate)
       ));
     }
     if (dec.drop) stmts.push(db.prepare(SQL_DROP_REPLAY).bind(key, dec.drop, c.tok));
+    // Guarded, never alone: a top-100 run whose batch lost must not leave its time in plays, or its resend would find
+    // it already counted, answer notBetter and never enter the top.
+    if (dec.play !== undefined) stmts.push(db.prepare(SQL_UPSERT_PLAY).bind(key, c.pidh, c.now, dec.play, c.tok));
     let res: D1Result[];
     try {
       res = await db.batch(stmts);
@@ -453,8 +533,8 @@ async function place(c: RunCtx, target: Target, run: SubmitRun, cand: Candidate)
 
 /**
  * After a failed write batch: did it commit anyway (the error came from a lost response)? Only this request writes its
- * tok to this board's row, so finding it there means our boards update, and with it the guarded runs writes, went
- * through. Answering `deferred` then would make the client send the run again and a daily first send would be
+ * tok to this board's row, so finding it there means our boards update, and with it the guarded runs and plays writes,
+ * went through. Answering `deferred` then would make the client send the run again and a daily first send would be
  * counted twice. Costs one statement, only when the budget still has room for it and the counters write.
  */
 async function committed(c: RunCtx, key: string): Promise<boolean> {

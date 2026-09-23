@@ -30,11 +30,15 @@ beforeEach(async () => {
 });
 
 describe('schema and routing', () => {
-  it('has the §7.7 tables', async () => {
+  it('has the §7.7 tables, plays with its histogram time (migration 0003)', async () => {
     const { results } = await env.DB.prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('runs', 'boards', 'counters') ORDER BY name",
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('runs', 'boards', 'counters', 'plays') ORDER BY name",
     ).all<{ name: string }>();
-    expect(results.map((r) => r.name)).toEqual(['boards', 'counters', 'runs']);
+    expect(results.map((r) => r.name)).toEqual(['boards', 'counters', 'plays', 'runs']);
+    const cols = (await env.DB.prepare('PRAGMA table_info(plays)').all<{ name: string; type: string; notnull: number }>()).results;
+    expect(cols.map((c) => [c.name, c.type, c.notnull])).toEqual([
+      ['board', 'TEXT', 1], ['pidh', 'TEXT', 1], ['created', 'INTEGER', 1], ['t120', 'INTEGER', 0],
+    ]);
   });
 
   it('answers unknown /api/* paths with a JSON 404 through the real entry module', async () => {
@@ -60,7 +64,7 @@ describe('GET /api/boot', () => {
     expect(res.headers.get('Cache-Control')).toBe('public, max-age=60, stale-while-revalidate=300');
     expect(BOOT_CACHE_CONTROL).toBe('public, max-age=60, stale-while-revalidate=300');
     const j = (await res.json()) as BootResponse;
-    expect(j).toMatchObject({ v: 1, sim: 1, now: NOW, day: 9, lite: false, readOnly: false });
+    expect(j).toMatchObject({ v: 1, sim: 1, now: NOW, day: 9, lite: false, soft: false, readOnly: false });
     expect(Object.keys(j.boards)).toEqual(LEVELS.map((l) => l.id));
     const summary = summaryJson as unknown as { levels: Record<string, { parSub: number }> };
     for (const l of LEVELS) {
@@ -159,7 +163,36 @@ describe('GET /api/boot', () => {
   it('flags readOnly and lite', async () => {
     await env.DB.prepare('INSERT INTO counters (k, n) VALUES (?, ?)').bind(`wr:${jstDate(NOW)}`, 80_001).run();
     const j = (await (await call('/api/boot', {}, { READ_ONLY: '1' })).json()) as BootResponse;
-    expect([j.readOnly, j.lite]).toEqual([true, true]);
+    expect([j.readOnly, j.lite, j.soft]).toEqual([true, true, true]);
+  });
+
+  it('flags soft above 50k estimated rows written or requests (§7.8 step 9b)', async () => {
+    const soft = async (k: 'wr' | 'req', n: number): Promise<boolean | undefined> => {
+      await resetAll({ pool: POOL });
+      await env.DB.prepare('INSERT INTO counters (k, n) VALUES (?, ?)').bind(`${k}:${jstDate(NOW)}`, n).run();
+      const j = (await (await boot()).json()) as BootResponse;
+      expect(j.lite).toBe(false);
+      await caches.default.delete(bootCacheUrl('https://yurapita.test', NOW));
+      return j.soft;
+    };
+    // (the boot request itself adds 1 to the request estimate)
+    expect([await soft('wr', 50_000), await soft('wr', 50_001), await soft('req', 49_999), await soft('req', 50_001)])
+      .toEqual([false, true, false, true]);
+  });
+
+  it('level boards carry their histogram, trimmed, only when the row has a non-empty one (no extra statement)', async () => {
+    const zeros = new Array<number>(153).fill(0);
+    await seedBoard(levelKey('1-1'), fakeRows(3, 500), { hist: [0, 0, 3, 4, 0, 0] });
+    await seedBoard(levelKey('1-2'), fakeRows(3, 500), { hist: zeros });
+    await seedBoard(levelKey('2-1'), fakeRows(3, 500));
+    const { proxyDb } = await import('./helpers');
+    const p = proxyDb(env.DB);
+    const j = (await (await call('/api/boot?day=9', {}, { DB: p.db })).json()) as BootResponse;
+    expect(p.count()).toBe(2);
+    expect(j.boards['1-1']!.hist).toEqual([0, 0, 3, 4]);
+    expect('hist' in j.boards['1-2']!).toBe(false);
+    expect('hist' in j.boards['2-1']!).toBe(false);
+    expect('hist' in j.boards['2-2']!).toBe(false);
   });
 
   it('429 after 30 reads a minute from one IP (RL_READ)', { timeout: 10_000 }, async () => {
@@ -191,7 +224,25 @@ describe('GET /api/board/:key and /api/ghost/:key/:rank', () => {
     expect((await call('/api/board/garbage')).status).toBe(400);
     // Today's daily board has its par before anyone submitted.
     const d = dailyAt(POOL, NOW);
-    expect(await (await call(`/api/board/${d.key}`)).json()).toMatchObject({ key: d.key, n: 0, par: 3000, top: [] });
+    expect(await (await call(`/api/board/${d.key}`)).json()).toEqual({ key: d.key, n: 0, aiBeaten: 0, par: 3000, cutoff: null, top: [], cleared: 0 });
+  });
+
+  it('board carries the trimmed histogram (level 153 / daily 150 bins) and, for daily, cleared; still one statement', async () => {
+    const { proxyDb } = await import('./helpers');
+    await seedBoard(KEY, fakeRows(3, 500), { hist: [0, 2, 0, 1, 0] });
+    const d = dailyAt(POOL, NOW);
+    const dh = new Array<number>(150).fill(0);
+    dh[20] = 2;
+    await seedBoard(d.key, fakeRows(2, 480), { n: 5, cleared: 2, hist: dh, par: 3000 });
+    const p = proxyDb(env.DB);
+    const lv = (await (await call(`/api/board/${KEY}`, {}, { DB: p.db })).json()) as BoardResponse;
+    expect(p.count()).toBe(1);
+    expect([lv.hist, 'cleared' in lv]).toEqual([[0, 2, 0, 1], false]);
+    const dj = (await (await call(`/api/board/${d.key}`)).json()) as BoardResponse;
+    expect([dj.hist, dj.cleared, dj.n]).toEqual([dh.slice(0, 21), 2, 5]);
+    // Entries past the 153 level bins are ignored (here: nothing left).
+    await env.DB.prepare('UPDATE boards SET hist = ? WHERE board = ?').bind(JSON.stringify([...new Array<number>(160).fill(0), 9]), KEY).run();
+    expect('hist' in ((await (await call(`/api/board/${KEY}`)).json()) as BoardResponse)).toBe(false);
   });
 
   it('ghost returns the replay at a rank with Cache-Control max-age=300', async () => {

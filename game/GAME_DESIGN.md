@@ -930,8 +930,12 @@ export interface DailyPoolFile { format: 1; pool: DailyDef[] }  // 84 件。tier
 - **D1**（SQLite）1 データベース `yurapita`。KV・R2・Durable Objects・Queues は使わない。
 - **Workers Rate Limiting バインディング**を 2 つ置く。取得できない環境では、アイソレートごとのメモリ上のトークンバケットで代わりにする。
   このバインディングは Cloudflare の文書でも「寛容で結果整合、正確な計数には使わない」とされているので、無料枠を守る仕組みの本体は §7.8 の安全弁（lite）と READ_ONLY であり、レート制限は乱用の抑止だけを受け持つ。
-- **Cron** は 1 本だけ（`30 15 * * *` = 00:30 JST。無料プランの上限 5 本の 1 つ、CPU 10 ms）。15 日より前の日替わりの runs 行（トップ 100 の行だけなので 1 日数百行）を、
-  `DELETE FROM runs WHERE board >= 'D:' AND board < 'D:<15 日前の dayIndex を 5 桁ゼロ埋め>'` で削除する（LIKE は主キーの範囲検索にならないので使わない）。boards の日替わりの行は小さいので残す。
+- **Cron** は 2 本（無料プランの上限 5 本のうち 2 本。アカウントのほかの Worker が残りの 3 本を超えて使っていないことを確かめる）。
+  `worker/index.ts` の `scheduled()` が cron の文字列（`worker/cron.ts` の `CRON_DAILY` / `CRON_HIST`）で振り分ける。
+  - `30 15 * * *`（00:30 JST、CPU 10 ms）：15 日より前の日替わりの runs 行（トップ 100 の行だけなので 1 日数百行）を、
+    `DELETE FROM runs WHERE board >= 'D:' AND board < 'D:<15 日前の dayIndex を 5 桁ゼロ埋め>'` で削除する（LIKE は主キーの範囲検索にならないので使わない）。boards の日替わりの行は小さいので残す。
+  - `7 * * * *`（毎時 7 分）：面のヒストグラムの再構築（`worker/hist.ts`、下の「面のヒストグラムと順位の推定」）。読んだ行数に応じて間隔を広げる。
+    一度きりのシードが counters に `hist:next` を置くまでは何もしない。
 - **識別**：クライアントが 16 バイトの乱数の秘密 `secret` を作り、localStorage に置く。
   - 公開 ID は `pidh = hex(SHA-256(secret))` の先頭 16 桁。サーバーは送られてきた `secret` から毎回計算するので、プレイヤー表は不要で、なりすましもできない。
 - **表示名**：`形容詞+名詞#4桁`（例：しずかなクレーン#4821）の生成名だけにする（`src/shared/names.ts`）。
@@ -946,7 +950,7 @@ export interface DailyPoolFile { format: 1; pool: DailyDef[] }  // 84 件。tier
 - 面：`L:<id>:<levelHash>:s<SIM_VERSION>`（例 `L:2-2:9f3a12bc:s1`）
 - 日替わり：`D:<dayIndex を5桁ゼロ埋め>:<levelHash>:s1`（例 `D:00023:1c0e77aa:s1`）
 
-#### D1 スキーマ（`migrations/0001_init.sql`）
+#### D1 スキーマ（`migrations/0001_init.sql`〜`0003_plays_t120.sql`）
 
 ```sql
 CREATE TABLE runs (
@@ -970,32 +974,82 @@ CREATE TABLE boards (
   top       TEXT    NOT NULL DEFAULT '[]',-- JSON [[pidh,nameSeed,t120,gapUm,device,created,fp?], ...] 最大100件、昇順
                                           -- fp（7 番目、v1.1 R7）はそのランの入力の指紋（`worker/dup.ts`、56 桁の 16 進）。サーバー内だけで使い、
                                           -- boot / board の応答には 6 要素のまま出す。R7 より前に書かれた 6 要素の行もそのまま読める
-  n         INTEGER NOT NULL DEFAULT 0,   -- runs 行を持つ人数（面：トップ 100 入りか AI 超えで受理した人数、日替わり：送信した人数）。人ごとに 1 回だけ数える
+  n         INTEGER NOT NULL DEFAULT 0,   -- 人数。日替わり：送信した人数（人ごとに 1 回だけ数える）。
+                                          -- 面：ヒストグラムに数えている人数（plays.t120 が NULL でない人）。毎時の再構築で Σhist に揃え、
+                                          -- その間は初めて数えた人（トップ 100 入りか初めての AI 超え）だけ submit が n = n + 1 する
+                                          -- （2026-09-23 まではトップ 100 入りか AI 超えで受理した人数だった）
   cleared   INTEGER NOT NULL DEFAULT 0,   -- 日替わり：成功した人数
   ai_beaten INTEGER NOT NULL DEFAULT 0,   -- パー未満で受理した人数（人ごとに初回だけ）
   par       INTEGER NOT NULL,             -- その面の parSub（表示と ai_beaten の判定用）
-  hist      TEXT,                          -- 日替わりだけ：JSON 150 要素（0.2 s 刻み、0〜30 s、最後の要素は 29.8 s 以上）
+  hist      TEXT,                          -- 日替わり：JSON 150 要素（0.2 s 刻み、0〜30 s、最後の要素は 29.8 s 以上）。submit が書く
+                                           -- 面：JSON 最大 153 要素（「面のヒストグラムと順位の推定」のビン、末尾の 0 は切り詰める）。
+                                           -- 毎時の再構築だけが書き、submit は書かない。再構築の前は NULL
   wr        BLOB,                          -- 1 位のリプレイ
   tok       TEXT,                          -- 最後に更新したリクエストの乱数トークン（§7.8 の 7。runs の書き込みをこの更新の成功に結びつける）
   updated   INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
 
 CREATE TABLE counters (
-  k TEXT PRIMARY KEY,    -- 'req:<JST日付>' / 'wr:<JST日付>'
+  k TEXT PRIMARY KEY,    -- 'req:<JST日付>' / 'wr:<JST日付>' / 'hist:next'（面のヒストグラムの次の再構築の時刻 ms。行がない間は再構築しない）
   n INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
 
 -- プレイ人口（2026-09-23 追加、migrations/0002_plays.sql）。検証を通ったランを、順位に関係なく「面 × 端末」で 1 行だけ残す。
--- runs はトップ 100 と AI 超えしか残らないので、遊んだ人数には使えない。INSERT OR IGNORE なので、既知の組は書き込み 0 行。
+-- runs はトップ 100 と AI 超えしか残らないので、遊んだ人数には使えない。書き込みは upsert で、何も変わらない組は書き込み 0 行。
+-- soft の日（§7.8 の 9b）は、時刻を持たない人口だけの行（日替わりと dup）と、面の 100 位の外の位置を書かない。
 CREATE TABLE plays (
   board   TEXT    NOT NULL,
   pidh    TEXT    NOT NULL,
   created INTEGER NOT NULL,     -- 最初に検証を通ったランの時刻（ms）
+  t120    INTEGER,              -- 面：この人がヒストグラムに数えられているタイム（1/120 s）。NULL = 数えていない。
+                                -- 速くなる向きにしか動かない。日替わりの行はいつも NULL（migrations/0003_plays_t120.sql）
   PRIMARY KEY (board, pidh)
 ) WITHOUT ROWID;
 ```
 
 副次インデックスは作らない。書き込み 1 行が行書き込み 1 回に対応する。
+
+#### 面のヒストグラムと順位の推定（2026-09-23 追加）
+
+面のランキングは上位 100 件しか持たない。101 位より下の人にも「自分がどこにいるか」を見せるため、面ごとにタイムのヒストグラムを持つ。
+計算は `src/shared/rank.ts` にまとめ、Worker の応答、結果カード、ランキング画面が同じ関数で同じ数字を出す。
+
+- **ビン**（`levelBin`、`LEVEL_HIST_BINS` = 153）：4 s 未満は 0.05 s 刻み（0〜79）、12 s 未満は 0.2 s 刻み（80〜119）、その先は 1 s 刻み（120〜152。152 は 44 s 以上）。
+  速い人ほど密なので細かく刻む。1-1 に似た 1,065 人の分布で、推定のずれは最大 11 位（平均 1.5）。日替わりと同じ 0.2 s 刻みでは最大 60 位になる。
+- **数えるタイム**（counted）＝ `plays.t120`。その人がヒストグラムに数えられているタイムで、NULL は数えていない。
+  - SQL の条件で速くなる向きにしか動かず、しかも**ビンが変わるときだけ**書く（同じビンの中で速くなっても 0 行）。1 人が 1 面で動かせるのは最大 153 回。
+  - ランキングの記録（runs 行と `top` の自分の行）とは別に持つ。サーバーが知っているその人の最良は `known = min(runs の記録, plays.t120)`。
+  - 自己申告の `prev` は使わない（面では無視する）。そのための runs 行も増やさない。
+- **再構築**（`worker/hist.ts`、cron `7 * * * *`）：面の `boards.hist` と `boards.n` は `plays` から作るキャッシュで、submit は `hist` を書かない。
+  - 今の 18 面のキーについて、`plays` を 1 回の GROUP BY（ビンは SQL の整数除算 `LEVEL_BIN_SQL`。テストで `levelBin` と一致させる）で数え、Worker の JS で配列にして、
+    変わった面だけ `UPDATE boards SET hist=?, n=? WHERE board=? AND ver=?` で書く。`UPDATE … FROM` や `json_group_object` には頼らない。
+  - 読んだ後に submit が ver を進めた面はその回は書かず、次の回に回す。再構築は ver を進めないので、submit の楽観ロックと衝突しない（submit は `n` を相対で足し、`hist` を書かない）。
+  - 間隔は `max(55 分, ceil(読んだ行数 / 20,000) 時間 − 5 分)`。2 万行までは毎時、10 万行なら 5 回に 1 回になり、再構築の読み取りは規模によらず 1 日約 48 万行までに収まる。
+    次の時刻は counters の `hist:next` に置く。書いた行数（変わった面 + 2）は今日の `wr:` に足す。
+  - lite の日と READ_ONLY では動かない（soft の日は動く）。1 回の文は 1 + 2 + 18 + 1 = 22 まで。古いハッシュの面には触らない。
+  - `hist:next` の行がない間（シードの前）は何もしない。シードなしで再構築すると、1-1 の人数が約 495 人から新しいコードで送った数人に落ちてしまうため。
+- **人数 `n`**（面）：ヒストグラムに数えている人数。再構築の直後は Σhist と一致する。その間は、書き込みの経路で初めて数えた人（トップ 100 入りか初めての AI 超え）だけ `n + 1` する
+  （新しい面で `ai_beaten` が増えているのに n = 0 と出ないように）。`ai_beaten ≤ n` は再構築のたびに成り立つ。
+- **推定**（`estimateLevelRank(hist, cutoff, t, own)`）：
+  - まず `own`（その人がすでに数えられているタイム）を、そのビンから 1 引く。n = Σh + 1。
+  - `t < cutoff`（または cutoff が null）：トップ 100 の範囲。`f = Σ_{i<b} h[i] + h[b]·(t − lo_b)/(hi_b − lo_b)`、順位 = floor(f) + 1 を 1〜min(100, n) に丸める。
+    ここの本当の順位はサーバーが `top` で決めるので、推定は画面の見込みにだけ使う。ヒストグラムが空なら出さない。
+  - `t ≥ cutoff`：cutoff より速い人は全員 `top` にいる。cutoff のビン bc の中で 100 人を超える分 `K = max(0, Σ_{i≤bc} h[i] − 100)` だけを cutoff の後ろに置く。
+    b = bc なら `f = K·(t − cutoff)/(hi_bc − cutoff)`、b > bc なら `f = K + Σ_{bc<i<b} h[i] + h[b]·(t − lo_b)/(hi_b − lo_b)`。順位 = 101 + floor(f) を 101〜max(101, n) に丸める。
+    Σh < 100（ヒストグラムがまだトップ 100 を覆っていない）なら出さない。
+  - t について単調で、ビンの境目で連続し、cutoff と同着なら 101 位になる。
+- **上位 x %**（面）＝ 順位 / n を小数 1 桁に**切り上げ**たもの（0.1〜100）。良く見せる向きには丸めない。101 位以上のときだけ出す。
+- **「約」の規則**：サーバーが確かめた 100 位以内の順位だけを「約」なしで出す。101 位以上はすべて推定なので「約」を付ける。手元の推定も同じ。日替わりの 101 位以上も同じ扱いにする。
+- **submit の答えの順位**（面）：1〜100 は `top` の中の正確な位置、101 以上はヒストグラムからの推定、null は不明（まだヒストグラムがないか、トップ 100 を覆っていない）。
+- **古さ**：ヒストグラムは最大 1 時間古い（規模が大きくなると間隔の分だけさらに古い）。その上に boot のキャッシュ（エッジ 60 秒、アイソレート 30 秒、クライアント 10 分）が乗る。
+  101 位以上の数字はいつも「約」付きなので、ずれはその中に収まる。自分の分は `own` を引いて直す。
+- **シード**（一度だけ。`worker/seed.ts` と `tools/seed-level-hist.mjs`）：マイグレーション 0003 はスキーマだけで、データは書かない。
+  - デプロイの 10 分以上後（古いアイソレートが消えてから）、本番の boot から今の 18 面のキーを取って SQL を作り、`wrangler d1 execute --remote --file` で 1 回だけ流す。
+    その面の runs の t120 を `plays.t120` に写し（すでに速い値があれば残す。2 回目以降は 0 行）、書きうる行数 + 2 を今日の `wr:` に足し、`hist:next = 0` を置いて再構築を始めさせる。
+    今日の `wr:` と runs の行数の和が 30,000 を超える日は翌日に回す。
+  - マイグレーションにしないのは、マイグレーションはデプロイの前（古い Worker が動いている間）に走り、ローカルとテストのすべての DB でも走り、しかも今のキーを知らないため。
+  - シードから漏れた runs 行の持ち主（古いアイソレートが書いた人など）は、次の送信の `notBetter` で runs の時刻に置き直す（1 人 1 面 1 回、1 行）。
+  - シードを流さなくても壊れない。再構築が始まらず、面のヒストグラムは NULL のまま、推定は出ず、`n` は元の値のまま。
 
 #### HTTP API（すべて JSON。同一オリジンで CORS なし。型は `src/shared/api.ts`）
 
@@ -1008,11 +1062,11 @@ CREATE TABLE plays (
 
 ```json
 {
-  "v": 1, "sim": 1, "now": 1790000000000, "day": 23, "lite": false, "readOnly": false,
+  "v": 1, "sim": 1, "now": 1790000000000, "day": 23, "lite": false, "soft": false, "readOnly": false,
   "boards": {
     "2-2": { "key": "L:2-2:9f3a12bc:s1", "n": 812, "aiBeaten": 37, "par": 318, "cutoff": 402,
              "top": [["a1b2c3d4e5f60718", 5121, 301, 6400, 1, 1790000000000]],
-             "wr": "WVABAQ..." }
+             "wr": "WVABAQ...", "hist": [0, 0, 1, 4, 9] }
   },
   "daily": { "key": "D:00023:1c0e77aa:s1", "n": 5012, "cleared": 3811, "aiBeaten": 120, "par": 402,
              "top": [["..."]], "hist": [0, 0, 3, 17], "wr": "..." }
@@ -1020,6 +1074,8 @@ CREATE TABLE plays (
 ```
 
 - `top` は上位 10 件だけ。`cutoff` は 100 位のタイムで、100 件未満なら `null`。
+- `hist`（面）：面のヒストグラム（153 ビン、末尾の 0 を切り詰めたもの）。`boards.hist` が NULL か空の間は項目ごと省く。同じ行の列なので読む行は増えない。応答は 18 面で約 4.5 KB 増える（brotli で約 1 KB）。
+- `soft`：soft の安全弁（§7.8 の 9b）が入っている。受け取ったクライアントは、急がない面の送信を送信待ちに残す。
 
 **`POST /api/submit`**（本文 16 KB まで、1 リクエストに 4 件まで）
 
@@ -1037,6 +1093,7 @@ CREATE TABLE plays (
   自己申告なので統計が少しずれる余地はあるが、ランキング（トップ 100）には影響しない。
   **v1.1 R7 の制限**：`prev` は `MAX_RANKED_T120`（5341 = ランキングに載る最長のタイム）以下でなければ 400。
   そして、その人の runs 行がサーバーにあるなら `prev` は無視してサーバーの記録で決める。`prev` を使えるのは runs 行がない間（＝その日の初回の送信）だけになる。
+  面の送信に `prev` が付いていてもサーバーは無視する（面の位置は `plays.t120` で持つ。今のクライアントは面に `prev` を送らず、リクエストの形は `v: 1` のまま変わらない）。
 
 - 3 件目は「日替わりで 5 球とも成功しなかった」参加の報告の形（実際には同じランキングを 1 リクエストに 2 回入れない）。`replay` と `t120` が null で、
   再シミュレーションはせず、参加者数 `n` と `balls` だけに効く（ランキングにもヒストグラムにも入らない）。面のランキングに null は送れない（`badReplay`）。
@@ -1045,25 +1102,34 @@ CREATE TABLE plays (
 応答：
 
 ```json
-{ "ok": true, "lite": false,
+{ "ok": true, "lite": false, "soft": false,
   "results": [
-    { "board": "L:2-2:9f3a12bc:s1", "status": "accepted", "rank": 37, "n": 813, "cutoff": 402, "aiBeaten": true },
+    { "board": "L:2-2:9f3a12bc:s1", "status": "accepted", "rank": 37, "n": 813, "cutoff": 402, "aiBeaten": true, "was": null, "counted": 301 },
+    { "board": "L:1-1:13e2284e:s1", "status": "unranked", "rank": 342, "n": 1065, "cutoff": 380, "aiBeaten": false,
+      "pct": 32.2, "was": 360, "counted": 455 },
     { "board": "D:00023:1c0e77aa:s1", "status": "accepted", "rank": 480, "n": 5013, "pct": 9.6 }
   ] }
 ```
 
+- 面の答えの `rank` は、1〜100 なら `top` の中の正確な位置、101 以上ならヒストグラムからの推定（そのときは `pct` = 上位 x % も付ける）、null は不明。
+  `was` はこのランの前の順位（100 位以内は正確、101 位以上は推定、数えられていなければ null）。`counted` はこのランの後の `plays.t120`（数えていなければ null）。
+  どれも項目が増えただけで、古いクライアントは読まない。
+- `soft`：boot と同じ（§7.8 の 9b）。
+
 `status` の値：
 - `accepted`：受理した。
-- `unranked`：面で 100 位に入らず、AI 超えでもなかった。書き込みはしない。
-- `notBetter`：既存の自己記録以下だった（日替わりでは `balls`・`tries` の更新だけ行う）。
+- `unranked`：面で 100 位に入らず、初めての AI 超えでもなかった。ヒストグラムの位置だけを更新する（ビンが変わるときだけ 1 行。soft の日は書かない）。
+- `notBetter`：既存の自己記録以下だった（面では runs の記録と `plays.t120` の速い方と比べる。日替わりでは `balls`・`tries` の更新だけ行う）。
 - `rejected`（`reason`：`mismatch` / `stale` / `badReplay` / `tooLong` / `badBoard` / `lite` / `dup`）。
   `dup` は他人のトップ 100 のランの入力の使い回し（§7.8 の 6、§7.11）。
+  面の `lite` は、lite の日に 10 位以内に入らない送信（100 位の外も含む。§7.8 の 10）。何も書かず、クライアントは送信待ちに残す。
 - `deferred`：CPU 予算か D1 の文の予算を超えた、または `boards` の更新が 2 回続けて競合した。クライアントは送信待ちに残して後で再送する。
 
 処理の手順は §7.8。
 
 **`GET /api/board/:key`**
 - トップ 100 をすべて返す（1 行読み取り）。`Cache-Control: public, max-age=60`。
+- `hist`（面は 153 ビン、日替わりは 150 ビン。末尾の 0 を切り詰め、空なら省く）と、日替わりだけ `cleared` も付ける（同じ 1 行から）。
 
 **`GET /api/ghost/:key/:rank`**
 - `{key, rank, pidh, nameSeed, t120, replay}` を返す（2 行読み取り）。`Cache-Control: public, max-age=300`。
@@ -1092,7 +1158,8 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
 1. **CPU 予算**：そのリクエストで検証したサブステップの合計を数える。**1 件目は長さによらず必ず検証する**（1 件の上限は `RANKED_MAX_TICKS` の 5400 サブステップ）。
    2 件目以降は、合計が 5400 を超えるものを `deferred` にする。アイソレートの最初のリクエスト（温めの直後）では 2 件目以降をすべて `deferred` にする。
    （v1.0 の「最初のリクエストは 2400 まで」は、アクセスの少ない時間帯に 20 秒を超えるランが毎回 deferred になって永久に受理されないので改めた。）
-   **D1 の文の予算**：そのリクエストで発行した文の数（batch の中の 1 文ずつ）を数え、次の件を始める前に「使った文の数 + 13（1 件の最大：読み 2 + plays 1 + 書き 4、競合のやり直しでもう 6）+ 1（counters の書き込み）」が 49 を超えるなら、残りを `deferred` にする。
+   **D1 の文の予算**：そのリクエストで発行した文の数（batch の中の 1 文ずつ）を数え、次の件を始める前に「使った文の数 + 13（1 件の最大：読み 2 + 書き 5、競合のやり直しで読み 2 + 書き 4）+ 1（counters の書き込み）」が 49 を超えるなら、残りを `deferred` にする。
+   書き 5 は boards の新規作成・boards の更新・runs・101 位の replay の NULL 化・plays（やり直しのときは boards がもうあるので 4）。boards を書かない決定は、読み 2 のあと多くて 2 文（plays と日替わりの balls/tries）。
 2. `board` キーを解析し、同梱の `levels.json` / `daily_pool.json` から面を引く（面のパーは同梱の `ghosts_summary.json`、日替わりのパーは `daily_pool.json` の `parSub` から取る）。
    - `levelHash` と `sim` が一致しなければ `stale`。
    - 日替わりで、今日でも昨日（00:00〜02:00 JST の猶予）でもなければ `badBoard`。
@@ -1104,7 +1171,8 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
 4. `simulateReplay` で再シミュレーションする。最後のティックで Success になっていなければ `mismatch`、`score ≠ t120` でも `mismatch`。
    - 不一致は `console.warn({evt:'mismatch', ua, board, claimed, got})` で記録する。これはブラウザ間の決定性の警報も兼ねる。
 5. 集計値を計算する：`gap_um = round((sqrt(minD2) − r)·1e6)`（Worker 内の表示用の計算なので sqrt を使ってよい）、`peak_cn`。
-6. `boards` の行、自分の既存の `runs` 行（主キーで 1 行）を 1 回の batch で読む（`counters` はリクエストの最初に 1 回だけ読む）。`top` の中で順位を求める。
+6. `boards` の行と、自分の `runs` 行・`plays` 行（どちらも主キーで 1 行。LEFT JOIN でいつもちょうど 1 行にまとめる）を 1 回の batch で読む（`counters` はリクエストの最初に 1 回だけ読む）。
+   `top` の中で順位を求める。
    - **使い回しの検査（v1.1 R7、`worker/dup.ts`）**：まず、復号した q 列から指紋を作る（全体の 32 ビットハッシュ 8 桁 + 16 等分した区間ごとの 12 ビットハッシュ 3 桁 × 16 = 56 桁の 16 進）。
      `top` の中の**他人**の行（7 番目の要素に指紋を持つ行）と比べ、ティック数が同じで、しかも「全体のハッシュが同じ」か「値が変化する区間のうち 12 個以上が完全に一致」なら `rejected: dup` を返し、何も書かない。
      値が一定の区間（待っている間、押しっぱなし、全力）は証拠にならないので一致に数えない。トップ 100 のリプレイは boot の `wr`・`/api/ghost`・挑戦状リンクで誰でも手に入るので、
@@ -1112,20 +1180,39 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
      再符号化やデバイスバイトの違いは同じ指紋になる。時間を変えない数ティックの改変も、4 区間までなら捕まる。5 区間以上を直して再シミュレーションで確かめる手間をかけたものは §7.11 の「ツールで作った入力」の限界のまま。
      （検証器が持っている `(t120, gapUm, peakCn)` の一致で重複と見なす案は採らない。`peakCn` は速度モードのサーボでは F_max に貼り付くことが多く、1-1 では `gapUm` が常に −1 なので、
      「1-1 で同着」だけで本物の同着を弾いてしまう。）
-   - 面で 100 位より下で、しかも `t120 ≥ par` か、すでに AI 超えとして数えられている（既存の runs 行の t120 < par）なら `unranked` を返し、**書き込まない**。
-   - 100 位より下でも、初めての AI 超え（`t120 < par`）なら受理し、replay を NULL にした runs 行を入れて `ai_beaten` と `n` を数える（`status: accepted`、`rank: null`）。
-   - 自分の既存記録以下なら `notBetter`。
+   - **面は次の順に決める**（2026-09-23 から。`counted = plays.t120`、`known = min(runs の記録, counted)`。「面のヒストグラムと順位の推定」）：
+     1. `t120 ≥ known` なら `notBetter`（順位は `top` の中の自分の位置、なければ known の推定）。**100 位の外かどうかより先に見る**ので、送り直しは何度でも 0 行で済む。
+        runs 行があるのに `counted` が NULL の人（シードや古いアイソレートから漏れた人）は、ここで runs の時刻を `plays.t120` に入れる（1 人 1 面 1 回、1 行。soft と lite の日はしない）。
+     2. トップ 100 に入るか初めての AI 超えになるランだけ、上の使い回しを検査する（`rejected: dup`。`plays` 行がまだなければ、時刻なしの人口の行だけを入れる。soft と lite の日は入れない）。
+     3. lite の日は、10 位以内に入るもの以外をすべて `rejected: lite` にする（何も書かない。`plays` も書かない）。
+     4. トップ 100 に入るか、初めての AI 超え（`t120 < par`、runs の記録がまだ par 以上）なら受理する（`status: accepted`）。
+        100 位より下の AI 超えは replay を NULL にした runs 行を入れて `ai_beaten` を数え、`rank` はヒストグラムの推定（ないときは null）。
+        `counted` のビンが変わるときは、同じ batch で `plays.t120` も動かす（soft の日も書く）。`n` は runs 行も `counted` もない人（初めて数える人）のときだけ 1 足す。
+     5. それ以外（100 位の外）は `unranked`。ビンが変わり、soft の日でなければ `plays.t120` だけを動かす（1 行）。同じビンなら何も書かない。
+     - どの答えにも `was`（このランの前の順位）と `counted`（このランの後の `plays.t120`）を付ける。クライアントは `counted` で、サーバーが何も書かない送信を省く。
+     - 面の `prev` は見ない。
+   - 日替わりは、自分の既存記録以下なら `notBetter`。
    - `boards` の行がなければ、手順 7 の batch の先頭で `INSERT OR IGNORE INTO boards(board, par) VALUES (?, ?)` を入れ、ver = 0 の行として扱う。
-7. 書き込みを 1 つの `DB.batch`（1 トランザクション。文は書いた順に実行される）で行う。**runs への書き込みは、同じ batch の boards の更新が成功したときだけ効く**ようにする。
+7. 書き込みを 1 つの `DB.batch`（1 トランザクション。文は書いた順に実行される）で行う。**runs と plays への書き込みは、同じ batch の boards の更新が成功したときだけ効く**ようにする。
    リクエストごとに乱数のトークン `tok`（16 桁の 16 進）を作り、次の順に並べる。
-   1. `UPDATE boards SET ver=ver+1, tok=?, top=?, n=?, cleared=?, ai_beaten=?, hist=?, wr=?, updated=? WHERE board=? AND ver=?`
+   1. 日替わり：`UPDATE boards SET ver=ver+1, tok=?, top=?, n=?, cleared=?, ai_beaten=?, hist=?, wr=?, updated=? WHERE board=? AND ver=?`
+      面：`UPDATE boards SET ver=ver+1, tok=?, top=?, n=n+?, ai_beaten=?, wr=?, par=?, updated=? WHERE board=? AND ver=?`
+      （面の `n` は相対で足し、`hist` は書かない。毎時の再構築が ver を進めずに `hist` と `n` を書き直しても、どちらも消えない）
    2. `INSERT INTO runs (board,pidh,name_seed,t120,gap_um,peak_cn,device,tries,balls,replay,created) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM boards WHERE board=? AND tok=?)
       ON CONFLICT(board,pidh) DO UPDATE SET` 次の値：
       - `t120` と、それに付く `gap_um`・`peak_cn`・`device`・`replay`・`created` は、新しい t120 の方が小さい（既存が NULL を含む）ときだけ新しい値にする（`CASE WHEN` で書く）。
       - `name_seed`・`tries`・`balls` は常に新しい値にする。
    3. 101 位に落ちた人がいれば `UPDATE runs SET replay=NULL WHERE board=? AND pidh=? AND EXISTS (SELECT 1 FROM boards WHERE board=? AND tok=?)`
-   - 1 の更新が競合で 0 行なら、2 と 3 は EXISTS が偽になって何もしない（ver だけでは、他のリクエストが同じ ver+1 にした場合と区別できないのでトークンを使う）。
-   - `n` は既存の runs 行がなかったときだけ 1 増やす。`ai_beaten` はその人が初めて t120 < par になったときだけ 1 増やす。`cleared`（日替わり）はその人が初めて成功したときだけ 1 増やす。
+   4. `plays` の行：`INSERT INTO plays (board,pidh,created,t120) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM boards WHERE board=? AND tok=?)
+      ON CONFLICT(board,pidh) DO UPDATE SET t120=excluded.t120 WHERE excluded.t120 IS NOT NULL AND (plays.t120 IS NULL OR excluded.t120 < plays.t120)`
+      （時刻が NULL なら人口の行だけ。既存の行の時刻は変えない）。**トークンなしでは書かない**：競合で書けなかったトップ 100 のランの時刻が `plays` にだけ残ると、
+      再送が `notBetter` になってトップ 100 に二度と入れなくなる。
+   - 1 の更新が競合で 0 行なら、2〜4 は EXISTS が偽になって何もしない（ver だけでは、他のリクエストが同じ ver+1 にした場合と区別できないのでトークンを使う）。
+   - boards を書かない決定（面の `unranked`・`notBetter` の位置の移動や直し、dup の人口の行、日替わりの `notBetter`）では、同じ `plays` の文をトークンなし（NULL）で、
+     日替わりの balls・tries の更新と一緒に 1 つの小さな batch で書く。
+   - 面の `n` は runs 行も `plays.t120` もない人のときだけ 1 足す。日替わりの `n` は下のとおり。`ai_beaten` はその人が初めて t120 < par になったときだけ 1 増やす。
+     `cleared`（日替わり）はその人が初めて成功したときだけ 1 増やす。
+   - 日替わりの `plays` は、その人の行がまだないときだけ時刻なしの人口の行を入れる（soft の日は入れない。日替わりの人数は `boards.n` が数えている）。
    - **日替わりで 100 位圏外（または成功なし）なら runs 行は書かず、`boards` の 1 行だけを更新する**（書き込み 1 行。バズった日の書き込みを半分にするため）。
      - `n` は `prev` がないときだけ 1 増やす。`cleared` は `prev` が null かなしで、今回が成功のときだけ 1 増やす。`ai_beaten` は `prev` が par 以上かなしで、今回 < par のときだけ。
      - `hist` は、`prev` があれば `prev` のビンを 1 減らし（0 未満にしない）、今回のビンを 1 増やす。
@@ -1134,10 +1221,19 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
        パー以上の初回の送信は今までどおり boards の 1 行だけ。書き込みは §7.10 の 2 万人の日でおよそ +3k 行／日（と 15 日後の cron の削除が同じだけ）で、80k の安全弁には十分余裕がある。
      - 共有カードの数字が矛盾しないよう、`ai_beaten ≤ cleared ≤ n` になるように丸める。
    - 日替わりでトップ 100 に入るときは、面と同じく runs 行を書く（`prev` の扱いは同じ）。自分がすでにトップ 100 にいれば、`top` の中の自分の行を見て `notBetter` を判定する。
-8. 1 の更新で変わった行が 0 行なら（ver の競合）、boards と自分の runs 行を読み直して手順 6 から 1 回だけやり直す。2 回目も競合したら `deferred` を返す。
+8. 1 の更新で変わった行が 0 行なら（ver の競合）、boards と自分の runs・plays 行を読み直して手順 6 から 1 回だけやり直す。2 回目も競合したら `deferred` を返す。
+   書き込みの batch がエラーになっても、boards の `tok` がこのリクエストのものなら（応答だけが失われた）、runs と plays も一緒に書けているので、そのまま答える。
 9. アイソレートのカウンターに書き込み行数を足し、50 行に 1 回 `counters` に反映する。リクエスト数も 100 回に 1 回反映する。
+
+   9b. **予算の安全弁（soft、2026-09-23 追加）**：今日の推定書き込みか推定リクエストが 50,000 を超えたら、なくてもよい書き込みを止める（lite の 80,000 より手前。lite なら soft でもある）。
+   - 止めるもの：面の 100 位の外の `plays.t120`（初めての配置と、ビンの移動）、`notBetter` での位置の直し、日替わりと dup の人口の行。
+   - 続けるもの：トップ 100 入りと初めての AI 超え（その `plays.t120` も含む）、日替わりのランキングの書き込み、毎時の再構築。
+   - boot と submit の応答に `soft: true` を付ける。受け取ったクライアントは、急がない面の送信（100 位の外の位置の移動）を送信待ちに残す。
+   - 1 IP あたりの攻撃のコストは変わらない（新しい秘密 1 つにつき 1 面 1 行、つまり 1 分に 24 行まで）。soft の後は 0 行になる。
+   - soft の後に初めて送った人は、その日は `plays` に入らない（面は、次に soft でない日の送信で数えられる。日替わりの人数は `boards.n` が数えている）。
 10. **予算の安全弁（lite）**：今日の推定書き込みが 80,000 行を超えるか、推定リクエストが 80,000 を超えたら次のようにする（cron の削除で書く行も推定書き込みに足す）。
-    - 面の送信は 10 位以内に入るものだけを受理し、それ以外は `rejected: lite`。
+    - 面の送信は 10 位以内に入るものだけを受理し、それ以外は `rejected: lite`（100 位の外の送信も `unranked` ではなく `rejected: lite` にする。何も書かず、`plays` も書かない。
+      クライアントはそれを送信待ちに残して翌日に送る）。自己記録以下の送信には今までどおり `notBetter` を返す。
     - boot 応答に `lite: true` を付ける。受け取ったクライアントはライバル取得と面の送信をその日は止める（送信待ちは翌日に持ち越す）。
     - 日替わりの送信は続ける。
 
@@ -1178,6 +1274,7 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
 | **合計** | **≈ 77,000** |
 
 80,000 を超えると lite に切り替え、ghost と board をほぼ止める。静的アセットは数に入らない。
+cron（毎時の再構築 24 回と日次の削除 1 回）は `noteRequest` の数に入らない。
 
 **D1 読み取り**（上限 500 万/日）
 
@@ -1187,7 +1284,11 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
 | submit（約 5 行/件。EXISTS の副問い合わせを含む） | 140k |
 | ghost と board | 36k |
 | cron の削除 | 2k |
-| **合計** | **≈ 0.78M** |
+| 面のヒストグラムの再構築（面の plays 行 × 1 日の回数。10 万行なら 5 時間に 1 回になるので、規模によらず上限は約 48 万行） | 最大 480k |
+| **合計** | **≈ 1.26M** |
+
+submit の自分の行の読み取りは runs と plays の主キー 2 行で、それまでの plays の INSERT OR IGNORE の読み取りと置き換わるので、ほぼ増えない。
+boot と board はヒストグラムを同じ行から読むので 0 行増。
 
 **D1 書き込み**（上限 10 万/日）
 
@@ -1205,6 +1306,25 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
 
 バズった日が何日続いても 80k の安全弁までに約 2 倍の余裕がある（v1.0 の「日替わりの参加者全員に runs 行を書き、15 日後に消す」方式は、
 削除も書き込みに数えられるので、続いた日には 1 日約 9 万行になっていた）。
+
+上の表は、なくても困らない書き込み（2026-09-23 に加えたプレイ人口とヒストグラムの位置）を含まない。これらは soft（50k、§7.8 の 9b）で止まる。
+
+| なくてもよい書き込み（soft で止まる） | 1 件あたり | バズった日の需要 |
+|---|---|---|
+| 面の最初の送信（100 位の外、AI 超えなし）：plays 1 行（時刻つき） | 1 行 | 約 100k（2 万人 × 約 5 面） |
+| 日替わりの人口の行（plays、時刻なし） | 1 行 | 約 20k |
+| 面の 100 位の外の自己ベストで、ヒストグラムのビンが変わる（plays の t120 だけ） | 1 行 | 約 45k |
+| `notBetter` での位置の直し（シードから漏れた runs 行の持ち主、1 人 1 面 1 回） | 1 行 | わずか |
+| dup の人口の行 | 0〜1 行 | わずか |
+
+止まらないもの：トップ 100 入りと初めての AI 超え（boards・runs・101 位の replay・ビンが変わるなら plays で 2〜4 行）、日替わりのランキング、再構築（1 回に変わった面 + counters 2 行、1 日 0.5k 未満）、シード（一度だけ、runs の行数 + 2 ≈ 2〜5k）。
+
+- **ふだんの日**（今の約 1,000 台/日）：ビンの移動が戻ってきた人から約 1.2k、新しい人の同じ日の 2 回目以降から約 0.5k、トップ 100 のビン越え約 0.3k、再構築約 0.25k などで、**約 +2.3k 行/日**（5.4k → 約 7.7k、枠の 7.7 %）。
+- **バズった日**：なくてもよい分を含めた需要は約 217k/日で、その日の約 23 % の時点で soft（50k）に入る。以後は上の表の約 53k/日のペースで進んで、その日の約 80 % で lite（80k）に入り、
+  残りは日替わりだけ（約 28k/日）になるので、1 日の合計は**約 86k** で 10 万に収まる。
+  （2026-09-23 に plays を入れた時点の、soft のない作りでは、需要約 172k/日で約 47 % の時点で lite に入り、その後も日替わりの送信と日替わりの plays 行が約 48k/日続いて、合計が約 106k と枠を超えうる。）
+  `SOFT_LIMIT` を 40,000 にすると約 83k になり、lite は最後の 1 時間まで遅れる。バズった日が実際に来るまでは 50,000 のままにする。
+- **1 IP の攻撃**（新しい秘密で正しい遅いランを送る）：1 分に 6 リクエスト × 4 件 × 1 行 = 24 行/分で、plays を入れたときと同じ。同じ秘密での移動はビンの数（153 × 18）で頭打ちになり、soft の後は 0 行。
 
 **保存容量**（上限 500 MB）
 
@@ -1231,6 +1351,10 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
 - **限界**：再シミュレーションは「物理的に正しい」ことを保証するが、「人間が操作した」ことは保証しない。ツールで作った入力は区別できない（16 区間のうち 5 区間以上を直して再シミュレーションで確かめた改変もここに入る）。
   About 画面に 1 行で正直に書く：「記録は物理的に正しいことを検証していますが、人の操作かどうかは判定できません」。
   上位のリプレイは誰でも見られる。管理者は `wrangler d1 execute` で消せる（手順は `worker/README` ではなく `package.json` の `admin:purge` スクリプトにコメントとして書く）。
+  面の記録を消したときは、その人の `plays.t120` も NULL にする（手順 (5)）。次の毎時の再構築でヒストグラムと `n` からも外れる。
+- **ヒストグラムの位置**（`plays.t120`）も、再シミュレーションを通った本人のランでしか動かない。速くなる向きにしか動かず、ビンが変わるときだけ書くので、
+  1 つの秘密で 1 面を動かせるのは最大 153 回。自己申告の `prev` は面では使わない。新しい秘密を大量に作って人口を水増しすることはできるが、1 つにつき 1 面 1 行で、
+  レート制限（1 分 24 行）と soft の安全弁に縛られる（ランキングのトップ 100 には影響しない）。
 
 #### 7.12 オフラインと単一 HTML
 
@@ -1702,7 +1826,7 @@ game/
 │  │                                     i18n/{ja,en}.ts i18n/format.ts（fmtLevelText） tokens.css styles.css
 │  ├─ store/save.ts                  O8
 │  └─ net/{api.ts,outbox.ts}         O8
-├─ worker/                           O9  index.ts routes/{boot,submit,board,ghost,bench}.ts verify.ts db.ts limits.ts warmup.ts cron.ts
+├─ worker/                           O9  index.ts routes/{boot,submit,board,ghost,bench}.ts verify.ts db.ts limits.ts warmup.ts cron.ts hist.ts seed.ts dup.ts
 ├─ tools/                            O2  common.py ai_ghosts.py daily_pool.py export_fixtures.py ghostcodec.py
 │                                    O0  check-single.mjs   O7  og.mjs
 └─ tests/
@@ -2003,7 +2127,7 @@ export function poseAt(t: GhostTrack, tSec: number, out: GhostPose): void;      
     { "name": "RL_SUBMIT", "namespace_id": "1001", "simple": { "limit": 6,  "period": 60 } },
     { "name": "RL_READ",   "namespace_id": "1002", "simple": { "limit": 30, "period": 60 } }
   ],
-  "triggers": { "crons": ["30 15 * * *"] },
+  "triggers": { "crons": ["30 15 * * *", "7 * * * *"] },   // 00:30 JST の削除と、毎時のヒストグラムの再構築（worker/cron.ts）
   "observability": { "enabled": true },
   "vars": { "DEV": "0", "READ_ONLY": "0" }
 }
@@ -2061,7 +2185,7 @@ export function poseAt(t: GhostTrack, tSec: number, out: GhostPose): void;      
 | `tests/store/*.test.ts` / `tests/net/*.test.ts` | localStorage が例外を投げてもメモリで動き通知が 1 回。送信待ちの集約（ランキングごとに最良 1 件、20 件上限）。バックオフの列。`VITE_NET=off` と `file:` で無効 |
 | `tests/ui/*.test.ts` | ja と en のキーの差分が 0。共有文のスナップショット。共有カードが 1200×630 |
 | `tests/worker/abuse.test.ts` | §7.11 の悪用対策：他人の上位 100 位のリプレイの使い回し → `dup`（丸ごとの複製、デバイスバイトだけ変えた複製、時間を変えない数ティックの改変、日替わりの複製、AI 超えだけを狙った複製）と、同着の別のランが通ること。レート制限が IPv4 アドレス／IPv6 の /64 単位であること（1 つの /64 の 7 通信で 429、別の /64 は無傷）、6000 個の新しいキーの洪水で絞られている客が解放されないこと。`Content-Type` が application/json でなければ 415、`Sec-Fetch-Site` が同一オリジン／none 以外なら 403（どちらも D1 文 0）。日替らしい `prev` の偽装（20 回の再送で 1 回だけ数える、`prev` > 5341 は 400、ai_beaten ≤ cleared ≤ n）。200 以外で終わった submit もカウンターを書き出すこと。書き込みのバッチが commit してから例外になった場合に `deferred` ではなく本当の結果を返すこと |
-| `tests/worker/*.test.ts` | 受理、書き換えたリプレイ（q を 1 つ反転）→ mismatch、申告タイムのずれ → mismatch、古いハッシュ → stale、2701 ティック → tooLong、100 位圏外 → unranked で書き込み 0、100 位圏外でも初めての AI 超え → accepted で ai_beaten +1、ver の競合 → 再試行、2 回続けて競合 → deferred で runs が書かれていない（tok の確認）、7 回目の submit → 429、boot の形と Cache-Control、lite の安全弁、日替わりのヒストグラム更新（prev があるとき古いビンが減る）、日替わりの成功なしの参加（replay null）で n だけ増える、日替わりの圏外で runs 行が作られない、101 位へ落ちた人の replay の NULL 化、`deferred`（CPU 予算超過）、45 s のリプレイ 1 件だけのリクエストは冷えたアイソレートでも検証される、5 件のリクエスト → 400、1 リクエストの D1 文が 50 未満（D1 のモックで数える）、cron の削除 |
+| `tests/worker/*.test.ts` | 受理、書き換えたリプレイ（q を 1 つ反転）→ mismatch、申告タイムのずれ → mismatch、古いハッシュ → stale、2701 ティック → tooLong、100 位圏外 → unranked で書き込みは plays の 1 行だけ（同じビンの再送は 0）、100 位圏外でも初めての AI 超え → accepted で ai_beaten +1、面の notBetter が圏外の判定より先、soft で任意の書き込みが止まる、面のヒストグラムの毎時の再構築（`tests/worker/hist.test.ts`）、ver の競合 → 再試行、2 回続けて競合 → deferred で runs が書かれていない（tok の確認）、7 回目の submit → 429、boot の形と Cache-Control、lite の安全弁、日替わりのヒストグラム更新（prev があるとき古いビンが減る）、日替わりの成功なしの参加（replay null）で n だけ増える、日替わりの圏外で runs 行が作られない、101 位へ落ちた人の replay の NULL 化、`deferred`（CPU 予算超過）、45 s のリプレイ 1 件だけのリクエストは冷えたアイソレートでも検証される、5 件のリクエスト → 400、1 リクエストの D1 文が 50 未満（D1 のモックで数える）、cron の削除 |
 | `tests/e2e/*.spec.ts` | 下記 |
 
 **`tests/e2e/*.spec.ts`**（Playwright。`window.__YP_TEST__` を公開し、`playReplay(levelId, b64)`、`state()`、`command(c)` を使えるようにする。
