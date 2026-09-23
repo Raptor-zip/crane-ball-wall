@@ -294,6 +294,8 @@ export class Particles {
    */
   confetti(xa: number, xb: number, y0: number, n: number, pal: readonly string[] = DEFAULT_CONFETTI, shape: number = S_RECT): void {
     const cx = (xa + xb) / 2;
+    // A spark star fills a small part of its sprite: draw it larger so it covers about what a rect piece does.
+    const sizeK = shape === S_SPARK ? 1.8 : 1;
     for (let k = 0; k < n; k++) {
       const c = this.tmp.set(pal[Math.floor(this.rand() * pal.length)] as string);
       const a = Math.PI / 2 + (this.rand() - 0.5) * 1.5;
@@ -301,7 +303,7 @@ export class Particles {
       this.emit({
         x: cx + (xb - xa) * (this.rand() - 0.5) * 0.6, y: y0 + this.rand() * 0.1, z: 0.05 + this.rand() * 0.3,
         vx: Math.cos(a) * s, vy: Math.sin(a) * s, vz: (this.rand() - 0.5) * 0.4,
-        life: 1.8 + this.rand() * 1.2, size: 6 + this.rand() * 4, color: c, alpha: 1, shape,
+        life: 1.8 + this.rand() * 1.2, size: (6 + this.rand() * 4) * sizeK, color: c, alpha: 1, shape,
         rot: this.rand() * 6.28, spin: (this.rand() - 0.5) * 14, stretch: 1.6, flutter: 2.5 + this.rand() * 3,
         gravity: 3.2, drag: 2.2, shrink: false,
       });

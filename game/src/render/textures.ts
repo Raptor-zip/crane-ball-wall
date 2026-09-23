@@ -131,44 +131,51 @@ export function drawBrick(g: CanvasRenderingContext2D, style: StageLook['brickTe
     return;
   }
   if (style === 'stone') {
-    // Dressed stone: a rounded look from a radial gradient (light top-left, dark rim) plus a few chisel strokes.
-    // The box keeps its corners (the rounding is shading only).
+    // Dressed granite: salt-and-pepper grains and a rounded look from soft edge shading (light top-left, dark
+    // bottom-right, darker corners) plus a few chisel strokes. The box keeps its corners (the rounding is shading only).
     const r = rng(13);
     g.fillStyle = '#f4f0ec';
     g.fillRect(0, 0, W, H);
-    for (let i = 0; i < 26; i++) {
-      const x = r() * W, y = r() * H, rad = 10 + r() * 26;
+    for (let i = 0; i < 14; i++) {
+      const x = r() * W, y = r() * H, rad = 20 + r() * 30;
       const grd = g.createRadialGradient(x, y, 0, x, y, rad);
       const k = r() < 0.5 ? '0,0,0' : '255,255,255';
-      grd.addColorStop(0, `rgba(${k},${0.04 + r() * 0.05})`);
+      grd.addColorStop(0, `rgba(${k},${0.03 + r() * 0.05})`);
       grd.addColorStop(1, `rgba(${k},0)`);
       g.fillStyle = grd;
       g.fillRect(x - rad, y - rad, rad * 2, rad * 2);
     }
-    noise(g, W, H, r, 2400, 0.2, '#4a4448', '#ffffff');
-    const body = g.createRadialGradient(W * 0.4, H * 0.36, 4, W * 0.5, H * 0.5, W * 0.62);
-    body.addColorStop(0, 'rgba(255,255,255,0.34)');
-    body.addColorStop(0.45, 'rgba(255,255,255,0)');
-    body.addColorStop(0.72, 'rgba(40,32,36,0.1)');
-    body.addColorStop(1, 'rgba(40,32,36,0.55)');
-    g.fillStyle = body;
+    noise(g, W, H, r, 3400, 0.24, '#3c3638', '#ffffff');
+    edge(0, 0, 0, 18, 'rgba(255,255,255,0.5)');
+    edge(0, 0, 26, 0, 'rgba(255,255,255,0.34)');
+    edge(0, H, 0, H - 22, 'rgba(40,32,36,0.42)');
+    edge(W, 0, W - 30, 0, 'rgba(40,32,36,0.3)');
+    const dome = g.createRadialGradient(W * 0.42, H * 0.4, 0, W * 0.42, H * 0.4, W * 0.42);
+    dome.addColorStop(0, 'rgba(255,255,255,0.3)');
+    dome.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = dome;
+    g.fillRect(0, 0, W, H);
+    const rim = g.createRadialGradient(W / 2, H / 2, H * 0.46, W / 2, H / 2, Math.hypot(W / 2, H / 2));
+    rim.addColorStop(0, 'rgba(40,32,36,0)');
+    rim.addColorStop(1, 'rgba(40,32,36,0.28)');
+    g.fillStyle = rim;
     g.fillRect(0, 0, W, H);
     const strokes = 3 + Math.floor(r() * 3);
     g.lineCap = 'round';
     for (let i = 0; i < strokes; i++) {
-      const x = W * (0.2 + r() * 0.6), y = H * (0.2 + r() * 0.6), a = r() * Math.PI, l = 14 + r() * 22;
+      const x = W * (0.2 + r() * 0.6), y = H * (0.25 + r() * 0.5), a = r() * Math.PI, l = 12 + r() * 18;
       const dx = Math.cos(a) * l, dy = Math.sin(a) * l * 0.5;
-      g.lineWidth = 1.6;
-      g.strokeStyle = 'rgba(45,38,40,0.3)';
+      g.lineWidth = 1.4;
+      g.strokeStyle = 'rgba(45,38,40,0.26)';
       g.beginPath();
       g.moveTo(x, y);
       g.lineTo(x + dx, y + dy);
       g.stroke();
-      g.lineWidth = 1.1;
-      g.strokeStyle = 'rgba(255,255,255,0.35)';
+      g.lineWidth = 1;
+      g.strokeStyle = 'rgba(255,255,255,0.32)';
       g.beginPath();
-      g.moveTo(x, y + 1.6);
-      g.lineTo(x + dx, y + dy + 1.6);
+      g.moveTo(x, y + 1.5);
+      g.lineTo(x + dx, y + dy + 1.5);
       g.stroke();
     }
     g.lineCap = 'butt';
@@ -260,11 +267,11 @@ export function drawPaper(g: CanvasRenderingContext2D, st: Pick<StageLook, 'pape
     }
   } else if (t.fibre === 'kozo') {
     // Long, gently bent kozo (mulberry) fibres.
-    for (let i = 0; i < 160; i++) {
+    for (let i = 0; i < 200; i++) {
       const x = r() * S, y = r() * S, a = r() * Math.PI, l = 20 + r() * 40, bend = (r() - 0.5) * 0.5 * l;
       const ex = x + Math.cos(a) * l, ey = y + Math.sin(a) * l;
       g.strokeStyle = r() < 0.6 ? t.fibreDark : t.fibreLight;
-      g.lineWidth = 0.5 + r() * 0.5;
+      g.lineWidth = 0.9 + r() * 0.9;
       g.beginPath();
       g.moveTo(x, y);
       g.quadraticCurveTo((x + ex) / 2 - Math.sin(a) * bend, (y + ey) / 2 + Math.cos(a) * bend, ex, ey);
@@ -329,12 +336,15 @@ function drawn(w: number, h: number, srgb: boolean, repeat: boolean, draw: (g: C
   return {
     texture: t,
     redraw(d) {
-      // Start from a fresh canvas's state, so a redraw issues exactly the calls of a first draw (every base is opaque).
-      g.globalAlpha = 1;
-      g.fillStyle = '#000000';
-      g.strokeStyle = '#000000';
-      g.lineWidth = 1;
-      d(g);
+      // Paint in a fresh canvas and copy it over: a browser may switch a canvas's rasteriser after complex paths, so
+      // repainting in place can differ from a first paint by a few levels of antialiasing. A fresh canvas paints
+      // exactly like the first time (the default look after a round trip is pixel-identical to a fresh boot).
+      const [tc, tg] = canvas(w, h);
+      d(tg);
+      g.save();
+      g.globalCompositeOperation = 'copy';
+      g.drawImage(tc, 0, 0);
+      g.restore();
       t.needsUpdate = true;
     },
   };

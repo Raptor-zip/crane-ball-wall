@@ -19,7 +19,7 @@ import { Z_GANTRY_LEG } from '../../src/render/scene';
 import { BEAM_TOP } from '../../src/render/crane';
 import { DEFAULT_LOOK, LOOKS, confettiPalette } from '../../src/render/skinLooks';
 import type { StageLook } from '../../src/render/skinLooks';
-import { hashNums, installRecorder, recorderOf } from './recorder';
+import { hashNums, installRecorder, recorderCount, recorderOf, recordersSince } from './recorder';
 
 const LEVELS = (levelsFile as unknown as { levels: LevelDef[] }).levels;
 const walls = (id: string): LevelDef['physics']['walls'] => LEVELS.find((l) => l.id === id)!.physics.walls;
@@ -132,12 +132,22 @@ describe('default look goldens (today)', () => {
 
 const STAGE_LOOKS = Object.values(LOOKS.stage);
 const CRANE_LOOKS = Object.values(LOOKS.crane);
-/** Hash of the latest draw on a canvas (its log is cleared first). */
-function redrawHash(canvas: unknown, draw: () => void): string {
-  const rec = recorderOf(canvas);
-  rec.log.length = 0;
+/**
+ * Hashes of a restyle / setHazard: each canvas is painted in a fresh canvas (its whole call stream) and copied into
+ * the texture's own canvas. Returns the fresh canvases' hashes in paint order, after checking the copies.
+ */
+function redrawHashes(targets: unknown[], draw: () => void): string[] {
+  const recs = targets.map((c) => recorderOf(c));
+  for (const r of recs) r.log.length = 0;
+  const n0 = recorderCount();
   draw();
-  return rec.hash();
+  const fresh = recordersSince(n0);
+  expect(fresh.length).toBe(targets.length);
+  for (const r of recs) {
+    expect(r.log.map((e) => e[0])).toEqual(['save', 'set', 'drawImage', 'restore']);
+    expect(r.log[1]).toEqual(['set', 'globalCompositeOperation', 'copy']);
+  }
+  return fresh.map((r) => r.hash());
 }
 
 describe('the default look reproduces the goldens', () => {
@@ -154,18 +164,16 @@ describe('the default look reproduces the goldens', () => {
     const t = createTextures(DEFAULT_LOOK);
     const [paper, floor, brick, hazard] = [t.paper, t.floor, t.brick, t.hazard];
     const v0 = paper.version;
+    const golden = [GOLDEN.tex.paper, GOLDEN.tex.floor, GOLDEN.tex.brick];
     for (const st of STAGE_LOOKS) {
-      const other = redrawHash(paper.image, () => t.restyle(st));
-      if (st.id !== DEFAULT_LOOK.stage.id) expect(other, st.id).not.toBe(GOLDEN.tex.paper);
-      expect(redrawHash(paper.image, () => t.restyle(DEFAULT_LOOK.stage)), st.id).toBe(GOLDEN.tex.paper);
-      t.restyle(st);
-      expect(redrawHash(floor.image, () => t.restyle(DEFAULT_LOOK.stage)), st.id).toBe(GOLDEN.tex.floor);
-      t.restyle(st);
-      expect(redrawHash(brick.image, () => t.restyle(DEFAULT_LOOK.stage)), st.id).toBe(GOLDEN.tex.brick);
+      const other = redrawHashes([paper.image, floor.image, brick.image], () => t.restyle(st));
+      if (st.id !== DEFAULT_LOOK.stage.id) expect(other[0], st.id).not.toBe(GOLDEN.tex.paper);
+      expect(redrawHashes([paper.image, floor.image, brick.image], () => t.restyle(DEFAULT_LOOK.stage)), st.id).toEqual(golden);
     }
     for (const cr of CRANE_LOOKS) {
       t.setHazard(cr.hazard[0], cr.hazard[1]);
-      expect(redrawHash(hazard.image, () => t.setHazard(DEFAULT_LOOK.crane.hazard[0], DEFAULT_LOOK.crane.hazard[1])), cr.id).toBe(GOLDEN.tex.hazard);
+      expect(redrawHashes([hazard.image], () => t.setHazard(DEFAULT_LOOK.crane.hazard[0], DEFAULT_LOOK.crane.hazard[1])), cr.id)
+        .toEqual([GOLDEN.tex.hazard]);
     }
     expect([t.paper, t.floor, t.brick, t.hazard]).toEqual([paper, floor, brick, hazard]);
     expect(paper.version).toBeGreaterThan(v0);

@@ -122,11 +122,14 @@ export function gantryGeometry(rail: [number, number], look: CraneLook = DEFAULT
   for (const lx of legX) {
     // Arm from the beam back to the leg top.
     b.box(lx - 0.035, BEAM_TOP - 0.07, Z_GANTRY_LEG - 0.035, lx + 0.035, BEAM_TOP, 0.0, yellow);
-    // Leg (optionally in aviation-style bands from the foot plate up).
+    // Leg, optionally in aviation-style bands: an odd number of equal bands near `pitch`, so both ends are colour a.
     if (bands && bands.pitch > 0) {
-      let k = 0;
-      for (let y = 0.012; y < BEAM_TOP - 1e-6; y += bands.pitch, k++) {
-        b.box(lx - 0.035, y, Z_GANTRY_LEG - 0.035, lx + 0.035, Math.min(BEAM_TOP, y + bands.pitch), Z_GANTRY_LEG + 0.035, k % 2 ? bands.b : bands.a);
+      const y0 = 0.012, len = BEAM_TOP - y0;
+      let n = Math.max(1, Math.round(len / bands.pitch));
+      if (n % 2 === 0) n += len / bands.pitch > n ? 1 : -1;
+      for (let k = 0; k < n; k++) {
+        b.box(lx - 0.035, y0 + (len * k) / n, Z_GANTRY_LEG - 0.035, lx + 0.035, k === n - 1 ? BEAM_TOP : y0 + (len * (k + 1)) / n, Z_GANTRY_LEG + 0.035,
+          k % 2 ? bands.b : bands.a);
       }
     } else {
       b.box(lx - 0.035, 0.012, Z_GANTRY_LEG - 0.035, lx + 0.035, BEAM_TOP, Z_GANTRY_LEG + 0.035, legC);

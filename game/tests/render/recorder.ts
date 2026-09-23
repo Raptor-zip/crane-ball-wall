@@ -131,6 +131,18 @@ export function hashNums(...arrs: ArrayLike<number>[]): string {
 }
 
 const recorders = new WeakMap<HTMLCanvasElement, Recorder>();
+/** Recorders in the order their contexts were created (for canvases a function makes internally). */
+const made: Recorder[] = [];
+
+/** Number of recording contexts created so far. */
+export function recorderCount(): number {
+  return made.length;
+}
+
+/** Recorders created after `since` (a recorderCount() value), in creation order. */
+export function recordersSince(since: number): Recorder[] {
+  return made.slice(since);
+}
 let installed: PropertyDescriptor | undefined;
 
 /** Stubs HTMLCanvasElement.prototype.getContext('2d') with a recorder per canvas. Returns an uninstaller. */
@@ -149,6 +161,7 @@ export function installRecorder(): () => void {
         c = r.ctx;
         ctxs.set(this, c);
         recorders.set(this, r.rec);
+        made.push(r.rec);
       }
       return c;
     },

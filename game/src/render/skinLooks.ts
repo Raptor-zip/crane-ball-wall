@@ -37,7 +37,7 @@ export interface CraneLook {
   /** Stiffener ribs and end caps (default leg caps and knee braces too). */
   beamDark: Hex;
   legs?: Hex; legCap?: Hex; brace?: Hex;
-  /** Aviation-style bands replacing the plain leg box: a / b alternating every `pitch` m from the foot plate up. */
+  /** Aviation-style bands replacing the plain leg box: a / b alternating, an odd number of bands of about `pitch` m. */
   legBands?: { a: Hex; b: Hex; pitch: number };
   foot: Hex;
   body: Hex; bodyTop: Hex; plate: Hex; tyre: Hex; hub: Hex; steel: Hex;
@@ -111,7 +111,8 @@ const BALLS: readonly BallLook[] = [
     id: 'ball.moss', body: '#556B2F', outline: '#1F2A10', trail: '#3A4A22',
     mat: { roughness: 0.95, metalness: 0, clearcoat: 0.02, clearcoatRoughness: 0.6, envMapIntensity: 0.2 },
     pattern: [
-      { kind: 'speckle', color: '#3E5222', cover: 0.3, seed: 31 },
+      // .26 (not .30): the body colour keeps >= 60 % of the surface (area-weighted on the real sphere, §5.3).
+      { kind: 'speckle', color: '#3E5222', cover: 0.26, seed: 31 },
       { kind: 'speckle', color: '#6B5A3A', cover: 0.12, seed: 32 },
       { kind: 'band', color: '#8E7447', width: 0.02, axes: ['x', 'z'] },
     ],
