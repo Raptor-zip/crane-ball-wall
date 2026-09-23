@@ -50,6 +50,12 @@ export type {
   BootResponse, SubmitRequest, SubmitResponse, GhostResponse, BoardResponse,
 } from './shared/api';
 
+// ---- skins (O3 / O5 / O7, GAME_DESIGN.md §7.14: cosmetic only, never sent) ----
+export type { SkinLook, SkinPart, BallLook, CraneLook, TrailLook, StageLook } from './render/skinLooks';
+export type { RendererExtras } from './render/renderer';
+export type { SkinSet, UnlockRule } from './core/skins';
+export type { SkinItem, SkinsView } from './ui/context';
+
 // ---- ghosts (O3) ----
 export type { GhostTrack, AiGhostJson } from './core/ghosts';
 export { trackFromAiGhost, trackFromReplay, reversed, poseAt } from './core/ghosts';

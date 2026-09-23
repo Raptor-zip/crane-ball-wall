@@ -221,6 +221,7 @@ export function drawShareCard(data: ResultsData, aiPath: Float32Array | null): H
     trolleyX: lastX,
     ball: { x: lastX, y: lastY },
     egg: level.cargo === 'egg',
+    ballFill: level.cargo === 'egg' ? undefined : data.ballFill,
     lineScale: 1.4,
     reqDeg: factsOf(level).reqDeg,
   });

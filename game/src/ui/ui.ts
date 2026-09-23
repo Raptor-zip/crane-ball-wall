@@ -30,6 +30,8 @@ import { renderDailyScreen } from './screens/daily';
 import { renderSettingsScreen } from './screens/settings';
 import { renderAboutScreen } from './screens/about';
 import { renderNotesScreen } from './screens/notes';
+import { renderSkinsScreen } from './screens/skins';
+import type { SkinPart } from '../render/skinLooks';
 
 // BoardRow is defined next to the API wire types (the Worker must not depend on src/ui); re-exported here.
 export type { BoardRow } from '../shared/api';
@@ -60,7 +62,8 @@ export interface HudState {
 export type Screen =
   | { id: 'title' } | { id: 'select'; world: number } | { id: 'briefing'; level: LevelDef; ai: GhostSummary }
   | { id: 'hud' } | { id: 'pause' } | { id: 'results'; data: ResultsData } | { id: 'demo'; level: LevelDef }
-  | { id: 'board'; key: string } | { id: 'daily'; data: DailyView } | { id: 'settings' } | { id: 'about' } | { id: 'notes'; world: number };
+  | { id: 'board'; key: string } | { id: 'daily'; data: DailyView } | { id: 'settings' } | { id: 'about' } | { id: 'notes'; world: number }
+  | { id: 'skins'; part?: SkinPart };   // O7 addition (§7.14): the skins sheet over the live title attract
 export interface GhostSummary { parSub: number; planT: number; peakF: number; minGapMm: number; pumps: number; calmPath: Float32Array }
 export interface ResultsData {
   level: LevelDef; ok: boolean; score: number | null; parSub: number; pbSub: number | null; wrSub: number | null;
@@ -68,6 +71,7 @@ export interface ResultsData {
   badges: BadgeId[]; failReason: string | null; rank: number | null; aiBeaten: number | null /* players who beat the AI here (online) */;
   replay: string | null /* null above 6 KB */; strobe: Float32Array /* bx,by every 0.1 s */;
   standing?: Standing | null /* level success: the world rank row under the time (GAME_DESIGN.md §9.4); core replaces it as answers come */;
+  ballFill?: string /* the equipped ball's colour for the share card (§7.14); absent: the default red, and on egg levels */;
 }
 export interface DailyView {
   dayIndex: number; n: number; level: LevelDef; balls: ('ok' | 'gold' | 'crown' | 'fail' | null)[];
@@ -108,8 +112,8 @@ const COMPACT_PANEL_H = 60;
 /** The floor's front edge (z = 0.32 m, seen from 6° above) lines up with this y (m) in the ball plane (render/scene.ts). */
 const FLOOR_FRONT_Y = -0.08;
 
-type SubId = 'settings' | 'about' | 'notes' | 'board';
-const SUB_SCREENS: ReadonlySet<Screen['id']> = new Set<SubId>(['settings', 'about', 'notes', 'board']);
+type SubId = 'settings' | 'about' | 'notes' | 'board' | 'skins';
+const SUB_SCREENS: ReadonlySet<Screen['id']> = new Set<SubId>(['settings', 'about', 'notes', 'board', 'skins']);
 const PAGE_SCREENS: ReadonlySet<Screen['id']> = new Set(['select', 'daily', 'settings', 'about', 'notes', 'board']);
 const HUD_SCREENS: ReadonlySet<Screen['id']> = new Set(['hud', 'pause', 'results', 'briefing']);
 
@@ -403,6 +407,7 @@ export function createUI(ctx: UiContext = {}): UI {
     open: (sc) => show(sc),
     back: () => goBack(),
     canGoBack: () => stack.length > 0,
+    host: () => (stack.find((x) => !SUB_SCREENS.has(x.id)) ?? current).id,
     save,
     levels,
     summary,
@@ -491,6 +496,9 @@ export function createUI(ctx: UiContext = {}): UI {
         case 'notes':
           r = renderNotesScreen(layer, sc, env);
           break;
+        case 'skins':
+          r = renderSkinsScreen(layer, sc, env);
+          break;
       }
     } catch (e) {
       console.error('[ui] screen render failed', sc.id, e);
@@ -576,6 +584,7 @@ export function createUI(ctx: UiContext = {}): UI {
       case 'about':
       case 'notes':
       case 'board':
+      case 'skins':
         goBack();
         break;
       case 'daily':

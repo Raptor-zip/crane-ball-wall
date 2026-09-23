@@ -13,6 +13,8 @@
 import type { BadgeId, Medal } from '../core/bus';
 import { enqueueRun, type PendingRun } from '../net/outbox';
 import { isValidSecret, newSecret, pidhFromSecret, randomNameSeed } from '../shared/names';
+import { parseSkinRecord, parseSkinSelection } from './cosmetic';
+import type { SkinRecord, SkinSelectionSave } from './cosmetic';
 
 export const SAVE_KEY = 'yurapita:v1';
 /** A save that could not be parsed is copied here once before it is replaced. */
@@ -43,6 +45,8 @@ export interface SaveV1 {
     steady: boolean;         // steady assist (§3.7, ranked): on by default
     aiLine: boolean | null;  // null = per-world default (§8.4: shown in W1-W2, hidden from W3)
     textScale: 100 | 125; quality: 'auto' | 'high' | 'low';
+    /** Equipped skins per part (§7.14, cosmetic only; absent = the defaults). Parsed by store/cosmetic.ts. */
+    skin?: SkinSelectionSave;
   };
   levels: Record<string, LevelProgress>;
   daily: {
@@ -60,6 +64,8 @@ export interface SaveV1 {
   };
   outbox: PendingRun[];
   seen: { onboarding: boolean; notes: number[]; aiLostCard: boolean; storageNotice: boolean; tricks: string[] };
+  /** Unlocked / seen skins and the best daily streak (§7.14; absent until the first unlock). store/cosmetic.ts. */
+  skins?: SkinRecord;
 }
 /** update() saves with a 250 ms throttle; flush() writes pending changes immediately. */
 export interface Store { readonly persistent: boolean; data(): SaveV1; update(fn: (d: SaveV1) => void): void; flush(): void }
@@ -252,6 +258,8 @@ export function parseSave(raw: unknown, lang: 'ja' | 'en' = defaultLang()): Save
     t.aiLine = x.aiLine === null || typeof x.aiLine === 'boolean' ? x.aiLine : t.aiLine;
     t.textScale = oneOf(x.textScale, [100, 125] as const, t.textScale);
     t.quality = oneOf(x.quality, ['auto', 'high', 'low'] as const, t.quality);
+    const skin = parseSkinSelection(x.skin);
+    if (skin) t.skin = skin;
   }
 
   if (isObj(raw.levels)) {
@@ -284,6 +292,9 @@ export function parseSave(raw: unknown, lang: 'ja' | 'en' = defaultLang()): Save
     s.seen.storageNotice = false;
     s.seen.tricks = Array.isArray(x.tricks) ? [...new Set(x.tricks.filter((t): t is string => typeof t === 'string'))] : [];
   }
+
+  const skins = parseSkinRecord(raw.skins, s.daily.streak);
+  if (skins) s.skins = skins;
   return s;
 }
 

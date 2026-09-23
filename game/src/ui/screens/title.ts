@@ -36,19 +36,21 @@ export function renderTitleScreen(root: HTMLElement, _screen: Extract<Screen, { 
   };
   const settings = mk('gear', t('title.settings'), () => env.open({ id: 'settings' }));
   const about = mk('info', t('title.about'), () => env.open({ id: 'about' }));
+  const skins = skinsButton(env, wide);
   const tagline = h('div', { class: 'tagline' }, t('app.tagline'));
 
   const el = h('div', { class: 'title', tabindex: '-1', 'data-autofocus': '', 'aria-label': `${t('app.title')} — ${t('title.hint')}` });
   if (wide) {
     el.append(
       h('div', { class: 'title-logo' }, logo(), tagline),
-      h('div', { class: 'title-corner' }, about, settings),
+      h('div', { class: 'title-corner' }, skins, about, settings),
       h('div', { class: 'title-foot' }, play, h('div', { class: 'title-hint' }, t('title.hint'))));
   } else {
     el.append(
       h('div', { class: 'title-logo' }, logo(), h('div', { class: 'logo-sub' }, t('app.titleAlt'))),
-      h('div', { class: 'title-foot' }, tagline, play, h('div', { class: 'title-hint' }, t('title.hint')), h('div', { class: 'title-links' }, settings, about)));
+      h('div', { class: 'title-foot' }, skins ? h('div', { class: 'title-float' }, skins) : null, tagline, play, h('div', { class: 'title-hint' }, t('title.hint')), h('div', { class: 'title-links' }, settings, about)));
   }
+  if (skins) el.classList.add('has-skins');
   // Tap anywhere (outside the small buttons) = start.
   el.addEventListener('click', start);
   root.appendChild(el);
@@ -56,9 +58,36 @@ export function renderTitleScreen(root: HTMLElement, _screen: Extract<Screen, { 
     onKey(e) {
       if (e.key === 'Tab' || e.key === 'Shift' || e.key === 'Escape' || e.metaKey || e.ctrlKey || e.altKey) return false;
       const tgt = e.target as HTMLElement;
-      if ((e.key === 'Enter' || e.key === ' ') && tgt.closest('.title-corner, .title-links')) return false;
+      if ((e.key === 'Enter' || e.key === ' ') && tgt.closest('.title-corner, .title-links, .title-float')) return false;
       start();
       return true;
     },
   };
+}
+
+/**
+ * The スキン button (GAME_DESIGN.md §7.14), only when core provides the skins data. wide: a third corner button next to
+ * about and settings; tall: a pill over the scene's lower right corner, above the footer (the footer's links row has
+ * no room for a third link on a 320 px phone). A red dot while unlocked skins wait unseen: the toast that announced
+ * them is gone after a few seconds, the dot stays until their tab was opened on the skins screen.
+ */
+function skinsButton(env: ScreenEnv, wide: boolean): HTMLButtonElement | null {
+  let unseen = 0;
+  try {
+    const v = env.ctx.skins?.();
+    if (!v) return null;
+    unseen = v.unseen;
+  } catch {
+    return null;
+  }
+  const label = unseen > 0 ? t('title.skinsNew') : t('title.skins');
+  const b = wide
+    ? h('button', { class: 'btn btn--icon title-skins', type: 'button', 'aria-label': label, title: label }, icon('brush'))
+    : h('button', { class: 'btn title-skins title-skins--pill', type: 'button', 'aria-label': label }, icon('brush'), t('title.skins'));
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    env.open({ id: 'skins' });
+  });
+  if (unseen > 0) b.append(h('span', { class: 'skin-dot', 'aria-hidden': 'true' }));
+  return b;
 }

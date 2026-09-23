@@ -1435,6 +1435,53 @@ AI差 +0.92秒｜ギリ 6mm｜上位 8%｜連続 5日
   - ランごとに動的な OGP は作らない。
 - **About 画面**：「制作 貝淵蒼馬」だけ。ほかに元ネタの注記として「MathWorks ブログ『Simulate in MATLAB, Animate in Blender』（Ned Gulley）の問題から着想」へのリンクと、不正対策の限界の 1 行を置く。ツールや日付のクレジットは書かない。
 
+### 7.14 スキン（着せ替え。2026-09-24 追加）
+
+見た目だけを変える着せ替え。**物理・当たり判定・ランキングの検証は 1 ミリも変わらない**。4 つの部位を別々に選べ、実績（今の保存データ）で開くので、今までのプレイヤーは起動した瞬間にそれまでの分が開く。
+
+- **部位**：ボール／クレーン・台車／軌跡・演出（紐の色、リボン、ストロボの円、成功の紙吹雪）／背景・壁（紙、方眼、床、レンガ）。
+- **守ること**（詳細は `src/render/skinLooks.ts` と §9.1）：
+  - 意味のある色は変えない：墨、ゴール、危険、AI のシアン、ゴースト全部、段位の色、ランプ、たまごとその紐。レールの下フランジ（#6B7280、梁の激突の縁）もそのまま。
+  - 寸法・カメラ・レイアウトは変えない（ボールは `BALL_R` の球のまま、紐は 2.4 px、壁は箱の中でレンガの段の高さだけが変わる）。
+  - 盤面はいつも明るい紙（HUD の縁取りと余白がその色を前提にしている）。時間で色が変わるもの・発光・半透明・加算合成は使わない。
+  - 4-3（たまご）ではボールと紐のスキンは効かない（画面にもそう書く）。
+  - スキンの id は端末の中だけ：リプレイ、送信、挑戦状、送信待ち、ゴーストには入らない（`tests/core/skins_boundary.test.ts`）。ほかの人のゴーストはいつもゴーストの色。
+  - 読みやすさのゲート（`tests/core/skins_gate.test.ts`、CIEDE2000 と WCAG のコントラストを色覚の 3 型で）を、全部の組み合わせ（1750 通り）が通る。
+- **一覧**（22 種。各部位の最初が既定で、いつも使える。条件は `src/core/skins.ts` の `SKINS` の 1 か所）：
+
+| 部位 | スキン（セット） | 開く条件 |
+|---|---|---|
+| ボール | 赤いボール（原典）／鋼球（研究室）／解体鉄球（工事現場）／質点（教科書）／苔玉（おまけ）／金の帯（おまけ）／瑠璃玉（丹頂） | はじめから／ワールド1を全面クリア／しくじり 50 回／理科ノート 3 冊／今日の5球を 7 日連続／金メダル 5 面／全面で王冠 |
+| クレーン | 黄色いガントリー／手作り実験装置／錆止めと紅白／線画／丹頂仕立て | はじめから／技を 3 つ／今日の5球を 3 日連続／バッジ「やさしさ」／王冠 8 個 |
+| 軌跡・演出 | インク／鉛筆と消しカス／ワイヤーと火花／補助線と∎／組紐と金箔 | はじめから／どれか 1 面クリア／バッジ「端ドン」／技を 6 つぜんぶ／王冠 1 個 |
+| 背景・壁 | 実験ノート／青焼き図面／工事現場／教科書の図／鶴の城 | はじめから／2-2 をクリア／挑戦 300 回／全 18 面クリア（スキップは数えない）／王冠 13 個 |
+
+  - 数えるのはキャンペーンの面だけ。スキップは「クリア」に数えない。王冠は金を含む。連続日数は `max(daily.streak, skins.bestStreak)`。
+  - 一度開いたスキンは閉じない（`skins.owned` に残す。連続日数が途切れても、将来面が増えても）。
+- **保存**（§10.4）：`settings.skin`（部位ごとの装着 id。UI が他の設定と同じく書く）と `skins: { owned, seen, bestStreak }`。
+  どちらも `src/store/cosmetic.ts` が読み込み時に検査する（カタログの id だけ、既定は入れない、`bestStreak` は `daily.streak` 以上）。
+  装着 id が知らない・別の部位・まだ開いていないものなら、その部位は既定で描く（保存は書き換えない）。
+- **開いたときの知らせ**（`src/core/skinState.ts`）：core は画面を出すたび（走行中を除く：起動、結果、READY、メニュー）に保存を見て、新しく条件を満たしたものを `owned` に足す。
+  - 起動時（今までのプレイヤーの初回）は 1 つなら名前、2 つ以上なら 1 枚だけ「スキンが{n}個開いた! タイトルの「スキン」から着せ替え」。
+  - ラン後は 2 つまで名前つきで 1 枚ずつ（「スキン「鋼球」が開いた!」）、3 つ以上ならまとめて 1 枚。トーストは `info`。
+  - トーストは数秒で消えるので、見ていないスキン（`owned − seen`）があるあいだ、入口のボタンに赤い点を付ける。
+- **スキン画面**（`src/ui/screens/skins.ts`、UI のサブ画面 `{ id: 'skins' }`）：
+  - 動いているタイトルのアトラクト（2-2 の AI）の上に重ねるシート。縦持ちは下のカード（操作面とベンチ帯の高さ。上端が床の手前の縁に来て遊ぶ範囲が全部見える。最小 18rem、最大 62 %）、横持ちは右の 380 px のパネル。
+    上や横に見えているアトラクトがそのまま試着の見本になる。面選択・今日の5球から設定経由で開いたときは、core が裏でアトラクトを回し、閉じるとその画面の状態に戻す。
+  - 入口：タイトル（横持ちは右上の 3 つ目のボタン、縦持ちは下の帯の上の右端の「スキン」）と、設定の「表示」の最後の行。
+    ポーズメニューや結果カードから開いた設定には出さない（スキンは走行の外でだけ変わる）。
+  - 見出し「スキン」と「着せ替え — 物理は1ミリも変わりません」、部位のタブ 4 つ（開いた数／全部の数、見ていないものがあれば赤い点）。
+    ボールと軌跡のタブにはカードの下にたまごの注意書き。
+  - 各タブはカードのラジオグループ。カードは縮図（SVG、`src/ui/skinthumb.ts`）、セット名、名前、一言（開いたもの）または条件と進み具合のバー（まだのもの）。
+    装着中は 3 px の墨の枠とチェック（色だけに頼らない）。まだのものも本当の色で描き、鍵の印と条件を `--ink-2` で書く。セットがそろうと朱の「そろった」。
+  - 開いたカードをタップすると装着（すぐ反映）。まだのカードをタップすると試着（150 ms 待ってから反映）し、上に「試着中（まだ開いていません）」と条件の札を出す。
+    同じカードをもう一度、別のカード、札の ×、閉じるで試着は終わる。試着は保存しない。
+  - タブを開くと、そのタブの新しいスキンを `seen` に入れる（NEW の札はその回のあいだ残す）。
+  - キーボード：タブは ← →（Home / End）、カードは ↑ ↓ で次のカードを選ぶ（装着か試着）。Esc で閉じる。それ以外のキーはシートの中で止め、後ろのタイトルが始まらないようにする。
+- **描画**（`RendererExtras.setSkin(look)`）：core は `renderer.init` の前に装着中の見た目を渡し（最初のフレームから、テクスチャを 1 回だけ描く）、
+  その後は装着が変わったときだけ渡す（走行中・判子の間は渡さず、次の落ち着いた画面で）。レンダラーは部位ごとに変わった所だけを、その場で塗り替える。
+- **共有カード**：ボールの色だけが装着中のボールの色になる（`ResultsData.ballFill`。既定とたまごの面では付けない）。紙・壁・クレーン・紐・AI の線はいつもの色。
+
 ---
 
 ## 8. AI ゴースト・パイプライン（オフライン、Python、所有者 O2）
@@ -1686,6 +1733,8 @@ AI差 +0.92秒｜ギリ 6mm｜上位 8%｜連続 5日
 - **フォント**：見出しは Google Fonts の「M PLUS Rounded 1c」800、本文は 500。フォールバックは `"Hiragino Maru Gothic ProN", "Hiragino Sans", "Noto Sans JP", system-ui`。
   数字は `ui-monospace` で `font-variant-numeric: tabular-nums`。単一 HTML ではフォールバックで表示する。
 - **UI の部品**：角の丸い太めのボタン、「ピタッ!」の朱色の判子（#D8342B、丸枠）、メダルのコイン、作戦図は製図カード風。
+- **スキン**（§7.14）が変えるのは、色、材質の数値、テクスチャの canvas の描き直しだけ（テクスチャは 6 枚のまま、新しく作らない。描画の呼び出し数も同じ）。
+  上の表のうち意味のある色（墨、ゴール、危険、AI、ゴースト、判子）と CSS のトークン、HUD の SVG、OGP は変わらない。盤面はいつも明るい紙。
 
 ### 9.2 カメラ
 
@@ -1732,6 +1781,7 @@ RUNNING/READY ─ Esc・⏸・タブが隠れる → PAUSED → 再開 / リト�
 RESULTS → READY(リトライ) | READY(次の面) | DEMO(AIの手本) | LEADERBOARD | SHARE
 3 連続 Crash（未クリアのキャンペーン面、1 面 1 回）→ DEMO(自動、スキップ可) → READY
 LEVEL_SELECT ↔ DAILY_HUB | SETTINGS | ABOUT | NOTES（理科ノート）
+TITLE ／ SETTINGS（面選択・今日の5球から）→ スキン（シート。背後でタイトルのアトラクトが動く。閉じると元の画面へ、§7.14）
 ```
 
 - **結果カード**に出すもの：タイム（3 桁）、PB 差、AI 差、WR 差（オンライン時）、メダル（とアニメーション）、次のメダルまでの差、最小すき間（あなたと AI）、ピーク |F|（あなたと AI）、バッジ。
@@ -2102,14 +2152,16 @@ export interface HudState {
 export type Screen =
   | { id: 'title' } | { id: 'select'; world: number } | { id: 'briefing'; level: LevelDef; ai: GhostSummary }
   | { id: 'hud' } | { id: 'pause' } | { id: 'results'; data: ResultsData } | { id: 'demo'; level: LevelDef }
-  | { id: 'board'; key: string } | { id: 'daily'; data: DailyView } | { id: 'settings' } | { id: 'about' } | { id: 'notes'; world: number };
+  | { id: 'board'; key: string } | { id: 'daily'; data: DailyView } | { id: 'settings' } | { id: 'about' } | { id: 'notes'; world: number }
+  | { id: 'skins'; part?: 'ball' | 'crane' | 'trail' | 'stage' };   // §7.14：アトラクトの上のシート（UI のサブ画面）
 export interface GhostSummary { parSub: number; planT: number; peakF: number; minGapMm: number; pumps: number; calmPath: Float32Array }
 export interface ResultsData { level: LevelDef; ok: boolean; score: number | null; parSub: number; pbSub: number | null; wrSub: number | null;
   medal: Medal; crown: boolean; nextMedalSub: number | null; gapMm: number; aiGapMm: number; peakF: number; aiPeakF: number;
   badges: BadgeId[]; failReason: string | null; rank: number | null /* 使わない（core はいつも null。世界順位は standing） */; aiBeaten: number | null /* この面で AI に勝った人数（オンライン時） */;
   replay: string | null /* 6 KB を超えたら null */; strobe: Float32Array /* 0.1 s ごとの bx,by */;
   standing?: Standing | null /* 面の成功だけ：タイムの下の世界順位の行（src/shared/rank.ts、§9.4）。答えが来ると core が差し替え、
-                                UI は結果カードの間 hud() のたびに見て、変わったらその行だけ描き直す。同じ ResultsData ではランクインの判子は 1 回だけ動く */ }
+                                UI は結果カードの間 hud() のたびに見て、変わったらその行だけ描き直す。同じ ResultsData ではランクインの判子は 1 回だけ動く */;
+  ballFill?: string /* §7.14：共有カードのボールの色（装着中のボール）。既定の赤とたまごの面ではなし */ }
 export interface DailyView { dayIndex: number; n: number; level: LevelDef; balls: ('ok' | 'gold' | 'crown' | 'fail' | null)[];
   bestSub: number | null; parSub: number; top: BoardRow[] | null; rank: number | null; pct: number | null; streak: number; shareText: string }
 export type BoardRow = [pidh: string, nameSeed: number, t120: number, gapUm: number, device: number, created: number];
@@ -2140,7 +2192,8 @@ export interface SaveV1 {
   v: 1;
   id: { secret: string; pidh: string; nameSeed: number };
   settings: { lang: 'ja' | 'en'; volume: number; muted: boolean; haptics: boolean; motion: 'auto' | 'on' | 'off';
-              keyboard: 'speed' | 'force'; ghostSet: 0 | 1 | 2 | 3 | 4; aiLine: boolean | null; textScale: 100 | 125; quality: 'auto' | 'high' | 'low' };
+              keyboard: 'speed' | 'force'; ghostSet: 0 | 1 | 2 | 3 | 4; aiLine: boolean | null; textScale: 100 | 125; quality: 'auto' | 'high' | 'low';
+              skin?: { ball?: string; crane?: string; trail?: string; stage?: string } };   // §7.14：装着中のスキン（なし = 既定）
   levels: Record<string, LevelProgress>;
   daily: { dayIndex: number; jstDay?: number; balls: ('ok' | 'gold' | 'crown' | 'fail' | null)[]; bestSub: number | null; bestReplay: string | null;
            submitted: 'none' | 'partial' | 'final'; lastSentT120: number | null; streak: number; lastPlayedDay: number; lastPlayedJst?: number };
@@ -2149,6 +2202,10 @@ export interface SaveV1 {
   // dayIndex ではなくこちらで判定する。−1 や項目なし（この欄ができる前の保存）のときは dayIndex から導く。
   outbox: PendingRun[];
   seen: { onboarding: boolean; notes: number[]; aiLostCard: boolean; storageNotice: boolean; tricks: string[] };
+  skins?: { owned: string[]; seen: string[]; bestStreak: number };
+  // skin / skins（§7.14、任意、src/store/cosmetic.ts が検査）：owned は開いたスキン（core が足す。既定は入れない、消さない）、
+  // seen はスキン画面で見たもの（UI が足す。NEW の点）、bestStreak は今日の5球の最長の連続日数（daily.streak 以上）。
+  // 装着 id はカタログにないものも文字列として残し、描くときに既定へ戻す。どれも送信・リプレイ・リンクには入らない。
 }
 export interface Store { readonly persistent: boolean; data(): SaveV1; update(fn: (d: SaveV1) => void): void; /* 250 ms 間引きで保存 */ flush(): void }
 ```
@@ -2257,6 +2314,7 @@ export function poseAt(t: GhostTrack, tSec: number, out: GhostPose): void;      
 | `tests/core/*.test.ts` | スプリットの計算、メダルの閾値、解放規則、日替わりの選択（固定の日付ベクトル 10 件。DAILY_EPOCH より前の日付、年をまたぐ日付を含む）、`perm12` の固定値、5 球の消費規則、挑戦状リンクの往復（壊れたリンクで例外が出ず面選択へ行く）、ヒントの開くタイミング（1 秒未満の途中リトライを数えない）、自動の手本が 1 面 1 回、技トーストの判定、`bot_1-1_success.json` を session に流すと Success とメダル |
 | `tests/store/*.test.ts` / `tests/net/*.test.ts` | localStorage が例外を投げてもメモリで動き通知が 1 回。送信待ちの集約（ランキングごとに最良 1 件、20 件上限）。バックオフの列。`VITE_NET=off` と `file:` で無効 |
 | `tests/ui/*.test.ts` | ja と en のキーの差分が 0。共有文のスナップショット。共有カードが 1200×630 |
+| スキン（§7.14） | `tests/core/skins.test.ts`（カタログと条件の境目、今までのプレイヤーの固定データ）、`skins_gate.test.ts`（読みやすさのゲート、全組み合わせ）、`skins_boundary.test.ts`（sim・worker・net・shared・ゴーストの符号化からスキンに届かない。store は id の一覧だけ）、`skinState.test.ts` と `app_skins.test.ts`（開いたときのトースト、init の前の setSkin、走行中は塗り替えない、試着、アトラクトと元の画面への戻り、共有カードのボールの色）、`tests/store/cosmetic.test.ts`（保存の検査）、`tests/ui/skins.test.ts`（全スキンの名前と一言、条件の文、タブとラジオグループとキーボード、NEW、入口）、`tests/render/*`（既定の見た目が今と同じ）。`ui-screens.spec.ts` でシートの各タブと試着を撮る |
 | `tests/worker/abuse.test.ts` | §7.11 の悪用対策：他人の上位 100 位のリプレイの使い回し → `dup`（丸ごとの複製、デバイスバイトだけ変えた複製、時間を変えない数ティックの改変、日替わりの複製、AI 超えだけを狙った複製）と、同着の別のランが通ること。レート制限が IPv4 アドレス／IPv6 の /64 単位であること（1 つの /64 の 7 通信で 429、別の /64 は無傷）、6000 個の新しいキーの洪水で絞られている客が解放されないこと。`Content-Type` が application/json でなければ 415、`Sec-Fetch-Site` が同一オリジン／none 以外なら 403（どちらも D1 文 0）。日替らしい `prev` の偽装（20 回の再送で 1 回だけ数える、`prev` > 5341 は 400、ai_beaten ≤ cleared ≤ n）。200 以外で終わった submit もカウンターを書き出すこと。書き込みのバッチが commit してから例外になった場合に `deferred` ではなく本当の結果を返すこと |
 | `tests/worker/*.test.ts` | 受理、書き換えたリプレイ（q を 1 つ反転）→ mismatch、申告タイムのずれ → mismatch、古いハッシュ → stale、2701 ティック → tooLong、100 位圏外 → unranked で書き込みは plays の 1 行だけ（同じビンの再送は 0）、100 位圏外でも初めての AI 超え → accepted で ai_beaten +1、面の notBetter が圏外の判定より先、soft で任意の書き込みが止まる、面のヒストグラムの毎時の再構築（`tests/worker/hist.test.ts`）、ver の競合 → 再試行、2 回続けて競合 → deferred で runs が書かれていない（tok の確認）、7 回目の submit → 429、boot の形と Cache-Control、lite の安全弁、日替わりのヒストグラム更新（prev があるとき古いビンが減る）、日替わりの成功なしの参加（replay null）で n だけ増える、日替わりの圏外で runs 行が作られない、101 位へ落ちた人の replay の NULL 化、`deferred`（CPU 予算超過）、45 s のリプレイ 1 件だけのリクエストは冷えたアイソレートでも検証される、5 件のリクエスト → 400、1 リクエストの D1 文が 50 未満（D1 のモックで数える）、cron の削除 |
 | `tests/e2e/*.spec.ts` | 下記 |
@@ -2346,7 +2404,7 @@ M2 の本番のゴースト（二分探索つき）は 24 コアで 1〜2 時間
 | 左右反転の裏ステージ | 同じ技の焼き直し |
 | 「はやさ」と「やさしさ」の 2 本立てランキング | ランキングが薄まる。やさしさはバッジにする |
 | 自由入力の名前、NG 語リスト、通報窓口 | 生成名にすればモデレーションが要らない |
-| ボールの着せ替え・設計図テーマなどのコスメ | 中核が固まる前の飾り |
+| 暗い背景（黒板など）・模様入りの紐・金色や白や鏡のボール・明るい梁・虹色や時間で変わる色・透けるボール | 読みやすさのゲート（§7.14）を通らない（スキン自体は §7.14 で入れた） |
 | テンポ同期の BGM | 拍子音で足りる |
 | 輪くぐり（Hoops）と単独の「ピタ止め」面 | 前者は AI が解けないので CI で証明できない。後者は 4-2 に統合した |
 | ランごとの動的な OGP 画像、過去の日替わりのアーカイブ、面ごとの上位 n%（日替わりだけ出す） | 費用に見合わない |

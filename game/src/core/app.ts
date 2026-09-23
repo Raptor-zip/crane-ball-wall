@@ -60,6 +60,8 @@ import { createAudioEngine } from '../audio/engine';
 import { createHaptics } from '../audio/haptics';
 import { createStore } from '../store/save';
 import { createApi, levelHistOf } from '../net/api';
+import { noteBestStreak } from '../store/cosmetic';
+import { createSkinState } from './skinState';
 
 export type AppState =
   | 'BOOT' | 'TUTORIAL' | 'TITLE' | 'LEVEL_SELECT' | 'BRIEFING' | 'READY' | 'RUNNING'
@@ -164,7 +166,7 @@ const MENU_STATES: ReadonlySet<AppState> = new Set<AppState>(['LEVEL_SELECT', 'D
 /** States the UI can put a sub-screen (settings / about / board / notes) on top of. */
 const SUBSCREEN_HOSTS: ReadonlySet<AppState> = new Set<AppState>([...MENU_STATES, 'TITLE', 'RESULTS', 'PAUSED']);
 /** The UI's sub-screen ids (data-screen of its root, ui.ts SUB_SCREENS). */
-const UI_SUB_SCREENS: ReadonlySet<string> = new Set(['settings', 'about', 'board', 'notes']);
+const UI_SUB_SCREENS: ReadonlySet<string> = new Set(['settings', 'about', 'board', 'notes', 'skins']);
 
 type PlayOrigin = 'campaign' | 'daily' | 'challenge';
 
@@ -340,6 +342,14 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
   };
   const lang = (): 'ja' | 'en' => (settings().lang === 'en' ? 'en' : 'ja');
 
+  // ---- skins (GAME_DESIGN.md §7.14, cosmetic only): look, unlocks and toasts live in skinState.ts ----
+  const skins = createSkinState({
+    store, levels: data.levels, renderer, toast: (text, kind) => ui.toast(text, kind),
+    canApply: () => state !== 'RUNNING' && state !== 'CRASH_BEAT' && state !== 'SUCCESS_BEAT' && !(state === 'PAUSED' && underState === 'RUNNING'),
+  });
+  /** The skins sheet opened from a menu page: that page's state while the title attract runs behind the sheet. */
+  let skinsHost: AppState | null = null;
+
   /** LevelProgress.hash of a level: its physics hash and the sim version (progressHash). */
   const pbHash = (level: LevelDef): string => progressHash(data.hash(level));
   const progressOf = (level: LevelDef): LevelProgress => {
@@ -406,6 +416,9 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
       return l ? data.aiPath(l) : null;
     },
     pause: () => pauseInfo(),
+    skins: () => skins.view(),
+    skinPreview: (ids) => skins.preview(ids),
+    skinsShown: (open) => skinsAttract(open),
     origin: shareOrigin(d.publicOrigin ?? import.meta.env.VITE_PUBLIC_ORIGIN, d.location === undefined ? safeLocation() : d.location),
   };
   sink.current = uiContext;
@@ -414,6 +427,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
   layout = ui.mount(root);
   const els = ui.elements();
   const renderOpts: { quality: 'auto' | 'high' | 'low'; reducedMotion: boolean } = { quality: settings().quality, reducedMotion: reducedMotion() };
+  safe('skins.apply', () => skins.apply());   // before init: the renderer builds (and paints) the equipped look once
   safe('renderer.init', () => renderer.init(els.canvas, { ...renderOpts }));
   safe('renderer.setLayout', () => renderer.setLayout(layout!));
   safe('input.attach', () => input.attach(els.sceneEl, els.deckEl, renderer.mapper, layout!));
@@ -585,6 +599,9 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     // the R long-press 'rewind' exists only while a practice run is on screen (D3); also back on after a
     // notes / board sub-screen when the run resumes
     setInputPractice(!!play?.practice && (s.id === 'hud' || s.id === 'pause'));
+    // New skins (§7.14) after progress changed: at boot, after a run, on the menus (before the screen is built, so that
+    // the title's NEW dot is there). Never while a run is on or paused (a trick found mid-run shows at the results).
+    if (state !== 'RUNNING' && state !== 'PAUSED') safe('skins.check', () => skins.check());
     safe('ui.show', () => ui.show(s));
   }
 
@@ -958,6 +975,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
           s.daily.balls = settleBall(s.daily.balls, i, 'fail'); // consumed at tick 0, upgraded on success
           play!.dailyBall = i;
           markPlayed(s.daily, day.dayIndex, day.jst);
+          noteBestStreak(s);   // the skins' streak rules keep the best streak (§7.14)
         }
       });
     }
@@ -1180,6 +1198,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
       badges, failReason, rank: null, aiBeaten: bOk ? bOk.aiBeaten : null, replay,
       strobe: play!.lastTrack ? strobeOf(play!.lastTrack) : new Float32Array(0),
       standing: ok ? levelStanding(level, res.score, pbSub, replay) : null,
+      ballFill: skins.ballFill(level),
     };
   }
 
@@ -2102,6 +2121,34 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     }
     if (haptics) haptics.enabled = !!s.haptics;
     safe('input.setKeyboardMode', () => input.setKeyboardMode(s.keyboard === 'force' ? 'force' : 'speed'));
+    safe('skins.apply', () => skins.apply());
+  }
+
+  /**
+   * The skins sheet shows the look on the live title attract (§7.14). Over the title it is already running; opened from
+   * a menu page (the settings over the level select or the daily hub) the attract runs behind the sheet and the page's
+   * state comes back when the sheet closes. The UI never offers the sheet over a run, the pause menu or a results card.
+   */
+  function skinsAttract(open: boolean): void {
+    if (open) {
+      if (skinsHost || (state !== 'LEVEL_SELECT' && state !== 'DAILY_HUB')) return;
+      const lvl = data.level(TITLE_LEVEL) ?? data.levels[0];
+      if (!lvl) return;
+      skinsHost = state;
+      state = 'TITLE';
+      prepareLevel(lvl);
+      session?.retry();
+      ghosts = noGhosts();
+      ghosts.ai = data.track(lvl, 'ai');
+      titleTime = 0;
+      safe('renderer.resetFx', () => renderer.resetFx());
+    } else if (skinsHost) {
+      if (state === 'TITLE') {
+        state = skinsHost;
+        ghosts = noGhosts();
+      }
+      skinsHost = null;
+    }
   }
 
   // =============================================================================================== UI context
@@ -2517,6 +2564,7 @@ function forwardingContext(get: () => UiContext | null): UiContext {
     get origin() { return get()?.origin; },
     boot: fwd('boot'), fetchBoard: fwd('fetchBoard'), daily: fwd('daily'), unlocked: fwd('unlocked'), briefing: fwd('briefing'),
     demo: fwd('demo'), compare: fwd('compare'), aiPath: fwd('aiPath'), pause: fwd('pause'),
+    skins: fwd('skins'), skinPreview: fwd('skinPreview'), skinsShown: fwd('skinsShown'),
   } as UiContext;
 }
 

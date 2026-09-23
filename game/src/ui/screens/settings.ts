@@ -99,6 +99,22 @@ export function renderSettingsScreen(root: HTMLElement, _screen: Extract<Screen,
 
   const warn = env.ctx.store && !env.ctx.store.persistent ? h('div', { class: 'warnbox' }, icon('offline'), t('settings.storage')) : null;
 
+  // Skins (§7.14): from the menus only (never over the pause menu or a results card: skins change outside a run and
+  // the sheet shows them on the title attract).
+  let skinsRow: HTMLElement | null = null;
+  try {
+    const v = env.ctx.skins?.();
+    const host = env.host();
+    if (v && (host === 'title' || host === 'select' || host === 'daily')) {
+      const open = h('button', { class: 'btn set-skins', type: 'button', 'aria-label': v.unseen > 0 ? t('title.skinsNew') : t('settings.skins') },
+        icon('brush'), t('settings.skinsOpen'), v.unseen > 0 ? h('span', { class: 'skin-dot', 'aria-hidden': 'true' }) : null);
+      open.addEventListener('click', () => env.open({ id: 'skins' }));
+      skinsRow = row(t('settings.skins'), open, t('settings.skinsNote'));
+    }
+  } catch {
+    skinsRow = null;
+  }
+
   const page = h('div', { class: 'page screen-enter' },
     h('header', { class: 'page-head' }, back, h('h1', { class: 'page-title' }, t('settings.title'))),
     h('div', { class: 'page-body' }, h('div', { class: 'page-inner', style: 'max-width:680px' },
@@ -108,7 +124,8 @@ export function renderSettingsScreen(root: HTMLElement, _screen: Extract<Screen,
         row(t('settings.lang'), seg('lang', t('settings.lang'), [['ja', '日本語'], ['en', 'English']], () => commit({ langPicked: true }))),
         row(t('settings.textScale'), seg('textScale', t('settings.textScale'), [[100, '100%'], [125, '125%']])),
         row(t('settings.motion'), seg('motion', t('settings.motion'), [['auto', t('common.auto')], ['on', t('common.on')], ['off', t('common.off')]]), t('settings.motionNote')),
-        row(t('settings.quality'), seg('quality', t('settings.quality'), [['auto', t('settings.quality.auto')], ['high', t('settings.quality.high')], ['low', t('settings.quality.low')]]))),
+        row(t('settings.quality'), seg('quality', t('settings.quality'), [['auto', t('settings.quality.auto')], ['high', t('settings.quality.high')], ['low', t('settings.quality.low')]])),
+        skinsRow),
       h('section', { class: 'sheet set-section' },
         h('h2', null, t('settings.section.sound')),
         row(t('settings.volume'), h('div', { class: 'range' }, vol, volVal)),

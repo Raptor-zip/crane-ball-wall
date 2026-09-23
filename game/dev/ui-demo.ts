@@ -15,7 +15,7 @@ import { TALL_FRAME_K } from '../src/ui/layout';
 import { tallWindowFor } from '../src/render/camera';
 import { drawShareCard } from '../src/ui/sharecard';
 import { factsOf } from '../src/ui/i18n/format';
-import { RANK_KINDS, ghostTrack, level, mockBoot, mockContext, mockDaily, mockResults, mockSave, mockStanding, pairs, pinSave } from './ui-demo-data';
+import { RANK_KINDS, demoBallFill, ghostTrack, level, mockBoot, mockContext, mockDaily, mockResults, mockSave, mockSkins, mockStanding, pairs, pinSave } from './ui-demo-data';
 import type { BoardMock, RankKind, Track } from './ui-demo-data';
 
 const q = new URLSearchParams(location.search);
@@ -30,6 +30,9 @@ const defer = q.has('defer');
 const world = Number(q.get('world') ?? 1);
 
 const save = mockSave(lang, q.get('save') === 'fresh' ? 'fresh' : 'mid');
+// Skins (§7.14): &skins=none drops the skins data (no entry points), &skins=seen has no NEW skins.
+if (q.get('skins') !== 'none') mockSkins(save);
+if (q.get('skins') === 'seen' && save.skins) save.skins.seen = [...save.skins.owned];
 if (q.get('ts') === '125') save.settings.textScale = 125;
 if (q.get('motion') === 'off') save.settings.motion = 'off';
 // results-firstcrown: the first crown on this level (not the first ever: the "why the AI lost" card stays shut).
@@ -44,6 +47,7 @@ if (boardQ === 'pin-unsent') pinSave(save, levelId, 'unsent');
 if (boardQ === 'pin-pending') pinSave(save, levelId, 'pending');
 if (boardQ === 'daily-pin') save.daily = { ...save.daily, bestSub: 396, lastSentT120: 396 };
 const ctx = mockContext(save, { offline, board: boardMock });
+if (q.get('skins') === 'none') delete ctx.skins;
 const ui: UI = createUI(ctx);
 const root = document.getElementById('app')!;
 let layout: Layout = ui.mount(root);
@@ -55,7 +59,7 @@ if (still) document.querySelector('.yp')?.classList.add('yp--still');
 // ---------------------------------------------------------------- mock scene
 
 const lv = level(levelId);
-const track: Track | null = ghostTrack(screenId === 'title' ? '2-2' : levelId, 'ai');
+const track: Track | null = ghostTrack(screenId === 'title' || screenId.startsWith('skins') ? '2-2' : levelId, 'ai');
 const calm: Track | null = ghostTrack(levelId, 'calm');
 let camX = lv.physics.startX;
 
@@ -100,7 +104,10 @@ function paintScene(p: { x: number; bx: number; by: number }, ghost: { x: number
   g.fillStyle = grad;
   g.fillRect(0, 0, w, hgt);
   const cam = camFor(p.bx, p.x);
-  drawSideView(g, lv, cam, { grid: true, trolleyX: p.x, ball: { x: p.bx, y: p.by }, ghost, egg: lv.cargo === 'egg', lineScale: 1.2, aiPath: screenId === 'title' || !track ? null : pairs(track), aiPathStep: 2 });
+  drawSideView(g, lv, cam, {
+    grid: true, trolleyX: p.x, ball: { x: p.bx, y: p.by }, ghost, egg: lv.cargo === 'egg', lineScale: 1.2,
+    aiPath: screenId === 'title' || screenId.startsWith('skins') || !track ? null : pairs(track), aiPathStep: 2, ballFill: demoBallFill(save),
+  });
   return cam;
 }
 
@@ -331,8 +338,24 @@ function start(): void {
       ui.show({ id: 'daily', data: mockDaily() });
       break;
     case 'settings':
+      // Over the title, as from its gear button (the skins row shows only over the menus).
+      ui.show({ id: 'title' });
       ui.show({ id: 'settings' });
       break;
+    case 'skins':
+    case 'skins-crane':
+    case 'skins-trail':
+    case 'skins-stage':
+    case 'skins-try': {
+      // The skins sheet over the title attract (§7.14): &part= or the screen suffix picks the tab; skins-try tries the
+      // first locked card on (the dashed banner over the scene).
+      const part = (screenId.split('-')[1] ?? q.get('part') ?? undefined) as 'ball' | 'crane' | 'trail' | 'stage' | 'try' | undefined;
+      loop((i) => runFrame(i, { running: false, ghost: false, timeSub: 0 }), n, Math.round(n * 0.52));
+      ui.show({ id: 'title' });
+      ui.show({ id: 'skins', part: part === 'try' || !part ? (q.get('part') as 'ball' | null) ?? undefined : part });
+      if (part === 'try') (document.querySelector('.skin-card.is-locked') as HTMLElement | null)?.click();
+      break;
+    }
     case 'about':
       ui.show({ id: 'about' });
       break;
