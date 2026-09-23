@@ -1,0 +1,55 @@
+/* Palette tokens (GAME_DESIGN.md §9.1). Owner: O7. three.js uses the same values. */
+:root {
+  --paper-1: #f3eee4;
+  --paper-2: #e6dccb;
+  --floor: #d9d4cb;
+  --grid: #c9c2b6;
+  --brick-1: #b5553a;
+  --brick-2: #c8643f;
+  --mortar: #e8dcc8;
+  --gantry: #f2b705;
+  --hazard: #1e1e1e;
+  --rail: #6b7280;
+  --ball: #e0312b;
+  --string: #2b2b2b;
+  --egg: #f4ead5;
+  --egg-speckle: #c9b89a;
+  --ink: #1e2a44;
+  --goal: #22b573;
+  --danger: #e5484d;
+  --ai: #19c3ff;
+  --pb: rgba(255, 194, 61, 0.4);
+  --pb-solid: #ffc23d;
+  --wr: #ff3fa4;
+  --rival: #ff8a3d;
+  --challenge: #ffffff;
+  --challenge-edge: #1e2a44;
+  --stamp: #d8342b;
+  --font-head: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --font-body: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --font-num: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  /* UI-only tokens derived from the palette (cards, secondary ink, medals). */
+  --card: #fbf8f1;
+  --card-2: #f6f0e4;
+  --ink-2: #4b5670;
+  --ink-3: #7d8497;
+  --line: rgba(30, 42, 68, 0.16);
+  --line-2: rgba(30, 42, 68, 0.32);
+  --grid-a: rgba(201, 194, 182, 0.55);
+  --grid-b: rgba(201, 194, 182, 0.24);
+  --ahead: #2f6bd8;
+  --gold: #f5c83a;
+  --gold-edge: #b7860b;
+  --silver: #c9d1da;
+  --bronze: #c98a52;
+  --ball-lip: #a3221d;
+  --ai-lip: #0f8ab8;
+  --goal-lip: #16824f;
+  --scrim: rgba(243, 238, 228, 0.8);
+  --shadow-card: 0 2px 0 var(--ink), 0 22px 44px -22px rgba(30, 42, 68, 0.55);
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+}

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>input demo · ゆらしてピタッ</title>
+    <style>
+      :root {
+        --paper-1: #f3eee4; --paper-2: #e6dccb; --floor: #d9d4cb; --grid: #c9c2b6;
+        --brick-1: #b5553a; --mortar: #e8dcc8; --gantry: #f2b705; --hazard: #1e1e1e; --rail: #6b7280;
+        --ball: #e0312b; --string: #2b2b2b; --ink: #1e2a44; --goal: #22b573; --danger: #e5484d; --ai: #19c3ff;
+        --card: rgba(251, 248, 241, 0.92); --line: rgba(30, 42, 68, 0.16);
+        --font: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+        --num: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: var(--paper-1); color: var(--ink); font-family: var(--font);
+        overscroll-behavior: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+      #scene { position: absolute; left: 0; top: 0; overflow: hidden; touch-action: none; }
+      #scene canvas, #deck canvas { display: block; width: 100%; height: 100%; }
+      #deck { position: absolute; left: 0; bottom: 0; touch-action: none; background: #ece5d8; border-top: 1px solid var(--line); }
+      #surface { position: absolute; left: 0; right: 0; bottom: 0; top: 80px; }
+      #hud { position: absolute; left: 0; top: 0; height: 56px; display: flex; align-items: center; gap: 8px;
+        padding: 0 max(10px, env(safe-area-inset-left)) 0 max(10px, env(safe-area-inset-right)); pointer-events: none; }
+      #hud > * { pointer-events: auto; }
+      .btn { min-width: 44px; height: 40px; border-radius: 12px; border: 2px solid var(--ink); background: #fffaf0; color: var(--ink);
+        font: 700 15px var(--font); padding: 0 10px; cursor: pointer; box-shadow: 0 2px 0 var(--ink); }
+      .btn:active { transform: translateY(2px); box-shadow: none; }
+      .btn[aria-pressed="true"] { background: var(--ink); color: #fffaf0; }
+      select.btn { padding: 0 6px; }
+      #title { flex: 1; min-width: 0; text-align: center; font-weight: 800; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #clock { font: 700 18px var(--num); font-variant-numeric: tabular-nums; margin-left: 6px; }
+      #panel { position: absolute; right: 10px; top: 190px; width: 222px; background: #fbf8f1; border: 1px solid var(--line);
+        border-radius: 14px; padding: 8px 10px; font: 12px/1.55 var(--num); pointer-events: none; box-shadow: 0 6px 20px rgba(30,42,68,.08); }
+      #panel b { font-family: var(--font); font-weight: 800; }
+      #panel .k { color: #7d8497; display: inline-block; width: 64px; }
+      #cmds { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; min-height: 22px; }
+      .chip { font: 700 11px var(--num); padding: 2px 6px; border-radius: 8px; background: var(--ink); color: #fffaf0; animation: pop .25s ease-out, fade 2.4s ease-in forwards; }
+      @keyframes pop { from { transform: scale(1.5); } to { transform: scale(1); } }
+      @keyframes fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+      #help { position: absolute; left: 12px; top: 62px; font-size: 12px; line-height: 1.7; color: #4b5670; pointer-events: none; max-width: min(620px, 60%); }
+      #help kbd { font: 700 11px var(--num); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 4px; background: #fffaf0; }
+      body.tall #panel { top: 62px; right: 8px; width: 184px; font-size: 11px; }
+      body.tall #help, body.tall #name { display: none; }
+      /* Phones: 6 buttons + select + clock must fit from the very first layout, or mobile browsers widen
+         the layout viewport (and every px -> m reading with it). */
+      @media (max-width: 480px) {
+        #hud { gap: 5px; }
+        #shake { display: none; } /* dev-only extra: keeps the clock visible next to 6 controls */
+        .btn { min-width: 40px; padding: 0 6px; }
+        #clock { font-size: 16px; margin-left: 0; }
+        #help { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="scene"><canvas id="view"></canvas></div>
+    <div id="deck"><canvas id="deckView"></canvas><div id="surface" data-input-surface></div></div>
+    <div id="hud">
+      <button class="btn" id="retry" aria-label="リトライ / Retry">↺</button>
+      <select class="btn" id="level" aria-label="面 / Level"></select>
+      <div id="title"><span id="name"></span><span id="clock">0.000</span></div>
+      <button class="btn" id="kbmode" aria-pressed="false" aria-label="キーボード：直接押す / Keyboard: direct force">F</button>
+      <button class="btn" id="assist" aria-pressed="false" aria-label="アンチスウェイ補助 / Anti-sway assist">A</button>
+      <button class="btn" id="latch" aria-pressed="true" aria-label="止まった所で保持（ラッチ、既定）/ Stop latch (default)">L</button>
+      <button class="btn" id="practice" aria-pressed="false" aria-label="練習モード ×0.5・R 長押しで 5 秒もどす / Practice: ×0.5, hold R to rewind 5 s">×½</button>
+      <button class="btn" id="shake" aria-label="カメラを揺らす / Shake camera">〰</button>
+    </div>
+    <div id="panel"><div id="readout"></div><div id="cmds"></div></div>
+    <div id="help">
+      <b>タッチ/マウス</b>：ドラッグで目標を動かす（縦画面はデッキの相対ドラッグ、下 1/3 は ×1/3 の微調整）·
+      <kbd>←</kbd><kbd>→</kbd>/<kbd>A</kbd><kbd>D</kbd> 移動（タップで 5 cm）· <kbd>Shift</kbd>/<kbd>Z</kbd> 微調整（0.5 m/s、タップで 1 cm）·
+      たまご面は最高 2.0 m/s · <kbd>R</kbd>/右クリック リトライ ·
+      練習（×½）中は <kbd>R</kbd> 長押しで 5 秒もどす ·
+      <kbd>G</kbd><kbd>H</kbd><kbd>M</kbd><kbd>N</kbd><kbd>P</kbd><kbd>?</kbd> コマンド
+    </div>
+    <script type="module" src="./input-demo.ts"></script>
+  </body>
+</html>

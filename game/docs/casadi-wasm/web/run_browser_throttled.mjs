@@ -1,0 +1,20 @@
+// Same as run_browser.mjs but with CDP CPU throttling (rate = argv[2]) to approximate a phone.
+import * as pw from '/home/somak/ball-wall/game/node_modules/playwright/index.mjs';
+import fs from 'fs';
+const PORT = process.env.PORT || 8731;
+const rate = Number(process.argv[2] || 4);
+const cases = process.argv[3] || 'd_editor';
+const browser = await pw.chromium.launch({ headless: true });
+const ctx = await browser.newContext();
+const page = await ctx.newPage();
+const cdp = await ctx.newCDPSession(page);
+await cdp.send('Emulation.setCPUThrottlingRate', { rate });
+const t0 = Date.now();
+await page.goto(`http://127.0.0.1:${PORT}/web/index.html?cases=${cases}`, { waitUntil: 'load' });
+await page.waitForFunction('window.__done === true', null, { timeout: 1800000 });
+const r = await page.evaluate('window.__result');
+console.log(`CPU throttle x${rate}: init ${r.initMs.toFixed(0)} ms + ipopt ${r.ipoptMs.toFixed(0)} ms`);
+for (const [k, v] of Object.entries(r.cases)) console.log(`  ${k}: ${v.ok ? 'ok' : 'FAILED'} ${v.seconds.toFixed(2)}s obj=${v.ok ? v.stats.objective.toFixed(4) : '-'} iters=[${v.ok ? v.stats.iterations : ''}]`);
+fs.writeFileSync(`/tmp/claude-1000/yp-casadi-verify/browser_throttle_x${rate}.json`, JSON.stringify(r, null, 1));
+console.log('wall', ((Date.now() - t0) / 1000).toFixed(1), 's');
+await browser.close();

@@ -1,0 +1,58 @@
+[
+ {
+  "file": "casadi.js",
+  "raw": 1213680,
+  "gzip9": 65976,
+  "br5": 55054,
+  "br11": 45165
+ },
+ {
+  "file": "casadi_wasm.js",
+  "raw": 11816689,
+  "gzip9": 921169,
+  "br5": 746206,
+  "br11": 601149
+ },
+ {
+  "file": "casadi_wasm.wasm",
+  "raw": 8687378,
+  "gzip9": 2270087,
+  "br5": 1819064,
+  "br11": 1552909
+ },
+ {
+  "file": "libcasadi_nlpsol_ipopt.so",
+  "raw": 7902600,
+  "gzip9": 1737450,
+  "br5": 1481748,
+  "br11": 1273574
+ },
+ {
+  "file": "libcasadi_nlpsol_fatrop.so",
+  "raw": 1249851,
+  "gzip9": 319048,
+  "br5": 275876,
+  "br11": 234911
+ },
+ {
+  "file": "libcasadi_blas_blasfeo.so",
+  "raw": 257779,
+  "gzip9": 66486,
+  "br5": 56856,
+  "br11": 48233
+ },
+ {
+  "file": "libcasadi_nlpsol_sqpmethod.so",
+  "raw": 186525,
+  "gzip9": 45506,
+  "br5": 40765,
+  "br11": 36726
+ },
+ {
+  "file": "libcasadi_conic_qrqp.so",
+  "raw": 99498,
+  "gzip9": 27937,
+  "br5": 26073,
+  "br11": 23496
+ }
+]

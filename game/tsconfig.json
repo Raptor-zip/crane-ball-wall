@@ -1,0 +1,7 @@
+{
+  // Solution file: `npm run typecheck` (= tsc -b) type-checks both projects.
+  //   tsconfig.app.json    - client (DOM), node-side tests, dev pages, tool configs
+  //   tsconfig.worker.json - Worker and tests/worker (workerd types, no DOM)
+  "files": [],
+  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.worker.json" }]
+}

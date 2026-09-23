@@ -1,0 +1,588 @@
+{
+  "format": 1,
+  "levels": [
+    {
+      "id": "1-1",
+      "world": 1,
+      "order": 1,
+      "name": { "ja": "おつかい", "en": "First Errand" },
+      "concept": { "ja": "揺れの方へ追いかけると、ボールは止まる", "en": "Chase the swing and the ball settles" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-0.6, 2.4],
+        "startX": 0,
+        "walls": [],
+        "phases": [{ "kind": "pad", "xa": 1.2, "xb": 1.8 }],
+        "restDeg": 5
+      },
+      "splits": [],
+      "hints": {
+        "ja": ["指を離すと台車はその場で止まる。ボールは止まらない", "ボールが振れていく方へ、台車を少しだけ追いかけると揺れが消える", "早めに減速して、前へ振れ出たボールの下に台車を合わせる"],
+        "en": [
+          "Let go and the trolley stops where it is. The ball doesn't",
+          "Nudge the trolley after the ball as it swings and the swing dies out",
+          "Slow down early and bring the trolley under the ball as it swings ahead"
+        ]
+      },
+      "ai": { "xGoal": [1.5], "tHi": 1.5, "fallback": [] }
+    },
+    {
+      "id": "1-2",
+      "world": 1,
+      "order": 2,
+      "name": { "ja": "ひざ丈の塀", "en": "Knee-high Fence" },
+      "concept": { "ja": "ブレーキで振り出して{h0}mの塀を越える", "en": "Brake to fling the ball over a {h0} m fence" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-0.6, 2.6],
+        "startX": 0,
+        "walls": [{ "x0": 0.95, "x1": 1.05, "h": 0.3 }],
+        "phases": [{ "kind": "pad", "xa": 1.65, "xb": 1.95 }],
+        "restDeg": 4
+      },
+      "splits": [{ "wall": 0, "dir": 1 }],
+      "hints": {
+        "ja": ["加速するとボールは後ろに残る。ブレーキで前に振り出す", "塀の手前でブレーキ。ボールが越えたら台車も前へ", "越えたら揺れの方へ追いかけて止める"],
+        "en": [
+          "Accelerate and the ball lags behind. Brake to fling it forward",
+          "Brake just before the fence. Once the ball is over, follow it",
+          "Once it's over, chase the swing to stop it"
+        ]
+      },
+      "ai": { "xGoal": [1.8], "tHi": 2, "fallback": [] }
+    },
+    {
+      "id": "1-3",
+      "world": 1,
+      "order": 3,
+      "name": { "ja": "腰の高さ", "en": "Waist High" },
+      "concept": { "ja": "助走してブレーキ、{h0}mの壁を越えたら追いかける", "en": "Run up, brake, clear the {h0} m wall, then chase" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-1, 2.8],
+        "startX": 0,
+        "walls": [{ "x0": 1, "x1": 1.12, "h": 0.55 }],
+        "phases": [{ "kind": "pad", "xa": 1.85, "xb": 2.15 }],
+        "restDeg": 3
+      },
+      "splits": [{ "wall": 0, "dir": 1 }],
+      "hints": {
+        "ja": ["高い壁は長い助走とブレーキで越える", "強くブレーキすると紐がたるむ。パシッと張り直すだけで失敗ではない", "越えた瞬間に台車をボールの下へ走らせる"],
+        "en": [
+          "Clear a tall wall with a long run-up and a hard brake",
+          "Brake hard and the string goes slack. The snap back is fine, not a fail",
+          "The moment it clears, run the trolley under the ball"
+        ]
+      },
+      "ai": { "xGoal": [2], "tHi": 4, "fallback": [{ "op": "raiseT", "by": 1, "max": 6 }] }
+    },
+    {
+      "id": "1-4",
+      "world": 1,
+      "order": 4,
+      "name": { "ja": "ひろい谷間", "en": "Wide Valley" },
+      "concept": { "ja": "2枚の壁の間、{gap}cmの谷で受け止める", "en": "Catch it in the {gap} cm valley between two walls" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-1, 3.2],
+        "startX": 0,
+        "walls": [{ "x0": 1.1, "x1": 1.22, "h": 0.55 }, { "x0": 1.92, "x1": 2.04, "h": 0.55 }],
+        "phases": [{ "kind": "pocket", "xa": 1.22, "xb": 1.92 }],
+        "restDeg": 3
+      },
+      "splits": [{ "wall": 0, "dir": 1 }],
+      "hints": {
+        "ja": ["谷の上でボールを「置く」。奥の壁に当てないよう早めに減速", "越える勢いを、台車を前に出して受け止める", "谷の中では小さく揺れの方へ"],
+        "en": [
+          "'Place' the ball over the valley. Slow down early so it misses the far wall",
+          "Soak up the leap by moving the trolley forward to catch it",
+          "Inside the valley, make small moves toward the swing"
+        ]
+      },
+      "ai": { "xGoal": [1.57], "tHi": 3, "fallback": [{ "op": "raiseT", "by": 1, "max": 6 }] }
+    },
+    {
+      "id": "2-1",
+      "world": 2,
+      "order": 1,
+      "name": { "ja": "ブログの壁", "en": "The Blog Wall" },
+      "concept": { "ja": "{h0}mの壁。一度下がってから走る", "en": "A {h0} m wall. Back up first, then run" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-1, 3.2],
+        "startX": 0,
+        "walls": [{ "x0": 1.3, "x1": 1.42, "h": 0.75 }],
+        "phases": [{ "kind": "pad", "xa": 2.25, "xb": 2.55 }],
+        "restDeg": 3
+      },
+      "splits": [{ "wall": 0, "dir": 1 }],
+      "hints": {
+        "ja": ["一度後ろへ下がってから走ると、ボールは大きく振れる", "{req0}°必要。角度の弧が緑になるまで溜める", "越えたらすぐ台車でボールを追う"],
+        "en": [
+          "Back up first, then run: the ball swings much higher",
+          "You need {req0}°. Build up until the angle arc turns green",
+          "Once it's over, chase the ball with the trolley right away"
+        ]
+      },
+      "ai": { "xGoal": [2.4], "tHi": 3, "fallback": [{ "op": "raiseT", "by": 1, "max": 6 }] }
+    },
+    {
+      "id": "2-2",
+      "world": 2,
+      "order": 2,
+      "name": { "ja": "原典：いれる", "en": "The Original: Enter" },
+      "concept": { "ja": "{h0}mの壁を越えて{gap}cmのすき間でピタッ", "en": "Over a {h0} m wall, stop dead in a {gap} cm gap" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-1, 3.2],
+        "startX": 0,
+        "walls": [{ "x0": 1.3, "x1": 1.42, "h": 0.75 }, { "x0": 1.84, "x1": 1.96, "h": 0.75 }],
+        "phases": [{ "kind": "pocket", "xa": 1.42, "xb": 1.84 }],
+        "restDeg": 3
+      },
+      "splits": [{ "wall": 0, "dir": 1 }],
+      "hints": {
+        "ja": ["壁Aを越えたら、すき間の真上で止める準備", "ボールが落ちてくる前に、台車をすき間の上へ", "受け止めは「揺れの方へ追う」の応用"],
+        "en": [
+          "Once over wall A, get ready to stop above the gap",
+          "Get the trolley over the gap before the ball drops",
+          "The catch is just 'follow the swing' again"
+        ]
+      },
+      "ai": {
+        "xGoal": [1.63],
+        "tHi": 2.8,
+        "seeds": ["enter_fast"],
+        "extras": ["enter_fast", "enter_pump"],
+        "fallback": [{ "op": "raiseT", "by": 1, "max": 6 }]
+      },
+      "badges": { "gentleN": 12.34 }
+    },
+    {
+      "id": "2-3",
+      "world": 2,
+      "order": 3,
+      "name": { "ja": "原典：だす", "en": "The Original: Escape" },
+      "concept": { "ja": "いきなり引かず、持ち上げてからすき間を出る", "en": "Don't yank it. Lift it, then leave the gap" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-1, 3.2],
+        "startX": 1.63,
+        "walls": [{ "x0": 1.3, "x1": 1.42, "h": 0.75 }, { "x0": 1.84, "x1": 1.96, "h": 0.75 }],
+        "phases": [{ "kind": "pad", "xa": -0.15, "xb": 0.15 }],
+        "restDeg": 3
+      },
+      "splits": [{ "wall": 0, "dir": -1 }],
+      "hints": {
+        "ja": ["いきなり引くと紐が壁Aの角に引っかかる", "すき間の中で小さく揺らしてから出す", "「いれる」を逆再生すると「だす」になる（逆再生ゴーストを見よう）"],
+        "en": [
+          "Yank it straight out and the string catches on wall A's corner",
+          "Rock it gently inside the gap before you pull it out",
+          "'Enter' played backwards is 'Escape' (watch the reverse ghost)"
+        ]
+      },
+      "ai": {
+        "xGoal": [0],
+        "tHi": 4,
+        "seeds": ["escape_fast"],
+        "extras": ["escape_fast", "escape_pump"],
+        "fallback": [{ "op": "raiseT", "by": 1, "max": 6 }]
+      }
+    },
+    {
+      "id": "2-4",
+      "world": 2,
+      "order": 4,
+      "name": { "ja": "郵便受け", "en": "Letterbox" },
+      "concept": { "ja": "{gap}cmの口に、ボールを落とし込む", "en": "Drop the ball into a {gap} cm slot" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-1, 3.2],
+        "startX": 0,
+        "walls": [{ "x0": 1.3, "x1": 1.42, "h": 0.6 }, { "x0": 1.72, "x1": 1.84, "h": 0.8 }],
+        "phases": [{ "kind": "pocket", "xa": 1.42, "xb": 1.72 }],
+        "restDeg": 3
+      },
+      "splits": [{ "wall": 0, "dir": 1 }],
+      "hints": {
+        "ja": ["奥の壁が高い。行き過ぎ注意", "すき間の中心で止める。3°揺れると±5cm動く", "越える勢いは最小限に。ぎりぎりで越える"],
+        "en": [
+          "The far wall is taller. Don't overshoot",
+          "Stop in the middle of the gap. A 3° swing moves it ±5 cm",
+          "Use as little momentum as you can. Just scrape over"
+        ]
+      },
+      "ai": {
+        "xGoal": [1.57],
+        "tHi": 4,
+        "fallback": [{ "op": "moveWall", "wall": 1, "by": 0.02, "maxGap": 0.36 }, { "op": "raiseT", "by": 1, "max": 5 }]
+      }
+    },
+    {
+      "id": "3-1",
+      "world": 3,
+      "order": 1,
+      "name": { "ja": "非力モーター", "en": "Weak Motor" },
+      "concept": { "ja": "{Fmax}Nでは足りない。揺れと逆に押してこぐ", "en": "{Fmax} N is not enough. Push against the swing to pump" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 6,
+        "rail": [-1, 3.2],
+        "startX": 0,
+        "walls": [{ "x0": 1.3, "x1": 1.42, "h": 0.55 }],
+        "phases": [{ "kind": "pad", "xa": 2, "xb": 2.4 }],
+        "restDeg": 3
+      },
+      "splits": [{ "wall": 0, "dir": 1 }],
+      "hints": {
+        "ja": ["{Fmax}Nでは一気に振り上げられない。揺れと逆向きに押す", "リズムは約{period}秒。拍子音が上がっていけば正解", "越えたら今度は揺れと同じ向きに押して止める"],
+        "en": [
+          "{Fmax} N can't swing it up in one go. Push against the swing",
+          "The rhythm is about {period} s. Rising beeps mean you've got it",
+          "Once it's over, push the same way it swings to stop it"
+        ]
+      },
+      "ai": {
+        "xGoal": [2.2],
+        "tHi": 14,
+        "fallback": [{ "op": "raiseT", "by": 2, "max": 18 }, { "op": "lowerWall", "walls": [0], "by": 0.05, "min": 0.45 }]
+      }
+    },
+    {
+      "id": "3-2",
+      "world": 3,
+      "order": 2,
+      "name": { "ja": "原典・ブランコ", "en": "The Original on a Swing" },
+      "concept": { "ja": "{Fmax}Nでこいで、受け止めが山場", "en": "Pump on {Fmax} N. The catch is the crux" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 14,
+        "rail": [-1, 3.2],
+        "startX": 0,
+        "walls": [{ "x0": 1.3, "x1": 1.42, "h": 0.75 }, { "x0": 1.84, "x1": 1.96, "h": 0.75 }],
+        "phases": [{ "kind": "pocket", "xa": 1.42, "xb": 1.84 }],
+        "restDeg": 3
+      },
+      "splits": [{ "wall": 0, "dir": 1 }],
+      "hints": {
+        "ja": ["{Fmax}Nの山場は受け止め。早めに勢いを殺す", "こいで{req0}°まで育ててから越える", "「AI(ブランコ)」ゴーストのリズムを盗もう"],
+        "en": [
+          "With {Fmax} N the crux is the catch. Kill the speed early",
+          "Pump it up to {req0}° before going over",
+          "Steal the rhythm of the 'AI (swing)' ghost"
+        ]
+      },
+      "ai": {
+        "xGoal": [1.63],
+        "tHi": 10,
+        "seeds": ["enter_pump"],
+        "extras": ["enter_pump"],
+        "fallback": [{ "op": "raiseT", "by": 2, "max": 14 }]
+      },
+      "badges": { "gentleN": 12.34 }
+    },
+    {
+      "id": "3-3",
+      "world": 3,
+      "order": 3,
+      "name": { "ja": "短い紐", "en": "Short String" },
+      "concept": { "ja": "短い紐はリズムが速い（周期{period}秒）", "en": "A short string swings fast ({period} s period)" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 0.6,
+        "Fmax": 10,
+        "rail": [-1, 3.2],
+        "startX": 0,
+        "walls": [{ "x0": 1, "x1": 1.1, "h": 0.8 }, { "x0": 1.46, "x1": 1.56, "h": 0.8 }],
+        "phases": [{ "kind": "pocket", "xa": 1.1, "xb": 1.46 }],
+        "restDeg": 3
+      },
+      "splits": [{ "wall": 0, "dir": 1 }],
+      "hints": {
+        "ja": ["紐が短いとリズムが速い（約{period}秒）", "吊ったボールより壁が高い。こいで越える", "短い紐ほど受け止めはシビア"],
+        "en": [
+          "A short string swings fast (about {period} s)",
+          "The walls are higher than the hanging ball. Pump to get over",
+          "The shorter the string, the harsher the catch"
+        ]
+      },
+      "ai": {
+        "xGoal": [1.28],
+        "tHi": 7,
+        "fallback": [{ "op": "raiseT", "by": 1, "max": 9 }, { "op": "lowerWall", "walls": [0, 1], "by": 0.05, "min": 0.7 }]
+      }
+    },
+    {
+      "id": "4-1",
+      "world": 4,
+      "order": 1,
+      "name": { "ja": "ハードル走", "en": "Hurdles" },
+      "concept": { "ja": "3つの塀を、1つの振りでつなぐ", "en": "Three fences, one swing" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-0.6, 3.6],
+        "startX": 0,
+        "walls": [{ "x0": 0.8, "x1": 0.9, "h": 0.4 }, { "x0": 1.7, "x1": 1.8, "h": 0.55 }, { "x0": 2.6, "x1": 2.7, "h": 0.4 }],
+        "phases": [{ "kind": "pad", "xa": 3.05, "xb": 3.35 }],
+        "restDeg": 3
+      },
+      "splits": [{ "wall": 0, "dir": 1 }, { "wall": 1, "dir": 1 }, { "wall": 2, "dir": 1 }],
+      "hints": {
+        "ja": ["3つの塀を1つの振りでつなぐ", "塀の間隔はボールの振りの半分の周期にほぼ合う", "真ん中の塀が一番高い"],
+        "en": [
+          "Link all three fences with one swing",
+          "The fence spacing roughly matches half a swing",
+          "The middle fence is the tallest"
+        ]
+      },
+      "ai": {
+        "xGoal": [3.2],
+        "tHi": 5,
+        "fallback": [{ "op": "raiseT", "by": 1, "max": 7 }, { "op": "lowerWall", "walls": [1], "by": 0.05, "min": 0.45 }]
+      },
+      "view": { "portraitWindow": 3 }
+    },
+    {
+      "id": "4-2",
+      "world": 4,
+      "order": 2,
+      "name": { "ja": "終点", "en": "End of the Line" },
+      "concept": { "ja": "レールの端にぶつけて、一発で止める", "en": "Slam into the rail end to stop dead" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-0.6, 2.4],
+        "startX": 0,
+        "walls": [{ "x0": 1.2, "x1": 1.3, "h": 0.5 }],
+        "phases": [{ "kind": "pad", "xa": 2.24, "xb": 2.44 }],
+        "restDeg": 3
+      },
+      "splits": [{ "wall": 0, "dir": 1 }],
+      "hints": {
+        "ja": ["レールの端は壁。台車は止まり、ボールだけ飛び出す", "ボールが台車の真下を後ろ向きに通る瞬間（ボールが一瞬止まって見える瞬間）に端へ当てると一発で止まる", "AIは端を使わない。ここが人間の勝ち筋"],
+        "en": [
+          "The rail end is a hard stop. The trolley stops, the ball flies on",
+          "Hit the end just as the ball passes under the trolley going backwards (when it seems to hang still) and it stops dead",
+          "The AI never uses the end. That's your way to win"
+        ]
+      },
+      "ai": {
+        "xGoal": [2.34],
+        "tHi": 3,
+        "fallback": [{ "op": "raiseT", "by": 1, "max": 5 }, { "op": "lowerWall", "walls": [0], "by": 0.05, "min": 0.4 }]
+      },
+      "view": { "wideX": [-0.9, 3.3] }
+    },
+    {
+      "id": "4-3",
+      "world": 4,
+      "order": 3,
+      "name": { "ja": "たまご", "en": "The Egg" },
+      "concept": { "ja": "張力{Tmax}Nで割れる。静かに運べ", "en": "Cracks at {Tmax} N of string tension. Go gently" },
+      "cargo": "egg",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-1, 3.2],
+        "startX": 0,
+        "walls": [{ "x0": 0.9, "x1": 1.02, "h": 0.4 }],
+        "phases": [{ "kind": "pad", "xa": 1.6, "xb": 2 }],
+        "restDeg": 3,
+        "egg": { "Tmax": 18, "Jmax": 0.3 }
+      },
+      "splits": [{ "wall": 0, "dir": 1 }],
+      "hints": {
+        "ja": ["張力{Tmax}Nで割れる。紐の色を見て", "大きく振ると一番下で張力が上がる。静かに運ぶ", "後ろへ引いてから、揺れに合わせて押す。速さではなく{req0}°の振れで越える"],
+        "en": [
+          "Cracks at {Tmax} N. Watch the string colour",
+          "Big swings spike tension at the bottom. Carry it gently",
+          "Pull back, then push in time with the swing: {req0}° of swing gets you over, not speed"
+        ]
+      },
+      "ai": {
+        "xGoal": [1.8],
+        "tHi": 4,
+        "tensionMax": 15.5,
+        "fallback": [{ "op": "raiseT", "by": 1, "max": 6 }, { "op": "lowerWall", "walls": [0], "by": 0.05, "min": 0.3 }]
+      }
+    },
+    {
+      "id": "5-1",
+      "world": 5,
+      "order": 1,
+      "name": { "ja": "重い荷", "en": "Heavy Cargo" },
+      "concept": { "ja": "荷が台車より重い。台車が振り回される", "en": "The load outweighs the trolley and throws it around" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 3,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-1, 3.2],
+        "startX": 0,
+        "walls": [{ "x0": 1.3, "x1": 1.42, "h": 0.7 }, { "x0": 1.84, "x1": 1.96, "h": 0.7 }],
+        "phases": [{ "kind": "pocket", "xa": 1.42, "xb": 1.84 }],
+        "restDeg": 2.5
+      },
+      "splits": [{ "wall": 0, "dir": 1 }],
+      "hints": {
+        "ja": ["ボールが台車より重い。台車が振り回される", "早めに、小さく動かす", "受け止めで台車ごと流されないように"],
+        "en": [
+          "The ball outweighs the trolley and throws it around",
+          "Move early, and move small",
+          "Don't let the catch drag the whole trolley along"
+        ]
+      },
+      "ai": {
+        "xGoal": [1.63],
+        "tHi": 4,
+        "fallback": [{ "op": "raiseT", "by": 1, "max": 6 }, { "op": "lowerWall", "walls": [0, 1], "by": 0.05, "min": 0.6 }]
+      }
+    },
+    {
+      "id": "5-2",
+      "world": 5,
+      "order": 2,
+      "name": { "ja": "階段ポケット", "en": "Staircase" },
+      "concept": { "ja": "2回跳んで、{h2}mの奥壁の手前で止める", "en": "Two hops, then stop short of the {h2} m back wall" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-1, 3.2],
+        "startX": 0,
+        "walls": [{ "x0": 0.9, "x1": 1, "h": 0.45 }, { "x0": 1.45, "x1": 1.55, "h": 0.65 }, { "x0": 2.1, "x1": 2.2, "h": 0.9 }],
+        "phases": [{ "kind": "pocket", "xa": 1.55, "xb": 2.1 }],
+        "restDeg": 2.5
+      },
+      "splits": [{ "wall": 0, "dir": 1 }, { "wall": 1, "dir": 1 }],
+      "hints": {
+        "ja": ["2段の越えを1つの流れで", "奥の壁は{h2}m。行き過ぎたら終わり", "2つ目を越える高さだけ出せばいい"],
+        "en": [
+          "Take both hops in one flowing move",
+          "The back wall is {h2} m. Overshoot and it's over",
+          "Only go as high as the second hop needs"
+        ]
+      },
+      "ai": {
+        "xGoal": [1.825],
+        "tHi": 4.5,
+        "seeds": ["enter_fast"],
+        "fallback": [{ "op": "raiseT", "by": 1, "max": 6.5 }, { "op": "lowerWall", "walls": [2], "by": 0.05, "min": 0.8 }]
+      }
+    },
+    {
+      "id": "5-3",
+      "world": 5,
+      "order": 3,
+      "name": { "ja": "天井すれすれ", "en": "Scraping the Beam" },
+      "concept": { "ja": "{req0}°必要、{beam}°で梁に激突", "en": "Needs {req0}°, hits the beam at {beam}°" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-1, 3.2],
+        "startX": 0,
+        "walls": [{ "x0": 1.3, "x1": 1.42, "h": 0.9 }],
+        "phases": [{ "kind": "pad", "xa": 2.25, "xb": 2.55 }],
+        "restDeg": 2.5
+      },
+      "splits": [{ "wall": 0, "dir": 1 }],
+      "hints": {
+        "ja": ["{req0}°必要で、{beam}°でレールに激突", "頂点で前へ加速すると紐がたるむ", "AIは一度大きく引いて一気に振る"],
+        "en": [
+          "You need {req0}°, and at {beam}° the ball hits the rail",
+          "Accelerating forward at the top makes the string go slack",
+          "The AI pulls back once, far, then swings in one go"
+        ]
+      },
+      "ai": {
+        "xGoal": [2.4],
+        "tHi": 4,
+        "fallback": [{ "op": "raiseT", "by": 1, "max": 6 }, { "op": "lowerWall", "walls": [0], "by": 0.05, "min": 0.8 }]
+      }
+    },
+    {
+      "id": "5-4",
+      "world": 5,
+      "order": 4,
+      "name": { "ja": "フルコース", "en": "Full Course" },
+      "concept": { "ja": "いれて、止めて、だして、止める", "en": "Enter, stop, escape, stop" },
+      "cargo": "ball",
+      "physics": {
+        "M": 2,
+        "m": 1,
+        "L": 1,
+        "Fmax": 40,
+        "rail": [-1, 3.2],
+        "startX": 0,
+        "walls": [{ "x0": 1.3, "x1": 1.42, "h": 0.75 }, { "x0": 1.84, "x1": 1.96, "h": 0.75 }],
+        "phases": [{ "kind": "pocket", "xa": 1.42, "xb": 1.84 }, { "kind": "pad", "xa": -0.15, "xb": 0.15 }],
+        "restDeg": 3
+      },
+      "splits": [{ "wall": 0, "dir": 1 }, { "phase": 0 }, { "wall": 0, "dir": -1 }],
+      "hints": {
+        "ja": ["前半は「いれる」、後半は「だす」", "すき間で0.5秒止まるとチェックポイント", "後半はすき間の中でこいでから出る"],
+        "en": [
+          "First half: enter. Second half: escape",
+          "Hold 0.5 s in the gap for the checkpoint",
+          "Pump inside the gap before pulling out"
+        ]
+      },
+      "ai": { "xGoal": [1.63, 0], "tHi": 0, "compose": ["2-2", 0.5, "2-3"], "fallback": [] }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><title>casadi wasm memory probe</title></head><body><pre id="out">…</pre>
+<script type="module">
+const out = document.getElementById('out');
+const probs = await (await fetch('../ref/problems.json')).json();
+const seed = await (await fetch('../ref/seed_enter_fast.json')).json();
+const w = new Worker(new URL('./memworker.js', import.meta.url), { type: 'module' });
+w.onmessage = (e) => { window.__result = e.data; out.textContent = e.data.marks.map(m=>`${m.label.padEnd(60)} wasm=${m.wasmMiB} MiB js=${m.jsHeapMiB} MiB`).join('\n'); window.__done = true; };
+w.postMessage({ probs, seed, cases: [
+  {name:'c_2-2_seed', useSeed:true},{name:'c_2-2_seed', useSeed:true},{name:'c_2-2_seed', useSeed:true},
+  {name:'b_2-2_scratch'},{name:'d_editor'} ] });
+</script></body></html>

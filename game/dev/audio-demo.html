@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>音と振動デモ / Audio demo — ゆらしてピタッ</title>
+    <!-- Dev-only page (GAME_DESIGN.md §10.1, §11 M5). Owner: O6. Served by `npm run dev` at /dev/audio-demo.html. -->
+    <style>
+      :root {
+        --paper-1: #f3eee4;
+        --paper-2: #e6dccb;
+        --ink: #1e2a44;
+        --ink-2: #4b5670;
+        --brick: #b5553a;
+        --goal: #22b573;
+        --danger: #e5484d;
+        --gantry: #f2b705;
+        --ai: #19c3ff;
+        --card: #fbf8f2;
+        --line: #d6ccba;
+        font-family: 'M PLUS Rounded 1c', 'Hiragino Maru Gothic ProN', 'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif;
+        color: var(--ink);
+      }
+      * { box-sizing: border-box; }
+      html { background: var(--paper-2); }
+      body {
+        margin: 0;
+        background: linear-gradient(180deg, var(--paper-1), var(--paper-2));
+        min-height: 100vh;
+      }
+      main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+      header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin-bottom: 14px; }
+      h1 { font-size: 22px; font-weight: 800; margin: 0; letter-spacing: 0.02em; }
+      h1 small { font-weight: 500; font-size: 13px; color: var(--ink-2); margin-left: 8px; }
+      h2 { font-size: 15px; font-weight: 800; margin: 22px 0 10px; display: flex; align-items: baseline; gap: 8px; }
+      h2 span { font-weight: 500; font-size: 12px; color: var(--ink-2); }
+      .chip {
+        display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+        border: 1.5px solid var(--ink); font-size: 12px; font-variant-numeric: tabular-nums; background: var(--card);
+      }
+      .chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); display: inline-block; }
+      .chip[data-state='running'] i { background: var(--goal); }
+      .chip[data-state='suspended'] i { background: var(--gantry); }
+      .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding: 12px 14px; border-radius: 14px;
+        background: var(--card); border: 1.5px solid var(--line); }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+      .card { background: var(--card); border: 1.5px solid var(--line); border-radius: 14px; padding: 10px 12px 12px;
+        display: flex; flex-direction: column; gap: 8px; }
+      .card h3 { margin: 0; font-size: 14px; font-weight: 800; display: flex; justify-content: space-between; gap: 6px; }
+      .card h3 span { font-weight: 500; font-size: 11px; color: var(--ink-2); }
+      .card p { margin: 0; font-size: 11px; color: var(--ink-2); line-height: 1.45; }
+      button {
+        font: inherit; font-size: 13px; font-weight: 800; color: var(--ink); background: #fff; cursor: pointer;
+        border: 2px solid var(--ink); border-radius: 10px; padding: 7px 12px; min-height: 36px;
+        box-shadow: 0 2px 0 var(--ink); transition: transform 60ms, box-shadow 60ms;
+      }
+      button:active { transform: translateY(2px); box-shadow: 0 0 0 var(--ink); }
+      button.primary { background: var(--brick); color: #fff; }
+      button.small { font-size: 12px; padding: 5px 9px; min-height: 30px; }
+      .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+      label { font-size: 12px; display: flex; align-items: center; gap: 8px; }
+      label.slider { display: grid; grid-template-columns: 1fr auto; grid-template-areas: 'name out' 'input input'; gap: 0 8px; }
+      label.slider > span { grid-area: name; }
+      label.slider > input { grid-area: input; }
+      label.slider > output { grid-area: out; }
+      .bar label.slider { min-width: 260px; }
+      .stack { display: flex; flex-direction: column; gap: 12px; }
+      label output { font-variant-numeric: tabular-nums; font-family: ui-monospace, monospace; font-size: 12px; text-align: right; }
+      input[type='range'] { width: 100%; accent-color: var(--brick); }
+      select { max-width: 100%; font: inherit; font-size: 12px; border: 1.5px solid var(--ink); border-radius: 8px; padding: 3px 6px; background: #fff; }
+      .cols { display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; }
+      @media (max-width: 820px) { .cols { grid-template-columns: 1fr; } }
+      canvas { width: 100%; height: 96px; display: block; border-radius: 10px; background: #1e2a44; }
+      .meter { display: flex; align-items: center; gap: 10px; font-family: ui-monospace, monospace; font-size: 12px; }
+      #log { font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.5; margin: 0; min-height: 120px;
+        max-height: 180px; overflow: auto; white-space: pre-wrap; }
+      .hint { font-size: 12px; color: var(--ink-2); }
+      .note { font-family: ui-monospace, monospace; font-weight: 700; }
+      .tier0 { border-color: #9aa3b5; } .tier1 { border-color: #d6a800; } .tier2 { border-color: #e07b00; }
+      .tier3 { border-color: var(--danger); }
+      .tier4 { border-image: linear-gradient(90deg, #e5484d, #f2b705, #22b573, #19c3ff, #8b5cf6) 1; border-radius: 0; }
+    </style>
+  </head>
+  <body>
+    <main id="app" data-sfx="none"></main>
+    <script type="module" src="./audio-demo.ts"></script>
+  </body>
+</html>

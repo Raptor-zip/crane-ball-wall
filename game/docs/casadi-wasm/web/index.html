@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>casadi-wasm ball-wall spike</title>
+<style>body{font:13px ui-monospace,monospace;margin:1rem}#out{white-space:pre-wrap}</style>
+</head>
+<body>
+<h1>casadi-wasm in a Web Worker — ball-wall planner</h1>
+<div id="out">starting…</div>
+<script type="module">
+const out = document.getElementById('out');
+const log = (s) => { out.textContent += s + '\n'; };
+window.__result = { cases: {}, log: [] };
+const record = (k, v) => { window.__result[k] = v; };
+
+const problems = await (await fetch('../ref/problems.json')).json();
+const cases = (new URLSearchParams(location.search).get('cases') || 'a_1-2_scratch,d_editor').split(',');
+const stream = new URLSearchParams(location.search).get('stream') === '1';
+
+const w = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
+let pending = null;
+let iterCount = 0, firstIterMs = null, tSolveStart = 0;
+
+w.onmessage = (ev) => {
+  const m = ev.data;
+  if (m.type === 'init') {
+    record('initMs', m.initMs); record('ipoptMs', m.ipoptMs); record('resources', m.resources);
+    log(`worker init: casadi ${m.initMs.toFixed(0)} ms, ipopt plugin ${m.ipoptMs.toFixed(0)} ms`);
+    for (const r of m.resources) log(`  ${r.name}: transfer ${(r.transferSize/1048576).toFixed(2)} MiB, encoded ${(r.encodedBodySize/1048576).toFixed(2)}, decoded ${(r.decodedBodySize/1048576).toFixed(2)} (${r.duration} ms)`);
+    next();
+  } else if (m.type === 'iter') {
+    iterCount++;
+    if (firstIterMs === null) firstIterMs = performance.now() - tSolveStart;
+  } else if (m.type === 'solved') {
+    const c = { ok: m.ok, err: m.err, seconds: m.seconds, buildMs: m.buildMs, stats: m.stats, steps: m.steps,
+                nIter: m.nIter, cbMs: m.cbMs, iterMessages: iterCount, firstIterMs };
+    rafOn = false;
+    c.frames = window.__frameStats();
+    if (c.frames) log(`  main thread during solve: ${c.frames.n} frames, median ${c.frames.median.toFixed(1)} ms, p95 ${c.frames.p95.toFixed(1)} ms, max ${c.frames.max.toFixed(1)} ms`);
+    window.__result.cases[m.name] = c;
+    window.__result.traj = window.__result.traj || {};
+    if (m.ok) window.__result.traj[m.name] = { t: m.t, X: m.X, U: m.U };
+    log(`${m.name}: ${m.ok ? 'ok' : 'FAILED ' + m.err} ${m.seconds.toFixed(2)}s obj=${m.ok ? m.stats.objective.toFixed(6) : '-'} iters=[${m.ok ? m.stats.iterations : ''}]`
+        + (stream ? ` streamed ${iterCount} iterates (first after ${firstIterMs?.toFixed(0)} ms, callback overhead ${m.cbMs.toFixed(0)} ms)` : ''));
+    next();
+  } else if (m.type === 'error') {
+    log('WORKER ERROR ' + m.err); window.__result.error = m.err; window.__done = true;
+  }
+};
+
+const seed = await (await fetch('../ref/seed_enter_fast.json')).json();
+let pywarm = null;
+try { pywarm = await (await fetch('../ref/b_2-2_scratch.json')).json(); } catch {}
+
+async function next() {
+  const name = cases.shift();
+  if (!name) { window.__done = true; log('done'); return; }
+  const base = name === 'c2_2-2_pywarm' ? 'b_2-2_scratch' : name;
+  const prob = problems[base];
+  let init = null, continuation = true;
+  if (base.includes('seed')) { init = { t: seed.t, X: seed.X, U: seed.U }; continuation = false; }
+  if (name === 'c2_2-2_pywarm' && pywarm) { init = { t: pywarm.t, X: pywarm.X, U: pywarm.U }; continuation = false; }
+  iterCount = 0; firstIterMs = null; tSolveStart = performance.now();
+  frames = []; rafOn = true;
+  w.postMessage({ cmd: 'solve', name, prob, init, continuation, stream: stream ? { every: 1 } : null });
+}
+
+// main-thread smoothness while the worker solves
+let frames = [], lastT = performance.now(), rafOn = false;
+function raf(t) { if (rafOn) frames.push(t - lastT); lastT = t; requestAnimationFrame(raf); }
+requestAnimationFrame(raf);
+window.__frameStats = () => {
+  const f = frames.slice(2).sort((a, b) => a - b);
+  return f.length ? { n: f.length, median: f[f.length >> 1], p95: f[Math.floor(f.length * 0.95)], max: f[f.length - 1] } : null;
+};
+record('crossOriginIsolated', self.crossOriginIsolated);
+record('hasSAB', typeof SharedArrayBuffer !== 'undefined');
+record('hw', navigator.hardwareConcurrency);
+log(`crossOriginIsolated=${self.crossOriginIsolated} SharedArrayBuffer=${typeof SharedArrayBuffer !== 'undefined'} cores=${navigator.hardwareConcurrency}`);
+w.postMessage({ cmd: 'init' });
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+# Regenerable outputs only (GAME_DESIGN.md §10.1). public/ is NOT ignored (hand-made assets such as og.png are committed).
+node_modules/
+dist/
+dist-single/
+dist-test/
+.wrangler/
+.dev.vars
+test-results/
+playwright-report/
+tools/.cache/
+__pycache__/
+*.tsbuildinfo

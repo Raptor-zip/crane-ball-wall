@@ -1,0 +1,692 @@
+{
+ "format": 1,
+ "sim": 1,
+ "about": "Golden replays (GAME_DESIGN.md §10.7): 20 deterministic-bot runs on 6 levels. replay = b64url(encodeReplay); expect = simulateReplay summary (floats as IEEE-754 hex, stateHash = FNV-1a of every event and the final state). Must be identical in Node, chromium, firefox, webkit and workerd. Regenerate with npm run golden:update.",
+ "levels": {
+  "1-1": {
+   "M": 2,
+   "m": 1,
+   "L": 1,
+   "Fmax": 40,
+   "rail": [
+    -0.6,
+    2.4
+   ],
+   "startX": 0,
+   "walls": [],
+   "phases": [
+    {
+     "kind": "pad",
+     "xa": 1.2,
+     "xb": 1.8
+    }
+   ],
+   "restDeg": 5
+  },
+  "2-2": {
+   "M": 2,
+   "m": 1,
+   "L": 1,
+   "Fmax": 40,
+   "rail": [
+    -1,
+    3.2
+   ],
+   "startX": 0,
+   "walls": [
+    {
+     "x0": 1.3,
+     "x1": 1.42,
+     "h": 0.75
+    },
+    {
+     "x0": 1.84,
+     "x1": 1.96,
+     "h": 0.75
+    }
+   ],
+   "phases": [
+    {
+     "kind": "pocket",
+     "xa": 1.42,
+     "xb": 1.84
+    }
+   ],
+   "restDeg": 3
+  },
+  "3-3": {
+   "M": 2,
+   "m": 1,
+   "L": 0.6,
+   "Fmax": 10,
+   "rail": [
+    -1,
+    3.2
+   ],
+   "startX": 0,
+   "walls": [
+    {
+     "x0": 1,
+     "x1": 1.1,
+     "h": 0.8
+    },
+    {
+     "x0": 1.46,
+     "x1": 1.56,
+     "h": 0.8
+    }
+   ],
+   "phases": [
+    {
+     "kind": "pocket",
+     "xa": 1.1,
+     "xb": 1.46
+    }
+   ],
+   "restDeg": 3
+  },
+  "4-2": {
+   "M": 2,
+   "m": 1,
+   "L": 1,
+   "Fmax": 40,
+   "rail": [
+    -0.6,
+    2.4
+   ],
+   "startX": 0,
+   "walls": [
+    {
+     "x0": 1.2,
+     "x1": 1.3,
+     "h": 0.5
+    }
+   ],
+   "phases": [
+    {
+     "kind": "pad",
+     "xa": 2.24,
+     "xb": 2.44
+    }
+   ],
+   "restDeg": 3
+  },
+  "4-3": {
+   "M": 2,
+   "m": 1,
+   "L": 1,
+   "Fmax": 40,
+   "rail": [
+    -1,
+    3.2
+   ],
+   "startX": 0,
+   "walls": [
+    {
+     "x0": 0.9,
+     "x1": 1.02,
+     "h": 0.4
+    }
+   ],
+   "phases": [
+    {
+     "kind": "pad",
+     "xa": 1.6,
+     "xb": 2
+    }
+   ],
+   "restDeg": 3,
+   "egg": {
+    "Tmax": 16,
+    "Jmax": 0.3
+   }
+  },
+  "5-4": {
+   "M": 2,
+   "m": 1,
+   "L": 1,
+   "Fmax": 40,
+   "rail": [
+    -1,
+    3.2
+   ],
+   "startX": 0,
+   "walls": [
+    {
+     "x0": 1.3,
+     "x1": 1.42,
+     "h": 0.75
+    },
+    {
+     "x0": 1.84,
+     "x1": 1.96,
+     "h": 0.75
+    }
+   ],
+   "phases": [
+    {
+     "kind": "pocket",
+     "xa": 1.42,
+     "xb": 1.84
+    },
+    {
+     "kind": "pad",
+     "xa": -0.15,
+     "xb": 0.15
+    }
+   ],
+   "restDeg": 3
+  }
+ },
+ "replays": [
+  {
+   "id": "1-1/bang-bang",
+   "level": "1-1",
+   "bot": "bangBang(17, 11)",
+   "maxTicks": 900,
+   "replay": "WVABAU4o4hMAAJIB_AMd9gcZGFxUTEA4MCwkHBgGCgYGBgICAgL0AwFKRkI6Mi4mIh4aFiIuJhoSDgIABAwMEBQQFBQQFBAMEAwMCAQIBAQHAgIAAgIAAgICAAIAAgACFQQZBAIEAAI",
+   "expect": {
+    "status": 2,
+    "ticks": 146,
+    "score": 233,
+    "minD2": "7ff0000000000000",
+    "peakF": "4044000000000000",
+    "crash": null,
+    "stateHash": 1625934762,
+    "events": {
+     "1": 1,
+     "2": 1,
+     "5": 3,
+     "6": 3,
+     "7": 2,
+     "9": 1
+    }
+   }
+  },
+  {
+   "id": "1-1/carry",
+   "level": "1-1",
+   "bot": "carry(1.5)",
+   "maxTicks": 1200,
+   "replay": "WVABAU4o4hMAAOsDgAIqJh4aFhYODgoGBgYCAAIHBAQABAQABAQEAAQEAAQEAAQBBBcCAwIDAgACAQIDAgECAwIFAgkCDwQCBxYOCgoGAgMEAAgEBAQIBAQEAAQEAQQBAgMCAAIAAgACAQIBAhUEAwQDBAEEAAQBBAEEAAQBBAAEAAQBBAAEAQQABAEEAQQBBAUEAwQLBAACBAACAAQCEQIDAgMCAwIBAgMCAQIDAgECAwIDAgECBwIHAiUEEwQDBAUEBQQDBAUEBQQHBAkEHQQAAgAEAhMCCQIJAgcCCwIJAg8CNwQP",
+   "expect": {
+    "status": 2,
+    "ticks": 491,
+    "score": 923,
+    "minD2": "7ff0000000000000",
+    "peakF": "40342850a142850a",
+    "crash": null,
+    "stateHash": 3131590583,
+    "events": {
+     "5": 8,
+     "6": 2,
+     "7": 1,
+     "9": 1
+    }
+   }
+  },
+  {
+   "id": "1-1/slack-snap",
+   "level": "1-1",
+   "bot": "slackSnap(40, 25)",
+   "maxTicks": 900,
+   "replay": "WVABAU4o4hMAACH8Az0",
+   "expect": {
+    "status": 3,
+    "ticks": 33,
+    "score": null,
+    "minD2": "7ff0000000000000",
+    "peakF": "4044000000000000",
+    "crash": {
+     "kind": 3,
+     "wall": -1,
+     "px": "3ff3eaf9a4b9527a",
+     "py": "3ff4cccccccccccd",
+     "d2": "3f6aab5699dd29e2"
+    },
+    "stateHash": 1958868080,
+    "events": {
+     "10": 1
+    }
+   }
+  },
+  {
+   "id": "1-1/random",
+   "level": "1-1",
+   "bot": "randomSeeded(11)",
+   "maxTicks": 600,
+   "replay": "WVABAU4o4hMAAOEBDCtkL_QBK44GK5gEJX5BOjWIAg_-AxfcAR8",
+   "expect": {
+    "status": 3,
+    "ticks": 225,
+    "score": null,
+    "minD2": "7ff0000000000000",
+    "peakF": "4040d9b366cd9b36",
+    "crash": {
+     "kind": 3,
+     "wall": -1,
+     "px": "bfab290588cdd300",
+     "py": "3ff4cccccccccccd",
+     "d2": "3f61e47570f37907"
+    },
+    "stateHash": 3206297319,
+    "events": {
+     "1": 2,
+     "2": 2,
+     "3": 2,
+     "5": 1,
+     "10": 1
+    }
+   }
+  },
+  {
+   "id": "1-1/random-walk",
+   "level": "1-1",
+   "bot": "randomWalk(1001)",
+   "maxTicks": 600,
+   "replay": "WVABAU4o4hMAANgEUjZeJih0GFgsIlJiIABULBAKRHQIFDYsBGYGSAAUAEhQDkBmABJmOi4odngeGGwgcFIIEgAaZD5gJlpCGg52AFY2Wi4eWBJMXjYmQlxEYCYgaDAWUEB4BHBqHDhaXDxSJHgIbEJWTmo6FkheSi4aMkI0YlAQYnIcQBYYLHheOEIOTggSGlIaEgAwKEoKSEZEYAgQFFRELlokVgQSFghEeBJeFjoGSFYOOAQOTCoQDDQOCHYwRjoaAGBUSCgIIDYkagpKTiIkXC5gNi4SIHRgFBRcanRwIkBSYBwqCF4mXDYYQCoGKBpmbHhceEZsVh42dDZeaDZ0EjQOaEIUGixAOkgBYlIACAAIFiJAXD4aYkpsAEAEUAwCLiBcLio0JC4kEAECBHZEGjRGGjAeAEg6KjJ2CGxkOmAsIl4YZC5IBAACGiAmAiwDKgo4JkIWEmA4ASYOQiAqJGQWYlQKVkJAbmYodEIkMjQqOBpyEFBSJCQCLjxMBAB2bjB2cHAgWFYwAh54Eh4WZjpkNmhMWjBMQHJybFpMJiAIREJcbkxqGhwwOHBuLhY2Gm4yIgxsGDwsOkIgSgBUOk5yKGYIVGgmOhAkQgxYHCwKWg4APgQ4eBYOaFRCKl4uQlYcGHQGVEJwOkhGKm5oXhJOcjwCCBZiSnggNGAgOG5UcixgBg5WEGAUAl54ABICLHZUPgJMTkY6XFwIMG4QIBAwdFo2dBAcBkpEEggsMEo4GFYmEBYIYgIOcG4EHCgmVC5wQDw0DiJGPFgmAEI2IBhSQBAqJg5sJEZcLA",
+   "expect": {
+    "status": 1,
+    "ticks": 600,
+    "score": null,
+    "minD2": "7ff0000000000000",
+    "peakF": "4044000000000000",
+    "crash": null,
+    "stateHash": 503153664,
+    "events": {
+     "1": 9,
+     "2": 2,
+     "3": 10,
+     "5": 10
+    }
+   }
+  },
+  {
+   "id": "2-2/ai-open-loop",
+   "level": "2-2",
+   "bot": "recorded: plans_py 2-2/ai force at 60 Hz + fine servo with assist",
+   "maxTicks": 1800,
+   "replay": "WVABAYMxw4UAANcBsgJuCgAoQEhERAA4NCwkHAAcFBQQEAAQEBAMEAAMCAQEAgAKDhYeHgAmJiYiHgAaEg4KAgEICAgMABAMDBAIAAwIBAMCCgoOEgAaGiIiJgAqJiYaDgAIIERkgAEAlAGYAYQBYAgAMl5GNioAIhYWDgoACgIFBAgMEBgAGCAsNEQAMEJ6jgF6AD4uXmJOAC4CBxQcKCwANDhASFQAYGRoZEgADGaaAgYGBgYGAgICAgACDQQBBAEEAwQPAgQCBQ",
+   "expect": {
+    "status": 2,
+    "ticks": 215,
+    "score": 370,
+    "minD2": "3f6db22178f99f12",
+    "peakF": "4044000000000000",
+    "crash": null,
+    "stateHash": 1273691722,
+    "events": {
+     "4": 1,
+     "5": 6,
+     "6": 2,
+     "7": 1,
+     "9": 1
+    }
+   }
+  },
+  {
+   "id": "2-2/dash-brake",
+   "level": "2-2",
+   "bot": "dashBrake(1.63)",
+   "maxTicks": 600,
+   "replay": "WVABAYMxw4UAAC_8AwlGPjIqHhYSDgoGAgYCADJCOjIqJh4WEgoGAQgEDAwMEAwQEAwQDBA",
+   "expect": {
+    "status": 3,
+    "ticks": 47,
+    "score": null,
+    "minD2": "3fa130ce9a0a43ea",
+    "peakF": "4044000000000000",
+    "crash": {
+     "kind": 2,
+     "wall": 0,
+     "px": "3ff4f857fb6181b7",
+     "py": "3fe8000000000000",
+     "d2": "3f6d7dbf487fcb92"
+    },
+    "stateHash": 2315749704,
+    "events": {
+     "2": 1,
+     "10": 1
+    }
+   }
+  },
+  {
+   "id": "2-2/pump",
+   "level": "2-2",
+   "bot": "pump(240, 1.63)",
+   "maxTicks": 900,
+   "replay": "WVABAYMxw4UAALcB_AMb9gcz-AcB9gcX-Acf9gcb-AdH9gdb-AcA",
+   "expect": {
+    "status": 3,
+    "ticks": 183,
+    "score": null,
+    "minD2": "3f6c216f4500dd1a",
+    "peakF": "4044000000000000",
+    "crash": {
+     "kind": 1,
+     "wall": 0,
+     "px": "3ff6016420efd753",
+     "py": "3fe8000000000000",
+     "d2": "3f6c216f4500dd1a"
+    },
+    "stateHash": 32633807,
+    "events": {
+     "1": 4,
+     "2": 5,
+     "3": 1,
+     "4": 3,
+     "5": 2,
+     "10": 1
+    }
+   }
+  },
+  {
+   "id": "3-3/pump",
+   "level": "3-3",
+   "bot": "pump(300, 1.28)",
+   "maxTicks": 900,
+   "replay": "WVABAdBLhA8AADX8Az32ByM",
+   "expect": {
+    "status": 3,
+    "ticks": 53,
+    "score": null,
+    "minD2": "3f5cc7cf0dcbab05",
+    "peakF": "4024000000000000",
+    "crash": {
+     "kind": 1,
+     "wall": 0,
+     "px": "3ff0000000000000",
+     "py": "3fe511286aa9321b",
+     "d2": "3f5cc7cf0dcbab05"
+    },
+    "stateHash": 3902829798,
+    "events": {
+     "5": 1,
+     "10": 1
+    }
+   }
+  },
+  {
+   "id": "3-3/carry-away",
+   "level": "3-3",
+   "bot": "carry(-0.5)",
+   "maxTicks": 3600,
+   "replay": "WVABAdBLhA8AAJAc-gMHQFxQRDgoJBwUDAgEAAIGBgYKCgoKDgoKCgoGCgYGHCQcGBQQDAwIBAgECAQECAQICAgICAwIDAwMCAwIDAgIDAQICAQECAAEAQQCAQICAgICBgYCBgYGBgYKBgoGCgYKCgoKBgoKCgoGCgoGCgYKBgYGBgYGAgYGAgICAgICAgACAAIDBAMEAAQEBAQEBAQEBAQIBAgIBAgECAgIBAgICAQICAQIBAgECAQIBAQIBAQEBAQABAQABAAEAQQDAgUCAQICAAICAAICAgICAgICAgICAgYCAgIABgICAAYABgACAgICAgACAgACAgECAQIVBAEEAAQABAAEBAAEAAQEAAQABAQABAQABAQABAQABAAEBAAEAQQABAEEAQQbAgMCAQIBAgECAAIBAgACAAIBAgACAQIAAgMCAQIFAgsCAAQCBA8EAwQFBAMEAQQDBAMEAwQFBAkEEwIEAQIEAgQCEQIFAgMCCQIJAhUCBAIABAIABAACBAACBBMEDQQPBBkEAAIEAAIEAgQAAgAEAgQCAAQCAQQCEwIdAgkEAgsEAgsEAgMEAgAEAgAEAgQCBAIEAAIEJQQDAgQAAgQAAgQCBAIEAAIEAgQCAAQCBAIEAgAEAgAEAgUEAikCBAIEAgQCBAACBAACBAECBAACBAMCBAUCBAsCBDUEAgAEAgcEAg8EAiEEAocBAgRJAgSFAgQC4QQCBJECBALfBAIEiQIEAt0EAgTlAQQC4QQCBI0CBALhBAIEkwIEArkE",
+   "expect": {
+    "status": 4,
+    "ticks": 3600,
+    "score": null,
+    "minD2": "3ff0000000000000",
+    "peakF": "4024000000000000",
+    "crash": null,
+    "stateHash": 1464384472,
+    "events": {
+     "5": 97,
+     "11": 1
+    }
+   }
+  },
+  {
+   "id": "3-3/random",
+   "level": "3-3",
+   "bot": "randomSeeded(33)",
+   "maxTicks": 600,
+   "replay": "WVABAdBLhA8AAOMCNDlIBbIBP7YBL5gESdoDP2I_hAUxogIN8gMXhAYVai2yATGcAjWiAws",
+   "expect": {
+    "status": 3,
+    "ticks": 355,
+    "score": null,
+    "minD2": "3f6b75f0b1706a18",
+    "peakF": "4020d9b366cd9b36",
+    "crash": {
+     "kind": 1,
+     "wall": 0,
+     "px": "3ff0000000000000",
+     "py": "3fe999999999999a",
+     "d2": "3f6b75f0b1706a18"
+    },
+    "stateHash": 4030544900,
+    "events": {
+     "5": 7,
+     "10": 1
+    }
+   }
+  },
+  {
+   "id": "4-2/slam-stop",
+   "level": "4-2",
+   "bot": "slamStop()",
+   "maxTicks": 600,
+   "replay": "WVABATEiKSQAANgE_AMJRj4yKh4WEg4KBgIGAgACAgIAAgICAAICAgICAgICAgIqRkI2KiIaDgq4BRYRGBaxCA",
+   "expect": {
+    "status": 1,
+    "ticks": 600,
+    "score": null,
+    "minD2": "3fb5ff60f2d8b387",
+    "peakF": "4044000000000000",
+    "crash": null,
+    "stateHash": 661638560,
+    "events": {
+     "1": 2,
+     "2": 1,
+     "3": 3,
+     "4": 1,
+     "5": 9
+    }
+   }
+  },
+  {
+   "id": "4-2/dash-brake",
+   "level": "4-2",
+   "bot": "dashBrake(2.34)",
+   "maxTicks": 600,
+   "replay": "WVABATEiKSQAANgE_AMJRj4yKh4WEg4KBgIGAgACAgIAAgICAAICAgImSkI6LiIaEg4GAQgIDAwQEBAQEBAMEBBoFAwIBAIGCg4OEg4OEgoOCgYKAgZYDQQEBAQEBAgEBAgEBAAEBAECAAICBgIGCgYKCgoKCgoKSAsEBAgMEBAUEBQQEBAQDAwMCAgEBAQDAgICBgYGAgoGBgYGBgYGAgYCAgACAwQEBAgECAgMCAgICAgEBAECBgYKDg4OEg4SDhIODg4KCgoGBgICAgIDUAACBAEEAAQABAQABAAEBQIAAgICAgIGAgYCBgICJAkECAgIDAwMEAwMEAwMCAwICAgIBAQABAMCAgACAgIGAgICAgYCAAICAgACAQQABAAEBAQEBAAEBAQBAgICAgYKBgoKCgoOCgoKCgYKBgYGAgIGAAIHBAAsAAQBBAEEBQQCAQIAAgIAAgICAAIAAgAQAAQABAQIBAwICAwIDAgMDAgICAgICAQEBAQEAAQAAgECAAIAAgICAAICAAIAAgACBQQDBAAEAwIBAgIGAgYCCgYGBgoGBgYKBgYCBgYCAgICAgILBAAEBAAEAAQEBAEECwINBAAEBAQECAgECAgICAwIBAgICAgECAQEBAQABAQJAgECAQIAAgACAwIXAgACAgICAgYCAgYGBgYCBgYGAgYC",
+   "expect": {
+    "status": 1,
+    "ticks": 600,
+    "score": null,
+    "minD2": "3fabd48ce58fdba2",
+    "peakF": "4044000000000000",
+    "crash": null,
+    "stateHash": 3758160108,
+    "events": {
+     "1": 1,
+     "2": 1,
+     "3": 8,
+     "4": 1,
+     "5": 8
+    }
+   }
+  },
+  {
+   "id": "4-2/random",
+   "level": "4-2",
+   "bot": "randomSeeded(42)",
+   "maxTicks": 600,
+   "replay": "WVABATEiKSQAAGhoJYACNbIFKWQx3AQD",
+   "expect": {
+    "status": 3,
+    "ticks": 104,
+    "score": null,
+    "minD2": "3f6b1ac3bfe7bd81",
+    "peakF": "403d4a952a54a953",
+    "crash": {
+     "kind": 1,
+     "wall": 0,
+     "px": "3ff4cccccccccccd",
+     "py": "3fdd1f0ffb4825aa",
+     "d2": "3f6b1ac3bfe7bd81"
+    },
+    "stateHash": 2082649539,
+    "events": {
+     "1": 1,
+     "2": 2,
+     "3": 1,
+     "4": 1,
+     "5": 1,
+     "10": 1
+    }
+   }
+  },
+  {
+   "id": "4-3/carry",
+   "level": "4-3",
+   "bot": "carry(1.8)",
+   "maxTicks": 900,
+   "replay": "WVABASUAnaYAAE-AAiomHhoWFg4OCgYGBgIAAgcEBAAEBAAEBAQABAQABAQABAEEFwIDAgMCAAIBAgMCAQIDAg",
+   "expect": {
+    "status": 3,
+    "ticks": 79,
+    "score": null,
+    "minD2": "3f66e480335b2a1e",
+    "peakF": "40342850a142850a",
+    "crash": {
+     "kind": 1,
+     "wall": 0,
+     "px": "3feccccccccccccd",
+     "py": "3fd001c287e11ad6",
+     "d2": "3f66e480335b2a1e"
+    },
+    "stateHash": 1387788012,
+    "events": {
+     "5": 1,
+     "10": 1
+    }
+   }
+  },
+  {
+   "id": "4-3/random",
+   "level": "4-3",
+   "bot": "randomSeeded(43)",
+   "maxTicks": 600,
+   "replay": "WVABASUAnaYAAAf8Awk",
+   "expect": {
+    "status": 3,
+    "ticks": 7,
+    "score": null,
+    "minD2": "3fe9d6811d580de9",
+    "peakF": "4044000000000000",
+    "crash": {
+     "kind": 5,
+     "wall": -1,
+     "px": "3f575e863e200fc0",
+     "py": "3fd06becbc37b32a",
+     "d2": "3f6d7dbf487fcb92"
+    },
+    "stateHash": 3514975142,
+    "events": {
+     "10": 1
+    }
+   }
+  },
+  {
+   "id": "5-4/full-course",
+   "level": "5-4",
+   "bot": "recorded: plans_py 2-2/ai + hold, then escape_fast + hold",
+   "maxTicks": 3600,
+   "replay": "WVABAZYqG2IAAPUDsgJuCgAoQEhERAA4NCwkHAAcFBQQEAAQEBAMEAAMCAQEAgAKDhYeHgAmJiYiHgAaEg4KAgEICAgMABAMDBAIAAwIBAMCCgoOEgAaGiIiJgAqJiYaDgAIIERkgAEAlAGYAYQBYAgAMl5GNioAIhYWDgoACgIFBAgMEBgAGCAsNEQAMEJ6jgF6AD4uXmJOAC4CBxQcKCwANDhASFQAYGRoZEgADGaaAgYGBgYGAgICAgACDQQBBAEEAwQPAgQCBWYmAgAMFBgYGAAYGBQUFAAQDAwMCAAEBAQDAgIGBgYACg4KDg4AEg4OEg4ADg4ODgoADg4KDgoADgoKCgYABgYBCAAMEBgYHAAgICAgHAAYGBgQDAAMAAoOCgAGAgUICBAQGAAEAAIGCgAKDg4ODgAODg4OCgAGBgIABAAEBAgECAAICAgICAAECAQEBAAEBAQABAMEAAQBBAAEBAEECAQEAAgIBAgIAAgIBAgEAAQABAIBAgICAgYAAgYGBgYABgYGBgYABgYKBgoABgoGCgoACgoGCgoACgYKBgoABgICAAgAGDAsCAgICAQIBAQEAAQHAgMCAAIDAgUCAAQAAgQN",
+   "expect": {
+    "status": 2,
+    "ticks": 501,
+    "score": 943,
+    "minD2": "3f6db22178f99f12",
+    "peakF": "4044000000000000",
+    "crash": null,
+    "stateHash": 4032008752,
+    "events": {
+     "4": 2,
+     "5": 13,
+     "6": 4,
+     "7": 2,
+     "8": 1,
+     "9": 1
+    }
+   }
+  },
+  {
+   "id": "5-4/slack-snap",
+   "level": "5-4",
+   "bot": "slackSnap(30, 20)",
+   "maxTicks": 900,
+   "replay": "WVABAZYqG2IAACH8Azf2BwE",
+   "expect": {
+    "status": 3,
+    "ticks": 33,
+    "score": null,
+    "minD2": "3fcdb2190e602300",
+    "peakF": "4044000000000000",
+    "crash": {
+     "kind": 3,
+     "wall": -1,
+     "px": "3ff3a9fb36b3143b",
+     "py": "3ff4cccccccccccd",
+     "d2": "3f6be593717489e2"
+    },
+    "stateHash": 2922696042,
+    "events": {
+     "2": 1,
+     "10": 1
+    }
+   }
+  },
+  {
+   "id": "5-4/pump",
+   "level": "5-4",
+   "bot": "pump(300, 1.63)",
+   "maxTicks": 900,
+   "replay": "WVABAZYqG2IAALcB_AMb9gcz-AcB9gcX-Acf9gcb-AdH9gdb-AcA",
+   "expect": {
+    "status": 3,
+    "ticks": 183,
+    "score": null,
+    "minD2": "3f6c216f4500dd1a",
+    "peakF": "4044000000000000",
+    "crash": {
+     "kind": 1,
+     "wall": 0,
+     "px": "3ff6016420efd753",
+     "py": "3fe8000000000000",
+     "d2": "3f6c216f4500dd1a"
+    },
+    "stateHash": 32633807,
+    "events": {
+     "1": 4,
+     "2": 5,
+     "3": 1,
+     "4": 3,
+     "5": 2,
+     "10": 1
+    }
+   }
+  },
+  {
+   "id": "5-4/random",
+   "level": "5-4",
+   "bot": "randomSeeded(54)",
+   "maxTicks": 600,
+   "replay": "WVABAZYqG2IAAKEB9gEzRCcKNfwBObADI_4GOQ",
+   "expect": {
+    "status": 3,
+    "ticks": 161,
+    "score": null,
+    "minD2": "3f534766602b99d4",
+    "peakF": "40435ebd7af5ebd8",
+    "crash": {
+     "kind": 1,
+     "wall": 0,
+     "px": "3ff4cccccccccccd",
+     "py": "3fd2f69713234635",
+     "d2": "3f534766602b99d4"
+    },
+    "stateHash": 2624687183,
+    "events": {
+     "1": 1,
+     "2": 1,
+     "3": 1,
+     "5": 2,
+     "10": 1
+    }
+   }
+  }
+ ]
+}

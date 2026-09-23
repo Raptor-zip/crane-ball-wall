@@ -1,0 +1,59 @@
+{
+  "name": "yurapita",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ゆらしてピタッ / Swing & Stick",
+  "engines": {
+    "node": ">=24"
+  },
+  "//": [
+    "admin:purge runs one SQL statement against the production D1 (see GAME_DESIGN.md §7.11).",
+    "Steps: (1) find the row:   npm run admin:purge -- \"SELECT board,pidh,t120,created FROM runs WHERE pidh='<pidh>'\"",
+    "       (2) delete the run: npm run admin:purge -- \"DELETE FROM runs WHERE board='<key>' AND pidh='<pidh>'\"",
+    "       (3) drop it from the cached top list and bump ver (optimistic lock):",
+    "           npm run admin:purge -- \"UPDATE boards SET top=(SELECT json_group_array(json(value)) FROM json_each(boards.top) WHERE json_extract(value,'$[0]')<>'<pidh>'), ver=ver+1 WHERE board='<key>'\"",
+    "       (4) if the purged run was rank 1, refresh wr: npm run admin:purge -- \"UPDATE boards SET wr=(SELECT replay FROM runs WHERE board='<key>' AND t120 IS NOT NULL ORDER BY t120, created LIMIT 1), ver=ver+1 WHERE board='<key>'\""
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:single": "vite build --mode single && node tools/check-single.mjs",
+    "build:test": "VITE_TEST=1 vite build",
+    "worker:dev": "npm run build && wrangler dev --local --persist-to .wrangler/state",
+    "db:migrate:local": "wrangler d1 migrations apply yurapita --local",
+    "db:migrate:remote": "wrangler d1 migrations apply yurapita --remote",
+    "deploy": "node tools/check-epoch.mjs && npm run build && wrangler deploy",
+    "test": "vitest run --project sim --project data --project core --project input --project store --project ui --project worker",
+    "test:browser": "vitest run --project browser",
+    "test:e2e": "npm run build:test && npm run build:single && playwright test",
+    "golden:update": "GOLDEN_UPDATE=1 vitest run --project sim tests/sim/golden.test.ts",
+    "lint": "eslint .",
+    "typecheck": "tsc -b",
+    "ghosts": "cd .. && OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 uv run python game/tools/ai_ghosts.py",
+    "daily": "cd .. && OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 uv run python game/tools/daily_pool.py",
+    "fixtures": "cd .. && OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 uv run python game/tools/export_fixtures.py",
+    "admin:purge": ": 'Runs ONE SQL statement on the REMOTE yurapita D1. Usage and steps are in the \"//\" field of package.json. Example: npm run admin:purge -- \"DELETE FROM runs WHERE board=... AND pidh=...\"' && wrangler d1 execute yurapita --remote --command"
+  },
+  "dependencies": {
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20260922.1",
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^24.13.6",
+    "@types/three": "^0.186.0",
+    "@vitest/browser": "^4.1.11",
+    "@vitest/browser-playwright": "^4.1.11",
+    "eslint": "^10.11.0",
+    "happy-dom": "^20.14.5",
+    "playwright": "^1.63.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.70.1",
+    "vite": "^8.3.0",
+    "vite-plugin-singlefile": "^2.3.3",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.136.1"
+  }
+}
