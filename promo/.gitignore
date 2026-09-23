@@ -1,0 +1,7 @@
+# 再生成できる生成物だけを無視する（build.sh で作り直せる）
+remotion/node_modules/
+remotion/out/
+remotion/public/voice/
+remotion/public/timeline.json
+remotion/public/clips/
+capture/*.frames/
