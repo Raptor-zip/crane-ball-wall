@@ -36,7 +36,7 @@ export interface SaveV1 {
   id: { secret: string; pidh: string; nameSeed: number };
   settings: {
     lang: 'ja' | 'en';
-    langPicked: boolean;     // the player chose lang in the settings (else it follows defaultLang: Japanese)
+    langPicked: boolean;     // the player chose lang in the settings (else it follows defaultLang: the browser's language)
     volume: number;          // 0..100 (the settings slider, §3.5)
     muted: boolean; haptics: boolean; motion: 'auto' | 'on' | 'off';
     keyboard: 'speed' | 'force'; ghostSet: 0 | 1 | 2 | 3 | 4;
@@ -93,9 +93,14 @@ export interface StoreOptions {
 
 export const BADGE_IDS: readonly BadgeId[] = ['kamihitoe', 'ippatsu', 'hashidon', 'pashi', 'buranko', 'yasashisa'];
 
-/** First-run language: always Japanese (the playtest asked for it); English only by choice in the settings. */
+/**
+ * Language of a player who has not picked one in the settings: Japanese when the browser's language is Japanese
+ * (navigator.language ja*), English otherwise. Outside a browser (tests, tools) Japanese.
+ */
 export function defaultLang(): 'ja' | 'en' {
-  return 'ja';
+  if (typeof navigator === 'undefined') return 'ja';
+  const first = navigator.language || navigator.languages?.[0] || 'ja';
+  return /^ja\b/i.test(first) ? 'ja' : 'en';
 }
 
 export function defaultLevelProgress(hash = ''): LevelProgress {
@@ -240,7 +245,7 @@ export function parseSave(raw: unknown, lang: 'ja' | 'en' = defaultLang()): Save
   if (isObj(raw.settings)) {
     const x = raw.settings, t = s.settings;
     t.langPicked = bool(x.langPicked, false);
-    // A language the player did not pick (the old navigator.language default) goes back to the default: Japanese.
+    // A language the player did not pick follows the browser (defaultLang); only a picked one is kept.
     if (t.langPicked) t.lang = oneOf(x.lang, ['ja', 'en'] as const, t.lang);
     t.volume = typeof x.volume === 'number' && Number.isFinite(x.volume) ? Math.min(100, Math.max(0, Math.round(x.volume))) : t.volume;
     t.muted = bool(x.muted, t.muted);

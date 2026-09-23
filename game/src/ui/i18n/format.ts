@@ -21,9 +21,11 @@ export function getLang(): Lang {
   return current;
 }
 
-/** First-run default: always Japanese (English only by choice in the settings). */
+/** First-run default: Japanese for a Japanese browser (navigator.language ja*), English otherwise (§3.5). */
 export function defaultLang(): Lang {
-  return 'ja';
+  if (typeof navigator === 'undefined') return 'ja';
+  const first = navigator.language || navigator.languages?.[0] || 'ja';
+  return /^ja\b/i.test(first) ? 'ja' : 'en';
 }
 
 /** Looks up a string and fills {name} slots. Unknown slots are left as they are. */

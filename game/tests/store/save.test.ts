@@ -1,7 +1,7 @@
 // Local save (GAME_DESIGN.md §7.4, §10.4 "保存"). Owner: O8.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  CORRUPT_KEY, SAVE_KEY, SAVE_THROTTLE_MS, createStore, defaultSave, ensureLevel, parseSave, reconcileLevelHashes,
+  defaultLang, CORRUPT_KEY, SAVE_KEY, SAVE_THROTTLE_MS, createStore, defaultSave, ensureLevel, parseSave, reconcileLevelHashes,
   type LocalStore, type SaveV1,
 } from '../../src/store/save';
 import { pidhFromSecret } from '../../src/shared/names';
@@ -47,14 +47,24 @@ describe('defaults', () => {
     expect(d.seen).toEqual({ onboarding: false, notes: [], aiLostCard: false, storageNotice: false, tricks: [] });
   });
 
-  it('the first language is Japanese whatever navigator.language says; English only when the player picked it', () => {
+  it('the first language follows navigator.language (ja* -> ja, anything else -> en); a picked language is kept', () => {
     const spy = vi.spyOn(navigator, 'language', 'get');
+    for (const [nav, want] of [['en-US', 'en'], ['fr', 'en'], ['zh-TW', 'en'], ['ja', 'ja'], ['ja-JP', 'ja'], ['JA-jp', 'ja'], ['jam', 'en']] as const) {
+      spy.mockReturnValue(nav);
+      expect(defaultLang()).toBe(want);
+      expect(createStore({ storage: new MemStorage(), listen: false }).data().settings.lang).toBe(want);
+    }
+    // an unpicked language (the Japanese-only period saved 'ja' for everyone) follows the browser again
     spy.mockReturnValue('en-US');
-    expect(createStore({ storage: new MemStorage(), listen: false }).data().settings.lang).toBe('ja');
+    expect(parseSave({ v: 1, settings: { lang: 'ja' } }).settings.lang).toBe('en');
+    spy.mockReturnValue('ja-JP');
+    expect(parseSave({ v: 1, settings: { lang: 'en' } }).settings.lang).toBe('ja');
+    // a language picked in the settings stays, whatever the browser says
+    spy.mockReturnValue('en-US');
+    expect(parseSave({ v: 1, settings: { lang: 'ja', langPicked: true } }).settings.lang).toBe('ja');
+    spy.mockReturnValue('ja-JP');
+    expect(parseSave({ v: 1, settings: { lang: 'en', langPicked: true } }).settings.lang).toBe('en');
     spy.mockRestore();
-    // a save from the old navigator.language default (no langPicked) goes back to Japanese; a picked English stays
-    expect(parseSave({ v: 1, settings: { lang: 'en' } }, 'ja').settings.lang).toBe('ja');
-    expect(parseSave({ v: 1, settings: { lang: 'en', langPicked: true } }, 'ja').settings.lang).toBe('en');
   });
 
   it('ensureLevel creates a default entry once', () => {

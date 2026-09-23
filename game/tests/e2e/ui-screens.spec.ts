@@ -592,6 +592,21 @@ test.describe('touch-only access (§3.3 key-less equivalents)', () => {
   });
 });
 
+// First visit: the language follows the browser (§3.5, HANDOFF D17) — English unless navigator.language is ja*.
+test.describe('first-visit language', () => {
+  for (const [locale, lang, play] of [['en-US', 'en', /play/i], ['fr-FR', 'en', /play/i], ['ja-JP', 'ja', /あそぶ/]] as const) {
+    test(`${locale} -> ${lang}`, async ({ browser, baseURL }) => {
+      const ctx = await browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, locale });
+      const page = await ctx.newPage();
+      await page.goto('/?yptest=1');
+      await page.waitForSelector('.yp[data-screen="title"]', { timeout: 30_000 });
+      expect(await page.evaluate(() => document.documentElement.lang)).toBe(lang);
+      await expect(page.locator('.title-play')).toHaveText(play);
+      await ctx.close();
+    });
+  }
+});
+
 // The UI inside the real game (core O3, sim O1, renderer O5) on the dev server: title -> READY -> a real successful
 // run (tests/fixtures/bot_1-1_success.json) -> results -> share sheet, and the pause toggles reflecting the game.
 test.describe('inside the real game', () => {
