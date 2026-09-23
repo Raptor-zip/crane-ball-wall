@@ -1,6 +1,6 @@
 // Vitest projects (GAME_DESIGN.md §10.1, §10.6, §10.7). Owner: O0.
 //
-//   npm test             -> sim, data, core, input, store (tests/store + tests/net), ui, worker
+//   npm test             -> sim, data, core, input, store (tests/store + tests/net), ui (tests/ui + tests/render), worker
 //   npm run test:browser -> browser (tests/browser/*.browser.test.ts on chromium, firefox, webkit;
 //                           audio.browser.test.ts on chromium only)
 //
@@ -66,7 +66,7 @@ export default defineConfig({
       },
       {
         extends: true,
-        test: { name: 'ui', include: ['tests/ui/**/*.test.ts'], environment: 'happy-dom' },
+        test: { name: 'ui', include: ['tests/ui/**/*.test.ts', 'tests/render/**/*.test.ts'], environment: 'happy-dom' },
       },
       {
         extends: true,
