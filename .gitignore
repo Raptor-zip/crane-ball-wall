@@ -16,6 +16,12 @@ paper/*.out
 paper/*.toc
 paper/main.pdf
 paper/x_summary.pdf
+# 開発過程の論文（paper/game_dev/）：図は make_figs.py，PDF は lualatex で再生成できる（ゲーム画面の切り出し figs/shot_*.png は追跡）
+paper/game_dev/*.aux
+paper/game_dev/*.log
+paper/game_dev/*.out
+paper/game_dev/*.pdf
+paper/game_dev/figs/*.pdf
 # 解説動画（explainer/）：データ・音声・タイムライン・クリップはすべて build.sh で再生成できる
 explainer/data/
 explainer/manim/media/

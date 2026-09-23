@@ -1,0 +1,71 @@
+wf	label	start	min	tools	out_tok	in_tok	cache_read	turns	toolmix
+design(killed)	concept:mastery	09-22T04:50	6.5	5	54	80581	217186	5	{'Bash': 5}
+design(killed)	concept:sandbox	09-22T04:51	6.5	6	40	68699	314373	6	{'Bash': 6}
+design(killed)	concept:campaign	09-22T04:51	6.5	7	51	51752	349123	7	{'Bash': 7}
+design(killed)	concept:mobile	09-22T04:51	6.5	7	44	64624	333695	6	{'Bash': 7}
+design(killed)	concept:arcade	09-22T04:51	6.5	4	28	51601	155950	4	{'Bash': 4}
+design	judge:player	09-22T06:34	5.6	1	4	121541	19053	1	{'StructuredOutput': 1}
+design	concept:campaign	09-22T04:58	18.9	14	90	155930	1187252	14	{'Bash': 13, 'StructuredOutput': 1}
+design	concept:arcade	09-22T04:58	96.1	39	275	1507473	4435409	39	{'Bash': 38, 'StructuredOutput': 1}
+design	critic-fix	09-22T07:08	53.1	177	4609	948785	48494352	159	{'Bash': 125, 'Edit': 31, 'Read': 16, 'WebFetch': 3, 'ToolSearch': 2}
+design	concept:mastery	09-22T04:58	42.5	36	374	531045	4015935	35	{'Bash': 26, 'Monitor': 6, 'Read': 2, 'ToolSearch': 1, 'StructuredOutput': 1}
+design	judge:fun	09-22T06:34	5.0	1	6	140577	0	1	{'StructuredOutput': 1}
+design	concept:mobile	09-22T04:58	52.4	38	249	582090	3884824	37	{'Bash': 36, 'ToolSearch': 1, 'StructuredOutput': 1}
+design	concept:sandbox	09-22T04:58	23.2	5	35	132761	316930	5	{'Bash': 4, 'StructuredOutput': 1}
+design	judge:build	09-22T06:34	5.4	4	29	143540	463782	4	{'Bash': 3, 'StructuredOutput': 1}
+design	synthesize-gdd	09-22T06:40	28.0	15	125	875203	3311254	16	{'Bash': 14, 'Write': 1}
+foundation	verify-foundation	09-22T08:35	12.0	72	520	201133	10522272	70	{'Bash': 64, 'Read': 7, 'StructuredOutput': 1}
+foundation	O2:data+fixtures+M2a	09-22T08:03	32.4	56	6517	554655	10265689	50	{'Bash': 37, 'Read': 8, 'Write': 5, 'Edit': 3, 'ToolSearch': 1, 'Monitor': 1}
+foundation	O0+O3:M0-scaffold	09-22T08:03	27.9	112	1381	314646	22726200	103	{'Bash': 87, 'Write': 13, 'Read': 9, 'Edit': 2, 'StructuredOutput': 1}
+modules	build:O4-input	09-22T08:50	31.6	83	8734	345245	18330538	77	{'Bash': 53, 'Write': 15, 'Read': 14, 'StructuredOutput': 1}
+modules	build:O7-ui	09-22T08:50	69.6	268	3552	645827	88403260	187	{'Bash': 97, 'Read': 88, 'Edit': 42, 'Write': 40, 'StructuredOutput': 1}
+modules	build:O8-store-net	09-22T08:50	28.2	65	6191	272631	10965713	57	{'Bash': 50, 'Write': 10, 'Edit': 2, 'Read': 2, 'StructuredOutput': 1}
+modules	review:O5-render	09-22T09:50	45.4	185	5137	509616	54283831	149	{'Bash': 104, 'Read': 58, 'Edit': 16, 'Write': 6, 'StructuredOutput': 1}
+modules	review:O4-input	09-22T09:50	28.0	112	1661	364495	25096591	99	{'Bash': 83, 'Read': 13, 'Edit': 10, 'Write': 4, 'ToolSearch': 1, 'StructuredOutput': 1}
+modules	build:O5-render	09-22T08:50	58.9	127	34389	640211	44999819	121	{'Bash': 76, 'Read': 36, 'Write': 14, 'StructuredOutput': 1}
+modules	build:O6-audio	09-22T08:50	28.1	56	932	273149	10159402	52	{'Bash': 37, 'Read': 10, 'Write': 7, 'Edit': 1, 'StructuredOutput': 1}
+modules	build:O2-daily	09-22T08:50	84.0	71	934	1582834	12244731	68	{'Bash': 54, 'Read': 7, 'Write': 3, 'ToolSearch': 2, 'Monitor': 2, 'Edit': 1}
+modules	review:O3-core	09-22T09:50	28.4	154	7831	375118	40200512	145	{'Bash': 125, 'Read': 17, 'Edit': 6, 'Write': 3, 'TaskStop': 2, 'StructuredOutput': 1}
+modules	review:O2-daily	09-22T10:14	50.9	82	5634	998128	14984278	79	{'Bash': 68, 'Read': 6, 'Edit': 5, 'ToolSearch': 1, 'Monitor': 1, 'StructuredOutput': 1}
+modules	review:O9-worker	09-22T09:50	15.3	70	679	270455	13536505	65	{'Bash': 63, 'Read': 3, 'Edit': 2, 'Write': 1, 'StructuredOutput': 1}
+modules	build:O9-worker	09-22T08:50	29.3	100	6573	356752	20949599	88	{'Bash': 71, 'Write': 19, 'Read': 5, 'Edit': 3, 'ListAgents': 1, 'StructuredOutput': 1}
+modules	build:O3-core	09-22T08:50	56.0	157	1168	566144	50188882	129	{'Bash': 104, 'Write': 27, 'Read': 24, 'Edit': 1, 'StructuredOutput': 1}
+modules	review:O7-ui	09-22T10:00	48.0	276	3510	623504	92239674	208	{'Bash': 138, 'Read': 102, 'Edit': 33, 'Write': 2, 'StructuredOutput': 1}
+modules	review:O1-physics	09-22T09:50	26.5	111	1300	392964	30034454	104	{'Bash': 101, 'Read': 6, 'Edit': 2, 'Write': 1, 'StructuredOutput': 1}
+modules	review:O8-store-net	09-22T09:50	23.1	98	1057	309488	21457199	91	{'Bash': 81, 'Edit': 8, 'Read': 6, 'Write': 2, 'StructuredOutput': 1}
+modules	build:O2-data-tests	09-22T09:50	13.2	57	4871	253474	8629578	47	{'Bash': 42, 'Write': 6, 'Read': 4, 'Edit': 4, 'StructuredOutput': 1}
+modules	build:O1-physics	09-22T08:50	60.0	171	6067	726764	61998835	159	{'Bash': 129, 'Write': 27, 'Read': 14, 'StructuredOutput': 1}
+modules	review:O6-audio	09-22T09:50	31.2	108	969	328882	21462001	92	{'Bash': 74, 'Read': 24, 'Edit': 9, 'StructuredOutput': 1}
+integrate	fix:O0-build	09-22T11:08	73.2	197	13922	449571	51425806	184	{'Bash': 162, 'Read': 19, 'Write': 14, 'ToolSearch': 1, 'StructuredOutput': 1}
+integrate	fix:O5-render	09-22T11:08	64.3	163	6038	384572	40376187	157	{'Bash': 127, 'Read': 34, 'ListAgents': 1, 'StructuredOutput': 1}
+integrate	integrate	09-22T14:10	59.7	310	2985	515172	80178146	266	{'Bash': 250, 'Read': 58, 'ToolSearch': 1, 'StructuredOutput': 1}
+integrate	fix:O3-core	09-22T11:08	30.9	140	1456	348572	29149438	132	{'Bash': 126, 'Read': 12, 'Write': 1, 'StructuredOutput': 1}
+integrate	fix:O6-audio	09-22T11:08	13.5	61	3277	190520	8315367	57	{'Bash': 54, 'Read': 6, 'StructuredOutput': 1}
+integrate	fix:O2-data	09-22T11:08	181.9	124	1332	4674587	22104374	120	{'Bash': 111, 'Monitor': 4, 'Write': 3, 'Read': 2, 'Edit': 1, 'ToolSearch': 1}
+integrate	fix:O7-ui	09-22T11:08	65.5	221	6201	450542	54413926	192	{'Bash': 157, 'Read': 61, 'Write': 2, 'StructuredOutput': 1}
+integrate	fix:balance	09-22T11:08	70.5	115	1024	1415732	24408389	111	{'Bash': 104, 'Write': 7, 'Monitor': 3, 'StructuredOutput': 1}
+integrate	fix:O4-input	09-22T11:08	15.5	68	3679	189624	9113876	64	{'Bash': 62, 'Read': 4, 'Write': 1, 'StructuredOutput': 1}
+casadi	verify	09-22T18:14	48.3	107	22931	398604	13592285	92	{'Bash': 103, 'ToolSearch': 1, 'WebFetch': 1, 'WebSearch': 1, 'StructuredOutput': 1}
+casadi	spike	09-22T17:08	66.2	254	2512	503624	60811940	250	{'Bash': 232, 'Write': 9, 'Monitor': 4, 'WebFetch': 3, 'Edit': 2, 'ToolSearch': 2}
+balance-review	find:worker	09-22T15:12	15.9	44	328	239663	6287928	38	{'Bash': 43, 'StructuredOutput': 1}
+balance-review	verify:worker-1	09-22T15:54	0.7	6	60	53870	189240	5	{'Bash': 5, 'StructuredOutput': 1}
+balance-review	verify:ui-3	09-22T15:54	2.5	11	1517	39214	494220	11	{'Bash': 10, 'StructuredOutput': 1}
+balance-review	fix:worker	09-22T15:57	25.4	59	5170	338268	12052102	53	{'Bash': 56, 'Write': 2, 'StructuredOutput': 1}
+balance-review	verify:ui-4	09-22T15:54	2.4	16	1570	46023	808934	16	{'Bash': 13, 'Read': 2, 'StructuredOutput': 1}
+balance-review	verify:worker-3	09-22T15:54	0.5	6	59	27325	229700	6	{'Bash': 5, 'StructuredOutput': 1}
+balance-review	find:ui	09-22T15:12	42.2	175	2052	440673	48630537	165	{'Bash': 116, 'Read': 56, 'Write': 2, 'StructuredOutput': 1}
+balance-review	change:O2-data	09-22T15:12	184.8	128	1442	4305115	20745100	123	{'Bash': 115, 'Monitor': 6, 'Edit': 3, 'Read': 2, 'ToolSearch': 1, 'StructuredOutput': 1}
+balance-review	find:sim	09-22T15:12	17.0	76	638	300988	15442251	73	{'Bash': 74, 'Read': 1, 'StructuredOutput': 1}
+balance-review	gate	09-22T18:17	53.2	193	3504	739258	43450164	179	{'Bash': 184, 'Edit': 6, 'Write': 2, 'StructuredOutput': 1}
+balance-review	verify:ui-2	09-22T15:54	2.8	10	89	31769	282697	7	{'Bash': 6, 'Read': 3, 'StructuredOutput': 1}
+balance-review	verify:sim-1	09-22T15:54	0.7	6	97	32217	192224	5	{'Bash': 5, 'StructuredOutput': 1}
+balance-review	fix:client	09-22T15:57	21.6	95	4952	301320	16615035	81	{'Bash': 86, 'Edit': 7, 'Write': 1, 'StructuredOutput': 1}
+balance-review	verify:worker-2	09-22T15:54	0.4	3	25	23803	96340	3	{'Bash': 2, 'StructuredOutput': 1}
+balance-review	change:O4-input	09-22T15:12	40.7	106	977	350408	24837194	104	{'Bash': 104, 'Write': 1, 'StructuredOutput': 1}
+balance-review	fix:ui	09-22T15:57	43.1	168	2849	404484	43606570	167	{'Bash': 136, 'Read': 31, 'StructuredOutput': 1}
+balance-review	verify:client-1	09-22T15:54	1.1	10	131	34379	383196	9	{'Bash': 9, 'StructuredOutput': 1}
+balance-review	verify:worker-4	09-22T15:54	0.9	7	60	35513	302994	7	{'Bash': 6, 'StructuredOutput': 1}
+balance-review	verify:client-3	09-22T15:54	1.5	14	1743	39893	666751	14	{'Bash': 13, 'StructuredOutput': 1}
+balance-review	find:client	09-22T15:12	17.1	65	601	290262	11350524	59	{'Bash': 64, 'StructuredOutput': 1}
+balance-review	verify:client-2	09-22T15:54	0.4	4	47	27554	138908	4	{'Bash': 3, 'StructuredOutput': 1}
+balance-review	verify:ui-1	09-22T15:54	0.8	9	83	33073	381611	9	{'Bash': 8, 'StructuredOutput': 1}
