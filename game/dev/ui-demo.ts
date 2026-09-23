@@ -54,12 +54,16 @@ function camFor(bx: number, x: number): SideCam {
   if (layout.kind === 'wide') {
     return new SideCam({ x: 0, y: layout.hudTop, w: layout.w, h: layout.h - layout.hudTop }, r, 'center');
   }
-  // tall (D10): the play area is [hudTop, scene bottom]; the window is sized to fill it (2.0-2.3 m, 4-1 wider).
-  const playH = layout.scene.h - layout.hudTop;
-  const W = Math.max(tallWindowFor(lv.view?.portraitWindow), Math.min(2.3, Math.max(2.0, (TALL_FRAME_K * layout.scene.w) / Math.max(1, playH))));
+  // tall (D10): the play area is [hudTop, scene bottom - bench]; the window is sized to fill it (2.0-2.3 m, 4-1 wider).
+  // The bench band under it shows the floor section (the game's bench front).
+  const bench = layout.bench ?? 0;
+  const playH = Math.max(1, layout.scene.h - layout.hudTop - bench);
+  const W = Math.max(tallWindowFor(lv.view?.portraitWindow), Math.min(2.3, Math.max(2.0, (TALL_FRAME_K * layout.scene.w) / playH)));
   const target = Math.max(r.x0 + W / 2, Math.min(r.x1 - W / 2, (x + bx) / 2));
   camX += (target - camX) * (still ? 1 : 0.15);
-  return new SideCam({ x: 0, y: layout.hudTop, w: layout.scene.w, h: playH }, { x0: camX - W / 2, x1: camX + W / 2, y0: -0.05, y1: 1.55 }, 'bottom');
+  const s = Math.min(layout.scene.w / W, playH / 1.6);
+  const box = { x: 0, y: layout.hudTop, w: layout.scene.w, h: playH + bench };
+  return new SideCam(box, { x0: camX - W / 2, x1: camX + W / 2, y0: -0.05 - bench / s, y1: 1.55 }, 'bottom');
 }
 
 function sample(t: Track | null, i: number): { x: number; bx: number; by: number } {
@@ -94,15 +98,11 @@ function paintScene(p: { x: number; bx: number; by: number }, ghost: { x: number
 
 let frame = 0;
 let hudState: HudState | null = null;
-const deckOf = (p: { x: number; bx: number }, ghostX: number | null, targetX: number | null): HudState['deck'] => ({
-  rail: lv.physics.rail, walls: lv.physics.walls, zones: lv.physics.phases, x: p.x, bx: p.bx, targetX,
-  ghostXs: ghostX === null ? [] : [{ kind: 'ai', x: ghostX }, { kind: 'pb', x: ghostX - 0.25 }],
-});
 
 function baseHud(): HudState {
   return {
     timeSub: 0, running: false, F: 0, Fmax: lv.physics.Fmax, aiF: null, saturated: false, ampDeg: 0, restDeg: lv.physics.restDeg,
-    T: 9.81, Tmax: lv.physics.egg?.Tmax ?? null, nearGapMm: null, offline, mode: 'campaign', hint: null, dailyBalls: null, deck: null,
+    T: 9.81, Tmax: lv.physics.egg?.Tmax ?? null, nearGapMm: null, offline, mode: 'campaign', hint: null, dailyBalls: null,
   };
 }
 
@@ -123,7 +123,6 @@ function runFrame(i: number, opts: { running: boolean; ghost: boolean; timeSub?:
     const d = Math.max(0, Math.hypot(Math.max(w0.x0 - p.bx, 0, p.bx - w0.x1), Math.max(0, p.by - w0.h)) - 0.06) * 1000;
     hs.nearGapMm = d < 250 ? d : null;
   }
-  hs.deck = deckOf(p, gp ? gp.x : null, opts.running ? p.x + 0.35 : null);
   if (cam) {
     hs.anchors = {
       pivot: { x: cam.X(p.x), y: cam.Y(1.25) }, ball: { x: cam.X(p.bx), y: cam.Y(p.by) }, pxPerM: cam.s,

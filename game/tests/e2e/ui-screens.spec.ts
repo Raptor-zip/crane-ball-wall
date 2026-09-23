@@ -8,7 +8,7 @@ import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { collectErrors } from './helpers';
-import { TALL_FRAME_K } from '../../src/ui/layout';
+import { DECK_FORCE_H, TALL_BENCH_H, TALL_FRAME_K } from '../../src/ui/layout';
 
 /** Screenshot directory of the running test: <project outputDir>/ui-screens (follows PW_OUTPUT_DIR). */
 function OUT(): string {
@@ -98,6 +98,34 @@ const rects = (page: Page, sel: string): Promise<R[]> => page.evaluate((s) => [.
     return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
   }), sel);
 
+/** Screen y of the floor's front edge (y = -0.08 m in the ball plane, render/scene.ts), lowest over the visible x. */
+const floorFront = (page: Page): Promise<number> => page.evaluate(() => {
+  const at = (x: number): { x: number; y: number } | null =>
+    window.__UI_DEMO__ ? window.__UI_DEMO__.toScreen(x, -0.08) : (window.__YP_TEST__?.toScreen?.(x, -0.08) ?? null);
+  const ys: number[] = [];
+  for (let x = -1.5; x <= 4.5; x += 0.25) {
+    const q = at(x);
+    if (q && q.x >= 0 && q.x <= window.innerWidth) ys.push(q.y);
+  }
+  return Math.max(...ys);
+});
+/** Waits until the one toast on screen is another one (the next in the queue after the first expired). */
+async function nextToast(page: Page): Promise<void> {
+  const [first] = await page.locator('.toast').allTextContents();
+  await expect.poll(async () => {
+    const now = await page.locator('.toast').allTextContents();
+    return now.length === 1 && now[0] !== first;
+  }, { timeout: 5_000 }).toBe(true);
+}
+/** The tall deck's children and anything drawn in it outside the drag surface (a 2D view of the rail would be). */
+const deckShape = (page: Page): Promise<{ kids: string[]; drawn: number }> => page.evaluate(() => {
+  const d = document.querySelector('.yp-deck')!;
+  return {
+    kids: [...d.children].map((e) => e.className),
+    drawn: [...d.querySelectorAll('svg, canvas')].filter((e) => !e.closest('.deck-surface')).length,
+  };
+});
+
 // Small phones (D10): the tall HUD never runs off the side, from the very first frame, in both languages.
 test.describe('320x640 (small phone, tall)', () => {
   test.use({ viewport: { width: 320, height: 640 }, hasTouch: true });
@@ -129,8 +157,10 @@ test.describe('tall HUD (D10) at 390x844', () => {
     const dock = (await rects(page, '.hud-dock'))[0]!;
     expect(Math.abs(dock.bottom - l.hudTop)).toBeLessThanOrEqual(1);
     for (const r of await rects(page, '.hud-dock .hud-board, .hud-dock .hud-status, .hud-band')) expect(r.bottom).toBeLessThanOrEqual(l.hudTop + 1);
-    // The play area is sized for a 2.0-2.3 m window (TALL_FRAME_K w / W px for the camera frame).
-    const win = (TALL_FRAME_K * l.w) / (l.scene.h - l.hudTop);
+    // The play area (the scene above the bench band) is sized for a 2.0-2.3 m window (TALL_FRAME_K w / W px for the
+    // camera frame).
+    expect(l.bench).toBe(TALL_BENCH_H);
+    const win = (TALL_FRAME_K * l.w) / (l.scene.h - l.hudTop - TALL_BENCH_H);
     expect(win).toBeGreaterThanOrEqual(2.0);
     expect(win).toBeLessThanOrEqual(2.3);
   });
@@ -158,16 +188,78 @@ test.describe('tall HUD (D10) at 390x844', () => {
     expect(pop.left).toBeGreaterThanOrEqual(0);
     expect(pop.right).toBeLessThanOrEqual(l.w);
     expect(pop.top).toBeGreaterThanOrEqual(l.hudTop);
-    expect(pop.bottom).toBeLessThanOrEqual(l.deck!.y);
+    expect(pop.bottom).toBeLessThanOrEqual(l.deck!.y - l.bench!);
   });
 
-  test('HUD toasts sit over the mini rail, never on the drag surface', async ({ page }) => {
-    await open(page, 'screen=hud&lang=ja&still=1&toasts=2');
-    const surface = (await rects(page, '.deck-surface'))[0]!;
-    const toasts = await rects(page, '.toast');
-    expect(toasts.length).toBe(2);
-    for (const t of toasts) expect(t.bottom).toBeLessThanOrEqual(surface.top + 1);
+  test('popups placed low are kept above the bench band (the toasts own it)', async ({ page }) => {
+    for (const vp of [{ width: 390, height: 844 }, { width: 320, height: 568 }] as const) {
+      await page.setViewportSize(vp);
+      await open(page, 'screen=hud-run&lang=ja&still=1');
+      const l = await page.evaluate(() => window.__UI_DEMO__!.layout());
+      // A crash right at the floor: 「ゴンッ」 above it, the depth and cause 56 px under it (into the band unless clamped).
+      await page.evaluate((y) => window.__UI_DEMO__!.ui.fx({ t: 'crash', kind: 1, wall: 0, x: 0, y: 0, overlapMm: 4 }, { x: 160, y }), l.deck!.y - l.bench! - 8);
+      await page.waitForTimeout(150);
+      const pops = await rects(page, '.pop--crash .pop-in, .pop--crashinfo .pop-in');
+      expect(pops.length, `${vp.width}x${vp.height}`).toBe(2);
+      for (const r of pops) expect(r.bottom, `${vp.width}x${vp.height}`).toBeLessThanOrEqual(l.deck!.y - l.bench! + 1);
+    }
   });
+
+  // No 2D mini rail in the deck: the force bar, then the drag surface right under it.
+  test('deck: the force bar and the drag surface only, the surface right under the bar', async ({ page }) => {
+    await open(page, 'screen=hud-run&lang=ja&still=1');
+    const l = await page.evaluate(() => window.__UI_DEMO__!.layout());
+    expect(await deckShape(page)).toEqual({ kids: ['deck-force', 'deck-surface'], drawn: 0 });
+    const surface = (await rects(page, '.deck-surface'))[0]!;
+    // 2 px deck border, then the 8 px force bar.
+    expect(Math.abs(surface.top - (l.deck!.y + 2 + DECK_FORCE_H))).toBeLessThanOrEqual(1);
+    expect(surface.bottom).toBe(844);
+  });
+
+  // HUD toasts sit on the bench band, right under the floor's front edge: never on the ball, the goal zone or its pad.
+  test('HUD toasts: one at a time under the floor front, the next one after it', async ({ page }) => {
+    for (const vp of [{ width: 390, height: 844 }, { width: 360, height: 640 }, { width: 375, height: 548 }] as const) {
+      await page.setViewportSize(vp);
+      await open(page, 'screen=hud-run&lang=ja&still=1&toasts=2');
+      const tag = `${vp.width}x${vp.height}`;
+      const l = await page.evaluate(() => window.__UI_DEMO__!.layout());
+      const front = await floorFront(page);
+      const toasts = await rects(page, '.toast');
+      expect(toasts.length, tag).toBe(1);
+      // One line: inside the bench band.
+      expect(toasts[0]!.top, tag).toBeGreaterThanOrEqual(front);
+      expect(toasts[0]!.bottom, tag).toBeLessThanOrEqual(l.deck!.y);
+      // The second one waited for it and takes its place.
+      await nextToast(page);
+    }
+  });
+
+  // A toast too tall for the band (125 % text: two or three lines on a narrow phone) still shows at once: it runs on
+  // over the force bar and the top of the drag surface, never up over the floor (the 1-1 pad it talks about).
+  for (const [w, h, lang] of [[320, 568, 'ja'], [320, 568, 'en'], [360, 560, 'ja'], [320, 640, 'en'], [375, 548, 'en']] as const) {
+    test(`HUD long toast at 125 % ${w}x${h} ${lang}: shown at once under the floor front, the next one after it`, async ({ page }) => {
+      await page.setViewportSize({ width: w, height: h });
+      await open(page, `screen=hud-1-1&lang=${lang}&still=1&ts=125`);
+      const long = lang === 'ja' ? 'パッドの上で指（キー）を離すと、クレーンが揺れを止めてくれる' : 'Let go over the pad (finger or key) and the crane stops the swing for you';
+      await page.evaluate((t) => {
+        window.__UI_DEMO__!.ui.toast(t, 'info');
+        window.__UI_DEMO__!.ui.toast('SHORT', 'info');
+      }, long);
+      await page.waitForTimeout(300);
+      const [t] = await rects(page, '.toast');
+      expect(await page.locator('.toast').textContent()).toBe(long);
+      expect(t!.bottom - t!.top).toBeGreaterThan(50);
+      expect(t!.top).toBeGreaterThanOrEqual(await floorFront(page));
+      expect(t!.bottom).toBeLessThanOrEqual(h - 8);
+      // 1-1's pad (x 1.2-1.8: the floor plate, whose front reaches the floor front, and its curtain) is off the toast.
+      const zone = await page.evaluate(() => {
+        const d = window.__UI_DEMO__!;
+        return { left: d.toScreen(1.2, 0.6).x, top: d.toScreen(1.2, 0.6).y, right: d.toScreen(1.8, 0).x, bottom: d.toScreen(1.8, -0.075).y };
+      });
+      expect(hit(t!, zone)).toBe(false);
+      await expect(page.locator('.toast')).toHaveText('SHORT', { timeout: 5_000 });
+    });
+  }
 });
 
 // Toasts (tricks, badges, unlocks) never cover a card's buttons: they go to the free side or wait until it closes.
@@ -684,4 +776,171 @@ test.describe('release review', () => {
       }
     });
   }
+});
+
+// Few players read the x / θ / F graphs: on the results card they start closed behind a quiet text toggle, and the AI
+// demo's F(t) panel is small and never covers the ball or the goal zone (tall: the deck; wide: a strip under the floor).
+test.describe('quiet graphs', () => {
+  test('results: the graphs start closed; the toggle opens and closes them (tap and keyboard)', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await open(page, 'screen=results&lang=ja&still=1');
+    const toggle = page.locator('.res-graphs .graphs-toggle');
+    const body = page.locator('.res-graphs .graphs');
+    await expect(toggle).toHaveText('グラフを見る');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(body).toBeHidden();
+    expect(await body.getAttribute('id')).toBe(await toggle.getAttribute('aria-controls'));
+    // Quiet: secondary ink, no border, no fill.
+    const look = await toggle.evaluate((b) => {
+      const cs = getComputedStyle(b);
+      return { color: cs.color, border: cs.borderTopColor, bg: cs.backgroundColor, h: b.getBoundingClientRect().height };
+    });
+    expect(look).toEqual({ color: 'rgb(75, 86, 112)', border: 'rgba(0, 0, 0, 0)', bg: 'rgba(0, 0, 0, 0)', h: 44 });
+    await toggle.scrollIntoViewIfNeeded();
+    await toggle.click();
+    await expect(body).toBeVisible();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(toggle).toHaveText('グラフを閉じる');
+    await expect(body.locator('.graph')).toHaveCount(3);
+    await expect(body.locator('.graph-legend')).toBeVisible();
+    // Enter on the focused toggle closes it again and does not reach the game (Enter = retry).
+    await toggle.focus();
+    await page.keyboard.press('Enter');
+    await expect(body).toBeHidden();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('#demo-log')).not.toHaveText(/^retry/);
+  });
+
+  for (const [vp, lang, ts] of [
+    [{ width: 390, height: 844 }, 'ja', 100], [{ width: 320, height: 568 }, 'en', 125], [{ width: 375, height: 548 }, 'ja', 125],
+    [{ width: 844, height: 390 }, 'ja', 100], [{ width: 568, height: 320 }, 'en', 100], [{ width: 1280, height: 720 }, 'ja', 100],
+    [{ width: 568, height: 320 }, 'en', 125], [{ width: 568, height: 320 }, 'ja', 125], [{ width: 533, height: 320 }, 'en', 125],
+    [{ width: 667, height: 375 }, 'en', 125], [{ width: 1280, height: 720 }, 'en', 125],
+  ] as const) {
+    test(`AI demo ${vp.width}x${vp.height} ${lang} ${ts} %: the F(t) panel stays under the floor, small, with the hint`, async ({ page }) => {
+      await page.setViewportSize(vp);
+      await open(page, `screen=demo&lang=${lang}&still=1&ts=${ts}`);
+      await page.screenshot({ path: `${OUT()}/${lang}-${vp.width}x${vp.height}-demo-ts${ts}.png` });
+      const l = await page.evaluate(() => window.__UI_DEMO__!.layout());
+      const floorY = await page.evaluate(() => window.__UI_DEMO__!.toScreen(0, 0).y);
+      const [panel] = await rects(page, '.demo-panel');
+      const graph = await page.locator('.demo-graph').boundingBox();
+      expect(panel!.top).toBeGreaterThan(floorY);
+      expect(panel!.bottom).toBeLessThanOrEqual(vp.height);
+      expect(graph!.height).toBeGreaterThanOrEqual(l.kind === 'tall' ? 40 : 30);
+      if (l.kind === 'tall') {
+        // The deck's place, growing up over the bench band on short decks (never up to the floor's front edge).
+        expect(panel!.top).toBeLessThanOrEqual(l.deck!.y + 1);
+        expect(panel!.top).toBeGreaterThanOrEqual(l.deck!.y - TALL_BENCH_H + 15);
+        expect(graph!.height).toBeLessThanOrEqual(96);
+      } else {
+        // A low strip: at most two lines of text beside the graph on a landscape phone (the AI's numbers are on the
+        // results card), and the graph keeps at least 40 % of the strip's inside, however long the words.
+        expect(panel!.bottom - panel!.top).toBeLessThanOrEqual(vp.height < 500 ? 42 : 64);
+        const inner = await page.locator('.demo-panel').evaluate((e) => {
+          const cs = getComputedStyle(e);
+          return e.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+        });
+        expect(graph!.width).toBeGreaterThanOrEqual(0.4 * inner - 0.5);
+        expect(graph!.width).toBeGreaterThanOrEqual(150);
+      }
+      // The hint: readable size, secondary ink (6.9:1 on the card), except on the narrowest landscape phones where the
+      // skip button says the same.
+      const hint = page.locator('.demo-panel .demo-hint');
+      if (l.kind === 'wide' && vp.width < 560) await expect(hint).toBeHidden();
+      else {
+        await expect(hint).toBeVisible();
+        const look = await hint.evaluate((e) => ({
+          color: getComputedStyle(e).color, px: parseFloat(getComputedStyle(e).fontSize), rem: parseFloat(getComputedStyle(document.documentElement).fontSize),
+        }));
+        expect(look.color).toBe('rgb(75, 86, 112)');
+        expect(look.px).toBeGreaterThanOrEqual(0.72 * look.rem - 0.01);
+      }
+      expect(await page.evaluate(() => {
+        const e = document.querySelector<HTMLElement>('.demo-panel')!;
+        return e.scrollHeight <= e.clientHeight + 1;
+      })).toBe(true);
+    });
+  }
+
+  // Landscape: toasts go top right under the skip button, one at a time (not on the strip nor the swinging ball).
+  for (const vp of [{ width: 568, height: 320 }, { width: 844, height: 390 }, { width: 1280, height: 720 }] as const) {
+    test(`AI demo ${vp.width}x${vp.height}: toasts one at a time under the skip button`, async ({ page }) => {
+      await page.setViewportSize(vp);
+      await open(page, 'screen=demo&lang=ja&still=1&toasts=2');
+      const toasts = await rects(page, '.toast');
+      expect(toasts.length).toBe(1);
+      const [skip] = await rects(page, '.demo-top .btn');
+      const [panel] = await rects(page, '.demo-panel');
+      const t = toasts[0]!;
+      expect(t.top).toBeGreaterThanOrEqual(skip!.bottom);
+      expect(t.right).toBeGreaterThan(vp.width - 20);
+      expect(hit(t, panel!)).toBe(false);
+      // Above 1 m: the ball hangs 1 m under the 1.25 m hook and never swings that high.
+      expect(t.bottom).toBeLessThanOrEqual(await page.evaluate(() => window.__UI_DEMO__!.toScreen(0, 1).y));
+      await nextToast(page);
+    });
+  }
+
+  // The real scene: the floor's front edge (z = 0.32 m, seen from 6° above) is ~8 cm under the ball plane's floor line.
+  for (const [vp, ts] of [[{ width: 844, height: 390 }, 100], [{ width: 568, height: 320 }, 100], [{ width: 568, height: 320 }, 125], [{ width: 390, height: 844 }, 100]] as const) {
+    test(`AI demo in the real game ${vp.width}x${vp.height} ${ts} %: the panel is under the floor front, the playhead moves`, async ({ page }) => {
+      test.setTimeout(60_000);
+      await page.setViewportSize(vp);
+      if (ts !== 100) {
+        await page.addInitScript((scale) => {
+          if (!localStorage.getItem('yurapita:v1')) localStorage.setItem('yurapita:v1', JSON.stringify({ v: 1, settings: { lang: 'ja', langPicked: true, textScale: scale } }));
+        }, ts);
+      }
+      await page.goto('/?yptest=1');
+      await page.waitForSelector('.yp[data-screen="title"]', { timeout: 30_000 });
+      for (const id of ['1-1', '2-2']) {
+        await page.evaluate((lvl) => window.__YP_TEST__!.command(`openLevel:${lvl}`), id);
+        // (2-2 opens with its briefing card the first time; the demo starts from there too)
+        await page.waitForSelector('.yp[data-screen="hud"], .yp[data-screen="briefing"]');
+        // A toast from play (here the ghost set) flushes when the demo opens: in landscape it goes under the skip button.
+        await page.evaluate(() => window.__YP_TEST__!.command('ghostCycle'));
+        await page.evaluate(() => window.__YP_TEST__!.command('demo'));
+        await page.waitForSelector('.yp[data-screen="demo"] .demo-panel');
+        const x0 = await page.locator('.demo-graph line').last().getAttribute('x1');
+        await page.waitForTimeout(700);
+        await page.screenshot({ path: `${OUT()}/game-ja-${vp.width}x${vp.height}-ts${ts}-demo-${id}.png` });
+        const front = await floorFront(page);
+        const [panel] = await rects(page, '.demo-panel');
+        expect(panel!.top, id).toBeGreaterThanOrEqual(front);
+        expect(await page.locator('.demo-graph line').last().getAttribute('x1'), id).not.toBe(x0);
+        if (vp.width > vp.height) {
+          const [skip] = await rects(page, '.demo-top .btn');
+          const hoverY = await page.evaluate(() => window.__YP_TEST__!.toScreen!(0, 1)!.y);
+          for (const t of await rects(page, '.toast')) {
+            expect(t.top, id).toBeGreaterThanOrEqual(skip!.bottom);
+            expect(t.bottom, id).toBeLessThanOrEqual(hoverY);
+            expect(hit(t, panel!), id).toBe(false);
+          }
+        }
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('.yp[data-screen="hud"]');
+      }
+    });
+  }
+
+  // The real game's tall deck (touch.spec.ts checks it in the build too) and a HUD toast under the floor front.
+  test('real game 390x844: the deck is the force bar and the drag surface; a toast sits under the floor front', async ({ page }) => {
+    test.setTimeout(60_000);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/?yptest=1');
+    await page.waitForSelector('.yp[data-screen="title"]', { timeout: 30_000 });
+    await page.evaluate(() => window.__YP_TEST__!.command('openLevel:1-1'));
+    await page.waitForSelector('.yp[data-screen="hud"]');
+    await page.waitForTimeout(500);
+    expect(await deckShape(page)).toEqual({ kids: ['deck-force', 'deck-surface'], drawn: 0 });
+    const [deck] = await rects(page, '.yp-deck');
+    const [surface] = await rects(page, '.deck-surface');
+    expect(Math.abs(surface!.top - (deck!.top + 2 + DECK_FORCE_H))).toBeLessThanOrEqual(1);
+    await page.evaluate(() => window.__YP_TEST__!.command('ghostCycle'));
+    await page.waitForTimeout(300);
+    const [t] = await rects(page, '.toast');
+    expect(t!.top).toBeGreaterThanOrEqual(await floorFront(page));
+    expect(t!.bottom).toBeLessThanOrEqual(deck!.top + 1);
+  });
 });

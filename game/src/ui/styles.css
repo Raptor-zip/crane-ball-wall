@@ -108,24 +108,6 @@ input {
   flex: 0 0 8px;
 }
 
-.deck-rail {
-  position: relative;
-  flex: 0 0 72px;
-  height: 72px;
-  border-bottom: 1px dashed var(--line-2);
-  background:
-    linear-gradient(90deg, var(--grid-b) 1px, transparent 1px) 0 0 / 20px 20px,
-    linear-gradient(var(--grid-b) 1px, transparent 1px) 0 0 / 20px 20px;
-}
-
-.deck-rail svg {
-  position: absolute;
-  inset: 0 calc(var(--safe-r) + 10px) 0 calc(var(--safe-l) + 10px);
-  width: calc(100% - var(--safe-l) - var(--safe-r) - 20px);
-  height: 100%;
-  overflow: visible;
-}
-
 .deck-surface {
   position: relative;
   flex: 1 1 auto;
@@ -1252,8 +1234,9 @@ input {
   pointer-events: none;
   z-index: 60;
 }
-/* Where toasts go on the HUD (tall: over the mini rail) and next to cards (results, pause, briefing) is computed by
-   ui.ts (toastArea) so that they never cover a card's buttons; these rules are the defaults for the other screens. */
+/* Where toasts go on the HUD (tall: the bench band under the floor at the bottom of the 3D view) and next to cards
+   (results, pause, briefing) is computed by ui.ts (toastArea) so that they never cover a card's buttons; these rules
+   are the defaults for the other screens. */
 .toast {
   display: flex;
   align-items: center;
@@ -2456,22 +2439,37 @@ input {
 @keyframes yp-grow {
   from { transform: scaleX(0); }
 }
+/* You vs AI graphs: closed by default behind a quiet text toggle (the title links' flat button) under the bars. The
+   44 px tap target overlaps the margins around it so that the closed toggle takes ~26 px of the card. */
+.res-graphs {
+  margin: -12px 0 -6px;
+}
+.graphs-toggle {
+  display: flex;
+  width: fit-content;
+  min-height: 44px;
+  margin-left: auto;
+  padding: 0 4px 0 10px;
+  gap: 2px;
+  font-size: 0.78rem;
+  color: var(--ink-2);
+}
+.graphs-toggle .ico {
+  width: 16px;
+  height: 16px;
+  transform: rotate(90deg);
+  transition: transform 0.15s ease;
+}
+.graphs-toggle[aria-expanded="true"] .ico {
+  transform: rotate(-90deg);
+}
 .graphs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
-  margin-bottom: 12px;
-  cursor: pointer;
-  border: none;
-  padding: 0;
-  background: none;
-  width: 100%;
-  font: inherit;
-  color: inherit;
-  text-align: left;
+  margin: 2px 0 12px;
 }
-.graphs.is-open {
-  grid-template-columns: 1fr;
+.graphs[hidden] {
+  display: none;
 }
 .graph {
   border: 1.5px solid var(--line-2);
@@ -2490,9 +2488,6 @@ input {
 .graph svg {
   display: block;
   width: 100%;
-  height: 44px;
-}
-.graphs.is-open .graph svg {
   height: 96px;
 }
 .graph-legend {
@@ -2500,7 +2495,7 @@ input {
   gap: 12px;
   font: 800 0.68rem/1 var(--font-head);
   color: var(--ink-2);
-  margin: -4px 0 12px;
+  margin-top: 2px;
 }
 .graph-legend i {
   display: inline-block;
@@ -2879,60 +2874,128 @@ input {
   font: 800 0.95rem/1 var(--font-head);
   box-shadow: 0 3px 0 var(--ink);
 }
+/* The F(t) graph panel never covers the ball nor the goal zone (both above the floor). tall: it takes the deck's place
+   (the drag surface has nothing to do during the demo), in the deck's own colours, the graph kept small; on short decks
+   (~120 px) it may grow up over the bench band under the floor, short of the floor's front edge. wide: a low strip
+   docked to the bottom edge on the bench front under the floor (at most 40 px on a landscape phone), the text beside
+   the graph instead of above it. */
 .demo-panel {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 12px calc(var(--safe-r) + 14px) calc(var(--safe-b) + 12px) calc(var(--safe-l) + 14px);
-  background: var(--card);
-  border-top: 2px solid var(--ink);
   pointer-events: auto;
 }
 .yp[data-layout="tall"] .demo-panel {
-  top: 62%;
+  min-height: var(--deck-h);
+  max-height: calc(var(--deck-h) + var(--bench-h, 0px) - 16px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px calc(var(--safe-r) + 16px) calc(var(--safe-b) + 10px) calc(var(--safe-l) + 16px);
+  background: var(--card-2);
+  border-top: 2px solid var(--ink);
 }
 .yp[data-layout="wide"] .demo-panel {
-  left: 50%;
-  right: auto;
-  bottom: calc(var(--safe-b) + 14px);
-  transform: translateX(-50%);
-  width: min(720px, 92vw);
-  border: 2px solid var(--ink);
-  border-radius: 18px;
-  box-shadow: var(--shadow-card);
+  bottom: max(4px, calc(var(--safe-b) - 14px));
+  width: min(720px, calc(100% - var(--safe-l) - var(--safe-r) - 20px));
+  /* Centred without a transform: ui.ts measures cards by their layout offsets (toastArea). */
+  margin: 0 auto;
+  display: grid;
+  /* The graph keeps at least 40 % of the strip; the text beside it wraps first. */
+  grid-template-columns: auto minmax(40%, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  padding: 3px 12px;
+  border: 1.5px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--card);
 }
 .demo-graph {
   display: block;
+  flex: 0 1 auto;
   width: 100%;
-  height: 140px;
+  height: clamp(56px, 11vh, 96px);
 }
 .yp[data-layout="tall"] .demo-graph {
-  height: calc(100% - 64px);
-  min-height: 120px;
+  min-height: 40px;
+}
+.yp[data-layout="wide"] .demo-graph {
+  height: 30px;
+}
+.yp[data-layout="wide"][data-short="0"] .demo-graph {
+  height: 44px;
 }
 .demo-stats {
+  display: grid;
+  gap: 4px;
+  font: 800 0.75rem/1.25 var(--font-head);
+  color: var(--ink-2);
+}
+.yp[data-layout="wide"] .demo-stats {
+  gap: 0;
+  font-size: 0.68rem;
+  line-height: 1.1;
+}
+.demo-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 16px;
   align-items: center;
-  font: 800 0.8rem/1.2 var(--font-head);
-  margin-bottom: 6px;
+  gap: 2px 12px;
+}
+.yp[data-layout="wide"] .demo-row {
+  gap: 0 10px;
+}
+.yp[data-layout="wide"] .demo-row > span {
+  white-space: nowrap;
+}
+/* Landscape phones: the strip keeps to two lines of text under the floor, so the AI's numbers (also on the results
+   card's you-vs-AI bars) stay out of it; so does the ±F_max range at 125 % text, and the hint on the narrowest
+   phones (the skip button above does the same). */
+.yp[data-short="1"] .demo-nums,
+.yp-ts125 .yp[data-short="1"] .demo-range {
+  display: none;
+}
+@media (max-width: 559px) {
+  .yp[data-layout="wide"] .demo-hint {
+    display: none;
+  }
 }
 .demo-stats .num {
-  font-size: 0.95rem;
+  font-size: 0.82rem;
+  line-height: 1;
+  color: var(--ink);
+}
+.yp[data-layout="wide"] .demo-stats .num {
+  font-size: 0.74rem;
+}
+.demo-stats .demo-range {
+  color: var(--ink-2);
 }
 .demo-legend {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--ink-2);
 }
 .demo-legend i {
   display: inline-block;
-  width: 16px;
-  height: 4px;
+  width: 14px;
+  height: 3px;
   border-radius: 2px;
+}
+.demo-panel .demo-hint {
+  font-size: 0.72rem;
+  line-height: 1.25;
+  color: var(--ink-2);
+  text-align: right;
+}
+.yp[data-layout="wide"] .demo-hint {
+  max-width: 7.5em;
+  line-height: 1.1;
+  /* 「何か押すと戻る」 stays on one line; the English one breaks between words. */
+  word-break: keep-all;
 }
 
 /* ---------------------------------------------------------------- tables (board, daily) */
@@ -3599,18 +3662,24 @@ input {
   bottom: auto;
   flex-direction: column;
 }
-/* Landscape phones in play: one small toast in the bottom-right corner beside the force bar (ui.ts toastArea). */
-.yp[data-short="1"][data-screen="hud"] .yp-toasts {
+/* In play, one small toast at a time (ui.ts toastArea): landscape phones in the bottom-right corner beside the force
+   bar, tall on the bench band under the floor. The landscape AI demo: top right, under the skip button. */
+.yp[data-short="1"][data-screen="hud"] .yp-toasts,
+.yp[data-layout="wide"][data-screen="demo"] .yp-toasts {
   align-items: flex-end;
 }
-.yp[data-short="1"][data-screen="hud"] .toast {
+.yp[data-short="1"][data-screen="hud"] .toast,
+.yp[data-layout="tall"][data-screen="hud"] .toast,
+.yp[data-short="1"][data-screen="demo"] .toast {
   gap: 6px;
   padding: 6px 10px;
   border-radius: 12px;
   font-size: 0.78rem;
   line-height: 1.25;
 }
-.yp[data-short="1"][data-screen="hud"] .toast .ico {
+.yp[data-short="1"][data-screen="hud"] .toast .ico,
+.yp[data-layout="tall"][data-screen="hud"] .toast .ico,
+.yp[data-short="1"][data-screen="demo"] .toast .ico {
   width: 16px;
   height: 16px;
 }
@@ -3685,9 +3754,6 @@ input {
 .hud-btn--pause .ico-menu { display: none; }
 .hud-btn--pause[data-menu] .ico-menu { display: block; }
 .hud-btn--pause[data-menu] .ico-pause { display: none; }
-
-/* The title's attract loop has no run of its own: the mini rail would show the last level's frozen frame. */
-.yp[data-screen="title"] .deck-rail svg { visibility: hidden; }
 
 /* Narrow phones (320-359 px): the pause menu's two columns are ~120 px wide; smaller icon, gap and type keep
    「リトライ」「AIの手本」「ミュート」 on one line and the ghost-set badge inside its button. */

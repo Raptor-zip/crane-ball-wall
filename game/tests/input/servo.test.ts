@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SERVO, servoQ, servoVcmd, clampTarget, quantizeForce } from '../../src/input/servo';
 import { createInputManager, type InputManagerImpl } from '../../src/input/manager';
 import { KEY_RAMP, KEY_TAP } from '../../src/input/keyboard';
+import { DECK_LAYOUT, controlSurface } from '../../src/input/pointer';
 import type { InputFrame, Intent, RailMapper } from '../../src/input/types';
 import type { SimState } from '../../src/sim/run';
 import type { LevelsFile } from '../../src/sim/level';
@@ -370,7 +371,10 @@ describe('InputManager in the loop', () => {
     m.setLevel(p);
     m.resetForRun(0);
     const s = restState(0);
-    const surfaceTop = L.scene.h + 80, surfaceH = L.deck!.h - 80;
+    // The control surface is the deck under the force bar (controlSurface's fallback: no surface element here).
+    const surf = controlSurface({ left: 0, top: L.scene.h, width: 390, height: L.deck!.h });
+    expect(surf.top).toBe(L.scene.h + DECK_LAYOUT.forceBarPx);
+    const surfaceTop = surf.top, surfaceH = surf.height;
     const yCoarse = surfaceTop + surfaceH * 0.3, yFine = surfaceTop + surfaceH * 0.85;
 
     ptr(deck, 'pointerdown', 100, yCoarse);

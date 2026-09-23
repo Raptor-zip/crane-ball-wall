@@ -31,7 +31,7 @@ function mockSave(): SaveV1 {
 function hudState(over: Partial<HudState> = {}): HudState {
   return {
     timeSub: 0, running: false, F: 0, Fmax: 40, aiF: null, saturated: false, ampDeg: 0, restDeg: 3, T: 9.8, Tmax: null,
-    nearGapMm: null, offline: false, mode: 'campaign', hint: null, dailyBalls: null, deck: null, ...over,
+    nearGapMm: null, offline: false, mode: 'campaign', hint: null, dailyBalls: null, ...over,
   };
 }
 
@@ -131,6 +131,55 @@ describe('createUI', () => {
     expect(got.map((g) => g.a)).toEqual(['retry', 'next', 'demo']);
     // The number counts up (§9.5); the accessible label carries the final time at once.
     expect(root.querySelector('.res-time')!.getAttribute('aria-label')).toContain('2.617');
+  });
+
+  it('results: the graphs start closed behind a quiet text toggle that opens and closes them', () => {
+    ui.mount(root);
+    ui.show({ id: 'results', data: results(true) });
+    const toggle = root.querySelector<HTMLButtonElement>('.res-graphs .graphs-toggle')!;
+    const body = root.querySelector<HTMLElement>('.res-graphs .graphs')!;
+    expect(toggle.classList.contains('btn--flat')).toBe(true);
+    expect(toggle.getAttribute('aria-controls')).toBe(body.id);
+    expect([body.hidden, toggle.getAttribute('aria-expanded'), toggle.textContent]).toEqual([true, 'false', 'グラフを見る']);
+    toggle.click();
+    expect([body.hidden, toggle.getAttribute('aria-expanded'), toggle.textContent]).toEqual([false, 'true', 'グラフを閉じる']);
+    // No compare tracks here: the strobe fallback (ball height) behind the same toggle.
+    expect(body.querySelectorAll('.graph')).toHaveLength(1);
+    toggle.click();
+    expect([body.hidden, toggle.getAttribute('aria-expanded')]).toEqual([true, 'false']);
+    expect(got).toEqual([]);
+  });
+
+  it('results: with compare tracks the toggle opens the x / θ / F graphs', () => {
+    const ch = (k: number): { x: Float32Array; th: Float32Array; f: Float32Array } => ({
+      x: new Float32Array(120).map((_, i) => (i / 119) * 1.5 * k), th: new Float32Array(120).map((_, i) => Math.sin(i / 10) * 0.2 * k), f: new Float32Array(120).map((_, i) => Math.cos(i / 9) * 20 * k),
+    });
+    const ui2 = createUI({ store, fetchBoard: async () => null, compare: () => ({ hz: 60, me: ch(1), ai: ch(0.9) }) });
+    ui2.mount(root);
+    ui2.show({ id: 'results', data: results(true) });
+    const body = root.querySelector<HTMLElement>('.res-graphs .graphs')!;
+    expect(body.hidden).toBe(true);
+    root.querySelector<HTMLButtonElement>('.graphs-toggle')!.click();
+    expect([...body.querySelectorAll('.graph-label')].map((e) => e.textContent)).toEqual(['台車 x', '振れ角 θ', '力 F']);
+    expect(body.querySelectorAll('.graph polyline')).toHaveLength(6);
+    expect(body.querySelector('.graph-legend')).not.toBeNull();
+  });
+
+  it('AI demo: a small F(t) graph whose playhead follows the demo clock, and the 「何か押すと戻る」 hint', () => {
+    const aiF = new Float32Array(241).map((_, i) => Math.sin(i / 20) * 10);
+    const ui2 = createUI({ store, fetchBoard: async () => null, demo: () => ({ hz: 60, aiF, meF: null, aiGapMm: 20, aiPeakF: 10, Fmax: 40 }) });
+    ui2.on('retry', (p) => got.push({ a: 'retry', p }));
+    ui2.mount(root);
+    ui2.show({ id: 'demo', level: lv('2-2') });
+    const panel = root.querySelector<HTMLElement>('.demo-panel')!;
+    expect(panel.querySelector('.demo-hint')!.textContent).toBe('何か押すと戻る');
+    expect(panel.querySelector('.demo-stats')!.textContent).toContain('AIのすき間');
+    const playhead = panel.querySelector('svg.demo-graph')!.lastElementChild!;
+    ui2.hud(hudState({ mode: 'demo', timeSub: 240 })); // 2 s of the 4 s track: the middle
+    expect(Number(playhead.getAttribute('x1'))).toBeCloseTo(300, 0);
+    // Any key skips (retry from the demo).
+    root.querySelector('.yp-layer')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+    expect(got).toEqual([{ a: 'retry', p: { from: 'demo' } }]);
   });
 
   it('failed results show the one-line cause', () => {

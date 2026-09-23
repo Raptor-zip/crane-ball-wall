@@ -14,14 +14,14 @@ describe('deck geometry (pure)', () => {
     expect(deckTargetX(0.5, 100, 490, 1, rail, 390)).toBeCloseTo(0.5 + 4.2, 12); // full width = full rail
   });
 
-  it('control surface = deck minus the 8 px force bar and 72 px mini rail; fine band = its bottom third', () => {
+  it('control surface = deck minus the 8 px force bar; fine band = its bottom third', () => {
     const deck = { left: 0, top: 523, width: 390, height: 321 };
     const surf = controlSurface(deck);
-    expect(surf).toEqual({ left: 0, top: 603, width: 390, height: 241 });
-    const edge = 603 + 241 * (2 / 3);
+    expect(surf).toEqual({ left: 0, top: 531, width: 390, height: 313 });
+    const edge = 531 + 313 * (2 / 3);
     expect(inFineBand(edge - 0.5, surf)).toBe(false);
     expect(inFineBand(edge + 0.5, surf)).toBe(true);
-    expect(inFineBand(600, surf)).toBe(false); // mini rail: coarse
+    expect(inFineBand(528, surf)).toBe(false); // force bar: coarse
     // A UI-provided [data-input-surface] element wins.
     expect(controlSurface(deck, { left: 0, top: 700, width: 390, height: 90 })).toEqual({ left: 0, top: 700, width: 390, height: 90 });
   });
@@ -46,7 +46,7 @@ describe('pointer input through the manager', () => {
     const scene = box(0, 0, 390, L.scene.h);
     const deck = box(0, L.scene.h, 390, L.deck!.h);
     m.attach(scene, deck, { screenToRailX: () => null }, L);
-    const top = L.scene.h + 80, h = L.deck!.h - 80;
+    const top = L.scene.h + 8, h = L.deck!.h - 8;
     return { scene, deck, yCoarse: top + h * 0.2, yFine: top + h * 0.9 };
   }
 
@@ -246,9 +246,9 @@ describe('pointer input through the manager', () => {
     const L = layoutTall();
     const scene = box(0, 0, 390, L.scene.h);
     const deck = box(0, L.scene.h, 390, L.deck!.h);
-    // Surface starts 2 + 8 + 72 px below the deck top and has a 34 px home-indicator inset at the bottom
+    // Surface starts 2 + 8 px below the deck top and has a 34 px home-indicator inset at the bottom
     // (the UI's fine tint is 1/3 of this whole element, like inFineBand).
-    const surfTop = L.scene.h + 82, surfH = L.deck!.h - 82;
+    const surfTop = L.scene.h + 10, surfH = L.deck!.h - 10;
     const surf = document.createElement('div');
     surf.className = 'deck-surface';
     surf.getBoundingClientRect = () => new DOMRect(0, surfTop, 390, surfH);

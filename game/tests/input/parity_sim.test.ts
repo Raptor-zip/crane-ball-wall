@@ -212,7 +212,7 @@ describe('2-2 precise parking with the keyboard (R10)', () => {
 
   /**
    * The ball has just been brought into the pocket and the trolley stands off-centre with a small swing; the
-   * player reads the hold point (the target ring / mini rail) and taps: 5 cm steps, Shift for the last cm.
+   * player reads the hold point (the target ring) and taps: 5 cm steps, Shift for the last cm.
    */
   function park(x0: number, swingDeg: number): Rig {
     const r = rig(P);

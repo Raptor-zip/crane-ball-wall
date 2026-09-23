@@ -1979,9 +1979,8 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
   const nearObj = { wall: -1, gapMm: 0, px: 0, py: 0 };
   const hud: HudState = {
     timeSub: 0, running: false, F: 0, Fmax: 40, aiF: null, saturated: false, ampDeg: 0, restDeg: 3, T: 0, Tmax: null,
-    nearGapMm: null, offline: true, mode: 'campaign', hint: null, dailyBalls: null, deck: null,
+    nearGapMm: null, offline: true, mode: 'campaign', hint: null, dailyBalls: null,
   };
-  const ghostXs: { kind: GhostKind; x: number }[] = [];
   /** AudioEngine.update() parameters, reused every frame (timeScale: D7, optional on the engine side). */
   const audioParams: Parameters<AudioEngine['update']>[0] & { timeScale: number } = {
     running: false, v: 0, F: 0, Fmax: 40, saturated: false, ballSpeed: 0, panX: 0, timeScale: 1,
@@ -2155,13 +2154,8 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     hud.mode = hudMode();
     hud.hint = state === 'READY' ? hintLine : null;
     hud.dailyBalls = play?.level.world === 0 && play.dailyOfficial ? save().daily.balls.slice() : null;
-    ghostXs.length = 0;
-    for (const p of shownPoses) ghostXs.push({ kind: p.kind, x: p.x });
-    hud.deck = {
-      rail: phys.rail, walls: phys.walls, zones: phys.phases, x: s.x, bx: s.bx, targetX: rf.targetX, ghostXs,
-    };
     if (state !== 'TITLE' && state !== 'LEVEL_SELECT' && state !== 'DAILY_HUB') {
-      const snapshot: HudState = { ...hud, deck: hud.deck ? { ...hud.deck, ghostXs: ghostXs.slice() } : null, anchors: hudAnchors() };
+      const snapshot: HudState = { ...hud, anchors: hudAnchors() };
       safe('ui.hud', () => ui.hud(snapshot));
     }
 

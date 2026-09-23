@@ -1,14 +1,14 @@
 // UI contract (GAME_DESIGN.md §10.4 "UI") and its implementation. Owner: O7.
-import type { DailyDef, LevelDef, WallDef, ZoneDef } from '../sim/level';
-import { BEAM_Y } from '../sim/constants';
-import type { GhostKind, Layout } from '../render/renderer';
+import type { DailyDef, LevelDef } from '../sim/level';
+import { BEAM_Y, RAIL_Y } from '../sim/constants';
+import type { Layout } from '../render/renderer';
 import type { BadgeId, GameEvent, Medal } from '../core/bus';
 import type { BoardRow } from '../shared/api';
 import type { SaveV1 } from '../store/save';
 import levelsFile from '../data/levels.json';
 import summaryFile from '../data/ghosts_summary.json';
 import type { PauseInfo, ScreenEnv, SummaryEntry, UiContext } from './context';
-import { DECK_FORCE_H, DECK_RAIL_H, HUD_BAND, computeLayout, sameLayout, tallPanelH } from './layout';
+import { HUD_BAND, computeLayout, sameLayout, tallPanelH } from './layout';
 import { createHud } from './hud';
 import type { Hud } from './hud';
 import { createDeck } from './deck';
@@ -54,7 +54,6 @@ export interface HudState {
   nearGapMm: number | null; offline: boolean; mode: 'campaign' | 'daily' | 'challenge' | 'practice' | 'demo';
   hint: string | null;                           // one line under READY (already fmtLevelText'ed); null while running
   dailyBalls: ('ok' | 'gold' | 'crown' | 'fail' | null)[] | null;
-  deck: { rail: [number, number]; walls: WallDef[]; zones: ZoneDef[]; x: number; bx: number; targetX: number | null; ghostXs: { kind: GhostKind; x: number }[] } | null;
   anchors?: HudAnchors | null;                   // optional (O7 addition, non-breaking)
 }
 export type Screen =
@@ -104,6 +103,8 @@ export interface ScreenHandle {
 
 /** tall: HUD panels lower than this (px) get the compact scoreboard (the full one is 56 px with a split delta). */
 const COMPACT_PANEL_H = 60;
+/** The floor's front edge (z = 0.32 m, seen from 6° above) lines up with this y (m) in the ball plane (render/scene.ts). */
+const FLOOR_FRONT_Y = -0.08;
 
 type SubId = 'settings' | 'about' | 'notes' | 'board';
 const SUB_SCREENS: ReadonlySet<Screen['id']> = new Set<SubId>(['settings', 'about', 'notes', 'board']);
@@ -376,6 +377,7 @@ export function createUI(ctx: UiContext = {}): UI {
     yp.style.setProperty('--hud-top', `${layout.hudTop}px`);
     yp.style.setProperty('--scene-h', `${layout.scene.h}px`);
     yp.style.setProperty('--deck-h', `${layout.deck ? layout.deck.h : 0}px`);
+    yp.style.setProperty('--bench-h', `${layout.bench ?? 0}px`);
     // Landscape phones (wide but short): denser menus and cards so every button is reachable without scrolling.
     yp.dataset.short = layout.kind === 'wide' && layout.h < 520 ? '1' : '0';
     // tall, short phones: the HUD panel under a status row is too low for the two-line scoreboard (clock over the
@@ -624,7 +626,6 @@ export function createUI(ctx: UiContext = {}): UI {
     lastHud = hs;
     hud.update(hs);
     if (deck) {
-      if (hs.deck) deck.update(hs.deck);
       deck.force(hs.F, hs.Fmax, hs.aiF, hs.saturated);
       // tall: "move to start" is written on the drag surface itself (not squeezed into the HUD).
       deck.ready(!hs.running && hs.timeSub === 0 && hs.mode !== 'demo' && current.id === 'hud');
@@ -654,18 +655,20 @@ export function createUI(ctx: UiContext = {}): UI {
     return { x0: x, y0: y, x1: x + el.offsetWidth, y1: y + el.offsetHeight };
   }
 
-  /** Popups stay in the 3D view under the HUD (tall: never on the deck; wide: above the force bar). */
+  /** Popups stay in the 3D view under the HUD (tall: above the bench band; wide: above the force bar). */
   function popBounds(): Box {
     const r = layout.scene;
-    return { x0: r.x + 4, y0: layout.hudTop + 4, x1: r.x + r.w - 4, y1: r.y + r.h - (layout.kind === 'wide' ? 40 : 4) };
+    const below = layout.kind === 'wide' ? 40 : (layout.bench ?? 0) + 4;
+    return { x0: r.x + 4, y0: layout.hudTop + 4, x1: r.x + r.w - 4, y1: r.y + r.h - below };
   }
 
   /**
-   * Toast area for the current screen. HUD: tall over the deck's mini rail (never on the play area's upper part or
-   * the drag surface), landscape phones one at a time in the bottom-right corner, wide otherwise the stylesheet's
-   * place under the clock. Screens with a card (results, pause, briefing, share sheet): the largest free side of the
-   * card, so that toasts never cover its buttons (nor a crown / PB banner there); when nothing fits they wait until
-   * the card closes.
+   * Toast area for the current screen. HUD: tall one at a time on the bench band at the bottom of the 3D view, right
+   * under the floor's front edge (never on the ball, the goal zone or its floor pad), landscape phones one at a time in
+   * the bottom-right corner, wide otherwise the stylesheet's place under the clock. AI demo in wide: one at a time
+   * under the skip button (the F(t) strip is under the floor, the ball swings above it). Screens with a card (results,
+   * pause, briefing, share sheet, the tall demo's graph panel): the largest free side of the card, so that toasts never
+   * cover its buttons (nor a crown / PB banner there); when nothing fits they wait until the card closes.
    */
   function toastArea(): ToastArea | null {
     if (!mounted) return null;
@@ -673,8 +676,14 @@ export function createUI(ctx: UiContext = {}): UI {
     const H = layout.h;
     if (current.id === 'hud') {
       if (layout.kind === 'tall' && layout.deck) {
-        const railBottom = layout.deck.y + DECK_FORCE_H + DECK_RAIL_H;
-        return { x0: 10, x1: W - 10, bottom: railBottom - 6, limit: layout.hudTop + 8, max: 2 };
+        // From the floor's front edge down: a one-line toast fits the bench band at any text size. A longer one (two
+        // or three lines at 125 % on a narrow phone) runs on over the force bar and the top of the drag surface (the
+        // toasts let touches through) rather than up over the floor, and always has room, so it never waits.
+        const playBottom = layout.scene.y + layout.scene.h - (layout.bench ?? 0);
+        const a = lastHud?.anchors;
+        const front = a?.pxPerM ? a.pivot.y + (RAIL_Y - FLOOR_FRONT_Y) * a.pxPerM : NaN;
+        const top = Math.max(playBottom, Number.isFinite(front) ? front : playBottom + 8) + 4;
+        return { x0: 10, x1: W - 10, top, limit: H - 8 - lastInsets.b, max: 1 };
       }
       if (yp.dataset.short === '1') {
         // Landscape phones: the stylesheet's place under the clock is the gantry and the wall tops, where the ball
@@ -690,6 +699,14 @@ export function createUI(ctx: UiContext = {}): UI {
     }
     // Full pages (level select, daily hub, settings, ...) scroll under the toasts: the stylesheet's bottom centre.
     if (PAGE_SCREENS.has(current.id) || current.id === 'title') return null;
+    if (current.id === 'demo' && layout.kind === 'wide') {
+      // The low F(t) strip is under the floor and the ball swings in the whole view above it: top right, under the
+      // skip button (and its focus ring), over the gantry's end, well above the ball and the goal zone.
+      const bar = layer.querySelector<HTMLElement>('.demo-top');
+      const b = bar ? boxOf(bar) : null;
+      const x1 = W - 10 - lastInsets.r;
+      return { x0: Math.max(10, x1 - 300), x1, top: (b ? b.y1 : layout.hudTop) + 10, limit: H * 0.6, max: 1 };
+    }
     const cards = [...layer.querySelectorAll<HTMLElement>('.sheet, .demo-panel')].map(boxOf).filter((b): b is Box => !!b);
     if (!cards.length) return null;
     const c = cards.reduce((a, b) => ({ x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1) }));

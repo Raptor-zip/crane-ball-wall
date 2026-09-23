@@ -6,6 +6,7 @@ import type { Locator, Page } from '@playwright/test';
 import {
   STATUS, bot11, centreOf, collectErrors, playReplay, readSave, shot, state, touchDrag, waitForApp, waitForState,
 } from './helpers';
+import { DECK_FORCE_H } from '../../src/ui/layout';
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
 test.describe.configure({ timeout: 180_000 });
@@ -37,6 +38,19 @@ test('touch only: ghosts, AI line, notes and mute are reachable', async ({ page 
   // title -> 1-1 by a tap on あそぶ
   await tapTarget(page, page.getByRole('button', { name: /あそぶ/ }));
   await waitForState(page, (s) => s.state === 'READY' && s.level === '1-1', 'READY on 1-1');
+
+  // The deck is the force bar and the drag surface right under it (2 px border, 8 px bar): no 2D view of the rail.
+  const shape = await page.evaluate(() => {
+    const d = document.querySelector('.yp-deck')!;
+    return {
+      kids: [...d.children].map((e) => e.className),
+      drawn: [...d.querySelectorAll('svg, canvas')].filter((e) => !e.closest('.deck-surface')).length,
+      gap: document.querySelector('.deck-surface')!.getBoundingClientRect().top - d.getBoundingClientRect().top,
+    };
+  });
+  expect(shape.kids).toEqual(['deck-force', 'deck-surface']);
+  expect(shape.drawn).toBe(0);
+  expect(Math.abs(shape.gap - (2 + DECK_FORCE_H))).toBeLessThanOrEqual(1);
 
   // a finger on the deck starts the run; ↺ brings it back
   const deck = await centreOf(page, '.deck-surface');

@@ -3,8 +3,8 @@
 // tall layout: anywhere in the deck is a *relative clutch drag*. On touch-down we store (px0, xt0)
 //   (xt0 = the current target, else the trolley x) and then x_t = xt0 + k (px - px0) (rail1 - rail0) / deckWidthPx.
 //   The deck width always spans the whole rail, so the mapping never depends on the follow camera.
-//   Fine band: the bottom third of the control surface (deck minus the 8 px force bar and 72 px mini
-//   rail) uses k = 1/3 and fine = true; the band is chosen at touch-down and kept for the whole drag.
+//   Fine band: the bottom third of the control surface (deck minus the 8 px force bar) uses k = 1/3 and
+//   fine = true; the band is chosen at touch-down and kept for the whole drag.
 // wide layout: below the HUD band, x_t = mapper.screenToRailX(clientX, clientY) (absolute; the mapper
 //   uses the unshaken reference camera).
 // Mouse: only while the left button is held (never on hover). tall + mouse = deck clutch drag.
@@ -13,8 +13,8 @@ import type { Layout, Rect } from '../render/renderer';
 import type { DeviceTag } from '../sim/replay';
 import type { Command, RailMapper } from './types';
 
-/** Deck content above the control surface (§3.3): force bar 8 px + mini rail 72 px. */
-export const DECK_LAYOUT = { forceBarPx: 8, miniRailPx: 72 } as const;
+/** Deck content above the control surface (§3.3): the 8 px force bar. */
+export const DECK_LAYOUT = { forceBarPx: 8 } as const;
 /** Fine band: the bottom third of the control surface, with a third of the sensitivity (Appendix A). */
 export const FINE_BAND = { frac: 1 / 3, gain: 1 / 3 } as const;
 
@@ -33,10 +33,10 @@ export function deckTargetX(xt0: number, px0: number, px: number, k: number, rai
   return xt0 + (k * (px - px0) * (rail[1] - rail[0])) / deckWidthPx;
 }
 
-/** Control surface of the deck: the UI's surface element (SURFACE_SELECTOR) if it has a size, else deck minus 80 px. */
+/** Control surface of the deck: the UI's surface element (SURFACE_SELECTOR) if it has a size, else deck minus 8 px. */
 export function controlSurface(deck: Box, surfaceEl: Box | null = null): Box {
   if (surfaceEl && surfaceEl.height > 0) return surfaceEl;
-  const top = deck.top + DECK_LAYOUT.forceBarPx + DECK_LAYOUT.miniRailPx;
+  const top = deck.top + DECK_LAYOUT.forceBarPx;
   return { left: deck.left, top, width: deck.width, height: Math.max(0, deck.top + deck.height - top) };
 }
 

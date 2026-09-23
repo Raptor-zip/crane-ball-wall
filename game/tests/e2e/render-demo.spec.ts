@@ -5,7 +5,8 @@
 //   - all 18 levels at 390x844, 844x390 and 1280x720: screenshot, renderer.info.render.calls <= 40
 //     (§9.7), triangles <= 60k, zero console errors; rail mapper round trip <= 5 mm, unmoved by shake
 //   - camera scale matches §9.2 (about 260 / 170 px/m wide) and D10 in tall: a 2.0-2.3 m follow window
-//     that fills O7's play area [hudTop, scene bottom] (beam right under the HUD, floor at the bottom),
+//     that fills O7's play area [hudTop, scene bottom - bench] (beam right under the HUD, floor at the bottom,
+//     the bench front in the layout's bench band under it),
 //     look-ahead toward the goal, trolley and ball kept on screen during a 4-2 rail-end slam
 //   - ghost tags never overlap each other nor sit on the player's trolley at the start pose
 //   - board heading: level id, never a raw daily id (「今日の5球」 / levelLoaded.label); AI margin follows D8
@@ -19,6 +20,7 @@ import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import type { Page, TestInfo } from '@playwright/test';
 import { collectErrors } from './helpers';
+import { TALL_BENCH_H } from '../../src/ui/layout';
 
 interface Vp { name: string; width: number; height: number; dsf: number }
 const VIEWPORTS: Vp[] = [
@@ -198,14 +200,16 @@ test.describe('tall framing (D10)', () => {
       await page.setViewportSize({ width: size[0], height: size[1] });
       await open(page, 'level=2-2&t=-0.3');
       const f = await page.evaluate(() => (window.__RENDER_DEMO__ as Demo).frame());
+      const bench = await page.evaluate(() => (window.__RENDER_DEMO__ as Demo).layout().bench ?? 0);
       const tag = `${size[0]}x${size[1]}`;
+      expect(bench, tag).toBe(TALL_BENCH_H);
       expect(f.windowW, tag).toBeGreaterThanOrEqual(2.0 - 1e-6);
       expect(f.windowW, tag).toBeLessThanOrEqual(2.3);
       // One row of ghost tags between the HUD and the beam, no empty paper.
       expect(f.beamTopY - f.hudTop, `${tag}: room above the beam`).toBeGreaterThan(14);
       expect(f.beamTopY - f.hudTop, `${tag}: room above the beam`).toBeLessThan(40);
-      // The floor edge reaches the bottom of the play area (a few px of it may fall under the deck).
-      expect(Math.abs(f.floorY - f.sceneBottom), `${tag}: floor edge vs scene bottom`).toBeLessThan(20);
+      // The floor edge reaches the bottom of the play area (a few px of it may fall into the bench band).
+      expect(Math.abs(f.floorY - (f.sceneBottom - bench)), `${tag}: floor edge vs bottom of the play area`).toBeLessThan(20);
     }
   });
 

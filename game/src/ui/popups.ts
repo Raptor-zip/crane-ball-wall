@@ -294,7 +294,11 @@ export interface Toasts {
 
 const TOAST_MS = 2900;
 const TOAST_MAX = 3;
-/** A toast that waited longer than this is dropped (it would be about something long gone: two screens back). */
+/**
+ * A toast that waited longer than this is dropped (it would be about something long gone: two screens back). An area
+ * that shows fewer than TOAST_MAX at a time adds TOAST_MS per missing slot, so that a burst still drains in order
+ * (after a crash: a badge from the run, then the hint, skip and assist offers, one after the other).
+ */
 const TOAST_STALE_MS = 8000;
 /** On screen this long, a toast has been read: a relayout that has no room for it drops it instead of replaying it. */
 const TOAST_SEEN_MS = 1200;
@@ -363,7 +367,9 @@ export function createToasts(root: HTMLElement, area: () => ToastArea | null = (
 
   function pump(): void {
     const now = performance.now();
-    while (queue.length && now - queue[0]!.at > TOAST_STALE_MS) queue.shift();
+    const slots = Math.max(1, Math.min(TOAST_MAX, current?.max ?? TOAST_MAX));
+    const stale = TOAST_STALE_MS + (TOAST_MAX - slots) * TOAST_MS;
+    while (queue.length && now - queue[0]!.at > stale) queue.shift();
     while (queue.length && shown.length < TOAST_MAX) {
       const it = queue[0]!;
       it.el = make(it);
