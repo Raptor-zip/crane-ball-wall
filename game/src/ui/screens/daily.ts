@@ -5,7 +5,8 @@ import type { ScreenEnv } from '../context';
 import type { DailyDef } from '../../sim/level';
 import { h } from '../dom';
 import { icon, rackBall } from '../icons';
-import { fmtDelta, fmtTime, levelConcept, levelName, t } from '../i18n/format';
+import { fmtCount, fmtDelta, fmtTime, levelConcept, levelName, t } from '../i18n/format';
+import { BOARD_TOP_N } from '../../shared/api';
 import { fmtPct } from '../share';
 import { openShareSheet } from '../sharesheet';
 import { SideCam, drawSideView, fitRange } from '../sideview';
@@ -54,7 +55,8 @@ export function renderDailyScreen(root: HTMLElement, screen: Extract<Screen, { i
   const stats = h('div', { class: 'stats' },
     stat(t('daily.best'), v.bestSub !== null ? t('unit.s', { v: fmtTime(v.bestSub) }) : t('daily.noBest')),
     stat(t('daily.vsAi'), v.bestSub !== null ? fmtDelta(v.bestSub - v.parSub) : '–', `AI ${fmtTime(v.parSub)}`),
-    stat(t('daily.rank'), v.rank !== null ? t('unit.rank', { n: v.rank }) : '–', v.pct !== null ? t('daily.pct', { p: fmtPct(v.pct) }) : undefined),
+    // Beyond 100 the daily rank is a histogram estimate (§7.7 「約」の規則).
+    stat(t('daily.rank'), v.rank !== null ? t(v.rank > BOARD_TOP_N ? 'unit.rankApprox' : 'unit.rank', { n: fmtCount(v.rank) }) : '–', v.pct !== null ? t('daily.pct', { p: fmtPct(v.pct) }) : undefined),
     stat(t('daily.streakLabel'), t('unit.days', { n: v.streak })));
   const boardBox = h('section', { class: 'sheet daily-card' }, h('div', { class: 'eyebrow', style: 'margin-bottom:8px' }, t('daily.top10')));
   if (v.top && v.top.length) {

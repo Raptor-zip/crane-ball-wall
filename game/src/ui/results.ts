@@ -1,12 +1,15 @@
 // Results card (success and failure versions) (GAME_DESIGN.md §9.4, §2.2, §8.4 item 9, §12.1 aiBeaten). Owner: O7.
 import type { ResultsData, ScreenHandle } from './ui';
+import type { Standing } from '../shared/rank';
+import { BOARD_TOP_N } from '../shared/api';
 import type { Channels, PauseInfo, ScreenEnv } from './context';
 import type { BadgeId } from '../core/bus';
 import type { LevelDef } from '../sim/level';
 import { h, s } from './dom';
 import { coin, crownBadge, icon } from './icons';
 import type { IconName } from './icons';
-import { NO_VALUE, fmtDelta, fmtMm, fmtNum, fmtTime, known, levelName, t } from './i18n/format';
+import { NO_VALUE, fmtCount, fmtDelta, fmtMm, fmtNum, fmtTime, known, levelName, t } from './i18n/format';
+import { fmtPct } from './share';
 import { openShareSheet } from './sharesheet';
 import { openAiLostCard } from './screens/notes';
 import { wideRange } from './sideview';
@@ -15,6 +18,117 @@ export interface ResultsOpts { failText: string | null; pause: PauseInfo }
 
 /** Results already announced (the card is re-rendered when coming back from the ranking or after a rotation). */
 const announced = new WeakSet<ResultsData>();
+/** Results cards whose rank stamp was pressed: it animates once per card; re-renders show the final state. */
+const stamped = new WeakSet<ResultsData>();
+
+/** The rank stamp is pressed after the count-up (650 ms) and the medal fly, or when the answer arrives if later. */
+const STAMP_AT_MS = 900;
+/** How long the first-crown 「AIが負けた理由」 card waits for a rank-in answer that is still on its way. */
+const AI_LOST_WAIT_MS = 3500;
+
+/** Scrolls the card just enough that `row` is fully inside it (nothing when it already is). */
+function revealRow(scroll: HTMLElement, row: HTMLElement, smooth: boolean): void {
+  const s = scroll.getBoundingClientRect();
+  const r = row.getBoundingClientRect();
+  const pad = 8;
+  let dy = Math.max(0, r.bottom - (s.bottom - pad));
+  dy = Math.min(dy, Math.max(0, r.top - (s.top + pad)));   // never push the row's top out
+  if (dy < 1) return;
+  if (typeof scroll.scrollBy === 'function') scroll.scrollBy({ top: dy, behavior: smooth ? 'smooth' : 'auto' });
+  else scroll.scrollTop += dy;
+}
+
+/** What the rank row shows; the row is re-rendered only when this changes (checked on HUD frames). */
+export function standingKey(s: Standing | null | undefined): string {
+  return s ? `${s.phase}|${s.rank}|${s.n}|${s.pct}|${s.was}|${s.stamp}|${s.exact}|${s.candidate}|${s.forPb}` : '';
+}
+
+function stampWord(s: Standing): string {
+  if (s.stamp === 'wr') return s.was === 1 ? t('results.stampWrAgain') : t('results.stampWr');
+  return s.stamp === 'up' ? t('results.stampUp') : t('results.stampIn');
+}
+
+/**
+ * The world rank row under the time (GAME_DESIGN.md §9.4 「結果カードの世界順位の行」). Honesty rule (§7.7): a rank shows without 約
+ * only when the server confirmed it (`exact`, <= 100); every other number is an estimate and says so.
+ * `press`: the stamp animates now (null: the final frame at once). Fills `el` and returns nothing.
+ */
+export function renderRankRow(el: HTMLElement, s: Standing, press: { delayMs: number } | null): void {
+  el.replaceChildren();
+  el.className = 'res-rank';
+  const cnt = fmtCount;
+  if (s.phase === 'confirmed' && s.stamp && s.rank !== null) {
+    // Confirmed top 100: the stamp (ランクイン！ / ランクアップ！ / 世界一！) with the rank, pressed once per card.
+    el.classList.add('res-rank--stamp');
+    const word = stampWord(s);
+    const stamp = h('div', { class: `stamp stamp--rank${s.stamp === 'wr' ? ' stamp--wr' : ''}`, 'aria-hidden': 'true' },
+      h('span', { class: 'stamp-word' }, word), h('span', { class: 'stamp-num' }, t('unit.rank', { n: cnt(s.rank) })));
+    const meta: string[] = [];
+    if (s.stamp === 'in' && s.was !== null && s.was > BOARD_TOP_N) meta.push(t('results.rankFrom', { n: cnt(s.was) }));
+    if (s.n !== null && s.n >= s.rank) meta.push(t('results.rankOf', { n: cnt(s.n) }));
+    const climb = s.stamp === 'up' && s.was !== null && s.was > s.rank ? s.was - s.rank : null;
+    const up = climb !== null ? h('span', { class: 'rank-up', 'aria-hidden': 'true' }, t('results.rankUpBy', { n: cnt(climb) })) : null;
+    const subs = meta.map((m) => h('span', { class: 'res-rank-sub' }, m));
+    if (press) {
+      // The meta lines (N人中, 約N位から) come with the stamp, not before it: alone they read as loose fragments.
+      const at = (x: HTMLElement, ms: number): void => {
+        x.classList.add('is-new');
+        x.style.setProperty('--rank-delay', `${Math.round(press.delayMs + ms)}ms`);
+      };
+      at(stamp, 0);
+      for (const m of subs) at(m, 150);
+      if (up) at(up, 350);
+    }
+    const aria = t('results.rankAria', { stamp: word, n: cnt(s.rank) });
+    el.append(stamp,
+      h('div', { class: 'res-rank-side' }, up, ...subs),
+      h('span', { class: 'sr-only' }, climb !== null ? `${aria} ${t('results.rankUpAria', { n: cnt(climb) })}` : aria));
+    return;
+  }
+  if (!s.forPb) {
+    // A slower clear: where the personal best stands, muted.
+    el.classList.add('res-rank--muted');
+    el.append(h('span', { class: 'res-rank-pre' }, t('results.rankPbPrefix')));
+  }
+  const main = (text: string, quiet = false): HTMLElement => h('span', { class: `res-rank-main${quiet ? ' is-quiet' : ''}` }, text);
+  const sub = (...parts: (string | null)[]): HTMLElement[] => {
+    const p = parts.filter((x): x is string => !!x);
+    return p.length ? [h('span', { class: 'res-rank-sub' }, p.join(t('results.rankSep')))] : [];
+  };
+  el.prepend(icon('trophy'));
+  const r = s.rank;
+  if (r !== null && r > BOARD_TOP_N) {
+    // Outside the top 100: always an estimate from the histogram (約), with the crowd size and 上位 x %.
+    el.append(main(t('results.rankApprox', { n: cnt(r) })),
+      ...sub(s.n !== null ? t('results.rankOf', { n: cnt(s.n) }) : null, s.pct !== null ? t('results.rankTop', { p: fmtPct(s.pct) }) : null));
+    if (s.forPb && s.was !== null && s.was > r) {
+      el.append(h('span', { class: 'rank-up rank-up--muted', 'aria-hidden': 'true' }, t('results.rankUpByApprox', { n: cnt(s.was - r) })),
+        h('span', { class: 'sr-only' }, t('results.rankUpApproxAria', { n: cnt(s.was - r) })));
+    }
+    return;
+  }
+  if (s.phase === 'pending') {
+    el.classList.add('res-rank--wait');
+    el.append(main(r !== null ? t('results.rankPending', { n: cnt(r) }) : t('results.rankPendingRange'), true));
+    return;
+  }
+  if (s.phase === 'queued') {
+    el.classList.add('res-rank--wait');
+    el.append(main(r !== null ? t('results.rankQueued', { n: cnt(r) }) : t('results.rankQueuedNoNum'), true));
+    return;
+  }
+  if (s.phase === 'held') {
+    el.classList.add('res-rank--wait');
+    el.append(main(r !== null ? t('results.rankHeld', { n: cnt(r) }) : t('results.rankHeldNoNum'), true));
+    return;
+  }
+  if (r !== null) {
+    el.append(main(s.exact ? t('results.rank', { n: cnt(r) }) : t('results.rankApprox', { n: cnt(r) })),
+      ...sub(s.n !== null && s.n >= r ? t('results.rankOf', { n: cnt(s.n) }) : null));
+    return;
+  }
+  el.append(main(s.candidate ? t('results.rankRange') : t('results.rankOut'), true));
+}
 
 const BADGE_GLYPH: Record<BadgeId, string> = { kamihitoe: '5', ippatsu: '1', hashidon: '端', pashi: 'J', buranko: '∿', yasashisa: '♡' };
 
@@ -219,6 +333,13 @@ export function resultsSide(lv: LevelDef): 'left' | 'right' {
 export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenEnv, opts?: ResultsOpts): ScreenHandle {
   const pi: PauseInfo = opts?.pause ?? env.pauseInfo();
   const reduce = env.reducedMotion();
+  const still = !!root.closest('.yp--still');
+  const openAt = performance.now();
+  let rankEl: HTMLElement | null = null;
+  let rankKey = '';
+  let syncRank: (() => void) | null = null;
+  /** performance.now() when this card's rank stamp has finished landing (null: no stamp pressed on this card). */
+  let stampLandsAt: number | null = null;
   const lv = data.level;
   const run = env.lastRun();
   const unrecorded = run.practice || run.assist;
@@ -256,8 +377,42 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
       : firstClear || isPb
         ? h('span', { class: 'ribbon' }, firstClear ? t('results.firstClear') : t('results.newPb'))
         : null;
-    scroll.append(h('div', { class: 'res-time', 'aria-label': `${t('results.time')} ${fmtTime(score)}` }, num, h('small', null, t('unit.s', { v: '' }).trim()), ribbon));
-    countUp(num, score, reduce || !!root.closest('.yp--still'));
+    const timeRow = h('div', { class: 'res-time', 'aria-label': `${t('results.time')} ${fmtTime(score)}` }, num, h('small', null, t('unit.s', { v: '' }).trim()), ribbon);
+    scroll.append(timeRow);
+    countUp(num, score, reduce || still);
+
+    // World rank row (level clears with a standing from core; never the daily, practice or assist).
+    syncRank = (): void => {
+      const st = data.standing ?? null;
+      const k = !unrecorded && lv.world !== 0 ? standingKey(st) : '';
+      if (k === rankKey) return;
+      rankKey = k;
+      if (!k || !st) {
+        rankEl?.remove();
+        rankEl = null;
+        return;
+      }
+      if (!rankEl) {
+        rankEl = h('div', { class: 'res-rank', 'aria-live': 'polite' });
+        timeRow.after(rankEl);
+      }
+      let press: { delayMs: number } | null = null;
+      if (st.phase === 'confirmed' && st.stamp && !stamped.has(data)) {
+        stamped.add(data);
+        press = { delayMs: still ? 0 : Math.max(0, openAt + STAMP_AT_MS - performance.now()) };
+        if (!still) stampLandsAt = performance.now() + press.delayMs + (reduce ? 300 : 450);
+      }
+      renderRankRow(rankEl, st, press);
+      if (press) {
+        // A short card (a phone held sideways) can have the row below the fold: bring it in just before the press.
+        const row = rankEl;
+        const lead = reduce || still ? 0 : 280;
+        window.setTimeout(() => {
+          if (row.isConnected) revealRow(scroll, row, !reduce && !still);
+        }, Math.max(0, press.delayMs - lead));
+      }
+    };
+    syncRank();
 
     // Medal.
     const medalEl = data.crown ? crownBadge('crown medal-fly') : coin(data.medal, 'coin medal-fly');
@@ -297,7 +452,7 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
       data.badges.forEach((b, i) => {
         window.setTimeout(() => {
           if (card.isConnected) env.toast(t('badge.toast', { name: t(`badge.${b}` as 'badge.kamihitoe') }), 'badge');
-        }, root.closest('.yp--still') ? 0 : 700 + i * 450);
+        }, still ? 0 : 700 + i * 450);
       });
     }
     if (data.badges.length) {
@@ -306,8 +461,7 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
           h('span', { class: 'badge-dot' }, BADGE_GLYPH[b]), t(`badge.${b}` as 'badge.kamihitoe')))));
     }
     const onlineChips = h('div', { class: 'res-online' },
-      data.rank !== null ? h('span', { class: 'chip' }, icon('trophy'), t('results.rank', { n: data.rank })) : null,
-      data.aiBeaten !== null ? h('span', { class: 'chip chip--ai' }, icon('crown'), t('results.aiBeaten', { n: data.aiBeaten })) : null);
+      data.aiBeaten !== null ? h('span', { class: 'chip chip--ai' }, icon('crown'), t('results.aiBeaten', { n: fmtCount(data.aiBeaten) })) : null);
     if (onlineChips.childElementCount) scroll.append(onlineChips);
 
     // Footer buttons.
@@ -336,12 +490,27 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
     scroll.append(keys.el);
     if (!online) foot.querySelector('.res-row')!.setAttribute('style', 'grid-template-columns:repeat(2,minmax(0,1fr))');
 
-    // "Why the AI lost" (first crown ever, once, §5.4).
+    // "Why the AI lost" (first crown ever, once, §5.4). A first crown is often a rank-in too: the card waits for the
+    // rank stamp to land (and for a rank-in answer still on its way, up to AI_LOST_WAIT_MS) so it never covers it.
     const save = env.save();
     if (data.crown && save && !save.seen.aiLostCard) {
-      window.setTimeout(() => {
-        if (root.isConnected && card.isConnected) openAiLostCard(root, env, lv);
-      }, reduce || root.closest('.yp--still') ? 0 : 1100);
+      const openAiLost = (): void => {
+        if (!root.isConnected || !card.isConnected) return;
+        if (!still) {
+          syncRank?.();
+          const now = performance.now();
+          if (stampLandsAt !== null && now < stampLandsAt + 250) {
+            window.setTimeout(openAiLost, stampLandsAt + 250 - now);
+            return;
+          }
+          if (data.standing?.phase === 'pending' && now - openAt < AI_LOST_WAIT_MS) {
+            window.setTimeout(openAiLost, 200);
+            return;
+          }
+        }
+        openAiLostCard(root, env, lv);
+      };
+      window.setTimeout(openAiLost, reduce || still ? 0 : 1100);
     }
   } else {
     card.append(h('div', { class: 'res-stamp', 'aria-hidden': 'true' }, h('div', { class: 'stamp stamp--sm stamp--fail' }, '×')));
@@ -382,6 +551,8 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
     onHud() {
       // Keys pressed on this screen (G / H / M) change the state behind the buttons: follow it a few times a second.
       if (++frames % 12 === 0) keys?.sync();
+      // core replaces data.standing when the server answers (rank-in send): the rank row follows it.
+      if (frames % 6 === 0) syncRank?.();
     },
     onEscape() {
       // the same as the ⏸ corner button here: to the level select (core; the run is over)

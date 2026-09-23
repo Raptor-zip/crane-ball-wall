@@ -6,9 +6,9 @@ import type { Layout, RenderFrame, Renderer } from '../../src/render/renderer';
 import type { HudState, Screen, UI, UiAction, UiElements } from '../../src/ui/ui';
 import type { SaveV1, Store } from '../../src/store/save';
 import { defaultSave } from '../../src/store/save';
-import type { Api } from '../../src/net/api';
+import type { Api, FlushReason, ResultsListener } from '../../src/net/api';
 import type { PendingRun } from '../../src/net/outbox';
-import type { BootResponse } from '../../src/shared/api';
+import type { BootResponse, SubmitResponse, SubmitResult } from '../../src/shared/api';
 import type { LevelDef } from '../../src/sim/level';
 
 export const LAYOUT: Layout = { kind: 'wide', w: 1280, h: 720, dpr: 1, scene: { x: 0, y: 0, w: 1280, h: 720 }, deck: null, hudTop: 56 };
@@ -154,18 +154,26 @@ export class FakeApi implements Api {
   enabled = true;
   lite = false;
   booting = false;
+  soft = false;
+  readOnly = false;
   queued: PendingRun[] = [];
   flushes: string[] = [];
+  /** Every flush with its options (rank-in: `first`). */
+  flushCalls: { reason: string; first?: string }[] = [];
+  /** The answer of a flush (default: null, nothing was sent). */
+  flushReply: ((reason: FlushReason, opts?: { first?: string }) => Promise<SubmitResponse | null>) | null = null;
   bootRes: BootResponse | null = null;
+  readonly listeners = new Set<ResultsListener>();
   boot(): Promise<BootResponse | null> {
     return Promise.resolve(this.bootRes);
   }
   lastBoot(): BootResponse | null {
     return this.bootRes;
   }
-  flush(reason: 'menu' | 'select' | 'pagehide' | 'dailyDone'): Promise<null> {
+  flush(reason: FlushReason, opts?: { first?: string }): Promise<SubmitResponse | null> {
     this.flushes.push(reason);
-    return Promise.resolve(null);
+    this.flushCalls.push(opts?.first !== undefined ? { reason, first: opts.first } : { reason });
+    return this.flushReply ? this.flushReply(reason, opts) : Promise.resolve(null);
   }
   enqueue(r: PendingRun): void {
     this.queued.push(r);
@@ -175,5 +183,15 @@ export class FakeApi implements Api {
   }
   board(): Promise<null> {
     return Promise.resolve(null);
+  }
+  onResults(cb: ResultsListener): () => void {
+    this.listeners.add(cb);
+    return () => {
+      this.listeners.delete(cb);
+    };
+  }
+  /** A submit answer arriving (what NetApi does after applying it to the save). */
+  answer(sent: readonly PendingRun[], results: readonly SubmitResult[]): void {
+    for (const cb of this.listeners) cb(sent, results);
   }
 }

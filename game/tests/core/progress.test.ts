@@ -158,9 +158,12 @@ describe('success bookkeeping', () => {
   it('a changed levelHash drops the PB but keeps the medals', () => {
     const p = emptyProgress('aaaa0000');
     applySuccess(p, 200, 300, 'r', [], true);
+    p.sentSub = 200;
     expect(reconcileHash(p, 'aaaa0000')).toBe(false);
+    expect(p.sentSub).toBe(200);
     expect(reconcileHash(p, 'bbbb1111')).toBe(true);
     expect([p.hash, p.bestSub, p.bestReplay, p.medal, p.crown, p.cleared]).toEqual(['bbbb1111', null, null, 3, true, true]);
+    expect('sentSub' in p).toBe(false);   // the histogram position of the old board (§7.9)
   });
 
   it('a SIM_VERSION bump retires the PB like a physics change; sim 1 keeps the bare hash of existing saves', () => {

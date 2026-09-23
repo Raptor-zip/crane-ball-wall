@@ -362,6 +362,20 @@ describe('migration-safe parsing', () => {
     expect(d.outbox.map((r) => [r.board, r.device])).toEqual([['L:2-2:9f3a12bc:s1', 0], ['L:1-2:9f3a12bc:s1', 1]]);
   });
 
+  it("LevelProgress.sentSub (the server's histogram time, §7.9): kept when a positive integer, dropped otherwise", () => {
+    const lv = (sentSub: unknown): unknown => ({ hash: '9f3a12bc', cleared: true, bestSub: 301, bestReplay: 'WVAB', sentSub });
+    const d = parseSave({ v: 1, levels: { '2-2': lv(455), '2-3': lv(0), '2-4': lv(12.5), '2-5': lv('455'), '2-6': lv(null), '2-7': { hash: 'x' } } }, 'ja');
+    expect(d.levels['2-2']!.sentSub).toBe(455);
+    for (const id of ['2-3', '2-4', '2-5', '2-6', '2-7']) expect('sentSub' in d.levels[id]!).toBe(false);
+    // round trip through the store
+    const m = new MemStorage();
+    const s = make({ storage: m });
+    s.update((x) => { ensureLevel(x, '2-2', '9f3a12bc').sentSub = 360; });
+    s.flush();
+    expect(saved(m).levels['2-2']!.sentSub).toBe(360);
+    expect(make({ storage: m }).data().levels['2-2']!.sentSub).toBe(360);
+  });
+
   it('a malformed identity is replaced by a new valid one', () => {
     const d = parseSave({ v: 1, id: { secret: 'short', pidh: 'x', nameSeed: 3 } }, 'ja');
     expect(d.id.secret).not.toBe('short');
@@ -389,6 +403,8 @@ describe('level hash change', () => {
     const b = ensureLevel(d, '1-1', '11111111');
     Object.assign(b, { cleared: true, bestSub: 200, bestReplay: 'QQ', medal: 2 });
     ensureLevel(d, '1-2', '');
+    a.sentSub = 301;
+    b.sentSub = 200;
     d.outbox = [run('L:2-2:9f3a12bc:s1', 301), { ...run('L:1-1:11111111:s1', 200), level: '1-1' }, run('D:00023:1c0e77aa:s1', 455, { level: 'd:17', tries: 2, balls: 'XO---' })];
     return d;
   }
@@ -397,7 +413,9 @@ describe('level hash change', () => {
     const d = withLevels();
     expect(reconcileLevelHashes(d, { '2-2': 'deadbeef', '1-1': '11111111', '1-2': '22222222' })).toBe(true);
     expect(d.levels['2-2']).toMatchObject({ hash: 'deadbeef', bestSub: null, bestReplay: null, medal: 3, crown: true, cleared: true, badges: ['ippatsu'], attempts: 7, aiBeatenSent: false });
-    expect(d.levels['1-1']).toMatchObject({ hash: '11111111', bestSub: 200, bestReplay: 'QQ', medal: 2 });
+    // the histogram position belonged to the old board
+    expect('sentSub' in d.levels['2-2']!).toBe(false);
+    expect(d.levels['1-1']).toMatchObject({ hash: '11111111', bestSub: 200, bestReplay: 'QQ', medal: 2, sentSub: 200 });
     expect(d.levels['1-2']!.hash).toBe('22222222');   // no hash yet: adopted, nothing wiped
     // The queued run for the old 2-2 ranking is dropped (it would be `stale`); others stay.
     expect(d.outbox.map((r) => r.board)).toEqual(['L:1-1:11111111:s1', 'D:00023:1c0e77aa:s1']);

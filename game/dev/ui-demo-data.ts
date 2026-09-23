@@ -3,6 +3,9 @@ import type { LevelDef } from '../src/sim/level';
 import type { SaveV1, Store, LevelProgress } from '../src/store/save';
 import type { BoardResponse, BootResponse } from '../src/shared/api';
 import type { BoardRow } from '../src/shared/api';
+import { HIST_BINS, histBin } from '../src/shared/api';
+import type { Standing } from '../src/shared/rank';
+import { LEVEL_HIST_BINS, levelBin, levelPct, trimHist } from '../src/shared/rank';
 import type { DailyView, GhostSummary, ResultsData } from '../src/ui/ui';
 import type { CompareTracks, DemoInfo, UiContext } from '../src/ui/context';
 import { BUNDLED_LEVELS, BUNDLED_SUMMARY } from '../src/ui/ui';
@@ -125,34 +128,102 @@ function hex(n: number): string {
   return (n * 2654435761 >>> 0).toString(16).padStart(8, '0') + (n * 40503 >>> 0).toString(16).padStart(8, '0');
 }
 
-/** Ranking rows; `walls` false gives the gap column -1 (NO_WALL_GAP_UM, e.g. 1-1). */
-export function mockRows(parSub: number, n: number, mePidh: string, meRank = 7, walls = true): BoardRow[] {
-  const rows: BoardRow[] = [];
+/**
+ * A synthetic crowd of `n` sorted times (t120) around `par`: a few players near the AI, most well behind it, a long slow
+ * tail (the shape of the real 1-1 board). Deterministic.
+ */
+export function mockCrowd(par: number, n = 1065, seed = 7): number[] {
+  let x = seed >>> 0;
+  const rnd = (): number => {
+    x = (Math.imul(x, 1664525) + 1013904223) >>> 0;
+    return (x + 0.5) / 4294967296;
+  };
+  const out: number[] = [];
   for (let i = 0; i < n; i++) {
-    const t120 = Math.round(parSub * (0.9 + i * 0.012 + (i > 20 ? i * 0.01 : 0)));
-    const pidh = i === meRank - 1 ? mePidh : hex(i + 3);
-    rows.push([pidh, SEEDS[i % SEEDS.length]! + i, t120, walls ? 2000 + ((i * 3137) % 18000) : -1, (i % 4) + 1, 1790000000000 - i * 1000]);
+    // log-normal-ish spread: exp(N(0.45, 0.42))
+    const g = Math.sqrt(-2 * Math.log(rnd())) * Math.cos(2 * Math.PI * rnd());
+    out.push(Math.round(par * (0.9 + 0.35 * Math.exp(0.45 + 0.42 * g) - 0.35)));
   }
-  return rows;
+  return out.sort((a, b) => a - b);
+}
+
+/** Level histogram of a crowd (LEVEL_HIST_BINS layout, trimmed), as the hourly rebuild stores it. */
+export function levelHistOfCrowd(times: readonly number[]): number[] {
+  const h = new Array<number>(LEVEL_HIST_BINS).fill(0);
+  for (const t of times) h[levelBin(t)]! += 1;
+  return trimHist(h);
+}
+
+/** Daily histogram of a crowd (150 bins of 0.2 s). */
+export function dailyHistOfCrowd(times: readonly number[]): number[] {
+  const h = new Array<number>(HIST_BINS).fill(0);
+  for (const t of times) h[histBin(t)]! += 1;
+  return h;
+}
+
+/** Ranking rows of a crowd's first `n` times; `meRank` (1-based, 0 = none) is my row. */
+export function crowdRows(times: readonly number[], n: number, mePidh: string, meRank: number, walls = true): BoardRow[] {
+  return times.slice(0, n).map((t120, i): BoardRow => [
+    i === meRank - 1 ? mePidh : hex(i + 3), SEEDS[i % SEEDS.length]! + i, t120, walls ? 2000 + ((i * 3137) % 18000) : -1, (i % 4) + 1, 1790000000000 - i * 1000,
+  ]);
+}
+
+const parOf = (id: string): number => BUNDLED_SUMMARY[id]?.parSub ?? 300;
+const wallsOf = (id: string): boolean => (BUNDLED_LEVELS.find((l) => l.id === id)?.physics.walls.length ?? 1) > 0;
+/** Today's mock daily: 5,012 players, par 402; my best (396) is 480th. */
+const DAILY_KEY = 'D:00022:1c0e77aa:s1';
+const DAILY_PAR = 402;
+function dailyCrowd(): number[] {
+  const c = mockCrowd(DAILY_PAR, 5012, 11);
+  // my best (396, see mockDaily) sits at 480
+  const shift = 396 - c[479]!;
+  return c.map((t) => Math.max(200, t + shift));
 }
 
 export function mockBoot(): BootResponse {
   const boards: BootResponse['boards'] = {};
   for (const l of BUNDLED_LEVELS) {
-    const par = BUNDLED_SUMMARY[l.id]?.parSub ?? 300;
-    boards[l.id] = { key: `L:${l.id}:00000000:s1`, n: 812, aiBeaten: 37, par, cutoff: Math.round(par * 1.8), top: mockRows(par, 10, 'zz'), wr: null };
+    const par = parOf(l.id);
+    const c = mockCrowd(par);
+    boards[l.id] = {
+      key: `L:${l.id}:00000000:s1`, n: c.length, aiBeaten: c.filter((t) => t < par).length, par, cutoff: c[99]!,
+      top: crowdRows(c, 10, 'a1b2c3d4e5f60718', 0, wallsOf(l.id)), wr: null, hist: levelHistOfCrowd(c),
+    };
   }
+  const dc = dailyCrowd();
   return {
     v: 1, sim: 1, now: 1790000000000, day: 22, lite: false, readOnly: false, boards,
-    daily: { key: 'D:00022:1c0e77aa:s1', n: 5012, cleared: 3811, aiBeaten: 120, par: 402, top: mockRows(402, 10, 'a1b2c3d4e5f60718', 4), hist: [], wr: null },
+    daily: { key: DAILY_KEY, n: dc.length, cleared: 3811, aiBeaten: dc.filter((t) => t < DAILY_PAR).length, par: DAILY_PAR, top: crowdRows(dc, 10, 'zz', 0), hist: dailyHistOfCrowd(dc), wr: null },
   };
 }
 
-export function mockBoard(key: string): BoardResponse {
+/** How the demo ranking answers: me = my row at 37; pin = I am not in the top 100 (pinned row); hang / fail: no answer. */
+export type BoardMock = 'me' | 'pin' | 'hang' | 'fail';
+
+export function mockBoard(key: string, variant: BoardMock = 'me'): BoardResponse {
+  if (key.startsWith('D:')) {
+    const dc = dailyCrowd();
+    return { key, n: dc.length, aiBeaten: dc.filter((t) => t < DAILY_PAR).length, par: DAILY_PAR, cutoff: dc[99]!, top: crowdRows(dc, 100, 'a1b2c3d4e5f60718', variant === 'me' ? 37 : 0), hist: trimHist(dailyHistOfCrowd(dc)), cleared: 3811 };
+  }
   const id = key.split(':')[1] ?? '2-2';
-  const par = BUNDLED_SUMMARY[id]?.parSub ?? 402;
-  const walls = (BUNDLED_LEVELS.find((l) => l.id === id)?.physics.walls.length ?? 1) > 0;
-  return { key, n: 812, aiBeaten: 37, par, cutoff: Math.round(par * 1.9), top: mockRows(par, 100, 'a1b2c3d4e5f60718', 37, walls) };
+  const par = parOf(id);
+  const c = mockCrowd(par);
+  return {
+    key, n: c.length, aiBeaten: c.filter((t) => t < par).length, par, cutoff: c[99]!,
+    top: crowdRows(c, 100, 'a1b2c3d4e5f60718', variant === 'me' ? 37 : 0, wallsOf(id)), hist: levelHistOfCrowd(c),
+  };
+}
+
+/**
+ * My progress on a demo level for a pinned-row scenario: est = best at 342 (counted), unsent = the same best, not
+ * counted yet (未送信), pending = a top-100 time the list does not have yet (反映待ち).
+ */
+export function pinSave(save: SaveV1, id: string, kind: 'est' | 'unsent' | 'pending'): void {
+  const c = mockCrowd(parOf(id));
+  const p = save.levels[id] ?? prog({ cleared: true, medal: 1 });
+  const best = kind === 'pending' ? c[36]! - 1 : c[341]! + 1;
+  save.levels[id] = { ...p, cleared: true, bestSub: best, sentSub: kind === 'unsent' ? undefined : best };
+  if (kind === 'unsent') delete save.levels[id]!.sentSub;
 }
 
 export function mockDaily(): DailyView {
@@ -160,7 +231,7 @@ export function mockDaily(): DailyView {
   const lv = { ...base, id: 'd:17', world: 0 as const, order: 17, name: { ja: 'いれる × 短い紐', en: 'Enter × Short string' }, tier: 3, template: 'enter', parSub: 402 } as unknown as LevelDef;
   return {
     dayIndex: 22, n: 23, level: lv, balls: ['fail', 'ok', 'crown', null, null], bestSub: 396, parSub: 402,
-    top: mockRows(402, 10, 'a1b2c3d4e5f60718', 4), rank: 480, pct: 9.6, streak: 5, shareText: '',
+    top: crowdRows(dailyCrowd(), 10, 'a1b2c3d4e5f60718', 0), rank: 480, pct: 9.6, streak: 5, shareText: '',
   };
 }
 
@@ -183,11 +254,40 @@ export function mockResults(id: string, variant: 'ok' | 'fail' | 'crown' | 'prac
   };
 }
 
-export function mockContext(save: SaveV1 | null, opts: { offline?: boolean } = {}): UiContext {
+/** Results-card rank rows (GAME_DESIGN.md §9.4), one per row of the table: ?screen=results&rank=<kind>. */
+export const RANK_KINDS = ['in', 'in-from', 'up', 'wr', 'wr-again', 'exact', 'local', 'est', 'est-up', 'pending', 'pending-range', 'queued', 'held', 'out', 'nonpb'] as const;
+export type RankKind = (typeof RANK_KINDS)[number];
+
+export function mockStanding(kind: RankKind, data: ResultsData): Standing {
+  const key = `L:${data.level.id}:00000000:s1`;
+  const n = 1065;
+  const base: Standing = { runKey: `${key}:${data.score}`, forPb: true, rank: null, n, pct: null, was: null, exact: false, candidate: true, phase: 'local', stamp: null };
+  const est = (rank: number, was: number | null = null): Standing => ({ ...base, rank, pct: levelPct(rank, n), was, candidate: false });
+  switch (kind) {
+    case 'in': return { ...base, rank: 37, exact: true, phase: 'confirmed', stamp: 'in' };
+    case 'in-from': return { ...base, rank: 37, was: 342, exact: true, phase: 'confirmed', stamp: 'in' };
+    case 'up': return { ...base, rank: 37, was: 49, exact: true, phase: 'confirmed', stamp: 'up' };
+    case 'wr': return { ...base, rank: 1, was: 4, exact: true, phase: 'confirmed', stamp: 'wr' };
+    case 'wr-again': return { ...base, rank: 1, was: 1, exact: true, phase: 'confirmed', stamp: 'wr' };
+    case 'exact': return { ...base, rank: 37, was: 37, exact: true, phase: 'confirmed' };
+    case 'local': return { ...base, rank: 37 };
+    case 'est': return est(342);
+    case 'est-up': return est(342, 400);
+    case 'pending': return { ...base, rank: 37, phase: 'pending' };
+    case 'pending-range': return { ...base, n: null, phase: 'pending' };
+    case 'queued': return { ...base, rank: 37, phase: 'queued' };
+    case 'held': return { ...base, rank: 37, phase: 'held' };
+    case 'out': return { ...base, n: null, candidate: false };
+    case 'nonpb': return { ...est(342), forPb: false };
+  }
+}
+
+export function mockContext(save: SaveV1 | null, opts: { offline?: boolean; board?: BoardMock } = {}): UiContext {
   return {
     store: save ? mockStore(save) : null,
     boot: () => (opts.offline ? null : mockBoot()),
-    fetchBoard: (key) => new Promise((res) => setTimeout(() => res(opts.offline ? null : mockBoard(key)), 30)),
+    fetchBoard: (key) => opts.board === 'hang' ? new Promise(() => undefined)
+      : new Promise((res) => setTimeout(() => res(opts.offline || opts.board === 'fail' ? null : mockBoard(key, opts.board)), 30)),
     daily: () => mockDaily(),
     briefing: (lv): GhostSummary | null => {
       const calm = ghostTrack(lv.id, 'calm') ?? ghostTrack(lv.id, 'ai');

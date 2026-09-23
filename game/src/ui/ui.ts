@@ -4,6 +4,7 @@ import { BEAM_Y, RAIL_Y } from '../sim/constants';
 import type { Layout } from '../render/renderer';
 import type { BadgeId, GameEvent, Medal } from '../core/bus';
 import type { BoardRow } from '../shared/api';
+import type { Standing } from '../shared/rank';
 import type { SaveV1 } from '../store/save';
 import levelsFile from '../data/levels.json';
 import summaryFile from '../data/ghosts_summary.json';
@@ -66,6 +67,7 @@ export interface ResultsData {
   medal: Medal; crown: boolean; nextMedalSub: number | null; gapMm: number; aiGapMm: number; peakF: number; aiPeakF: number;
   badges: BadgeId[]; failReason: string | null; rank: number | null; aiBeaten: number | null /* players who beat the AI here (online) */;
   replay: string | null /* null above 6 KB */; strobe: Float32Array /* bx,by every 0.1 s */;
+  standing?: Standing | null /* level success: the world rank row under the time (GAME_DESIGN.md §9.4); core replaces it as answers come */;
 }
 export interface DailyView {
   dayIndex: number; n: number; level: LevelDef; balls: ('ok' | 'gold' | 'crown' | 'fail' | null)[];

@@ -99,6 +99,7 @@ export function reconcileHash(p: LevelProgress, hash: string): boolean {
   p.hash = hash;
   p.bestSub = null;
   p.bestReplay = null;
+  delete p.sentSub;   // the histogram position belongs to the old board
   return true;
 }
 

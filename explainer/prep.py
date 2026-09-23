@@ -118,7 +118,7 @@ def homotopy():
 
 
 def localopt():
-    f = ROOT / "paper" / "cache" / "escape_fast_continuation.npz"  # shared with paper/make_figs.py
+    f = ROOT / "paper" / "research" / "cache" / "escape_fast_continuation.npz"  # shared with paper/research/make_figs.py
     if not f.exists():
         f.parent.mkdir(parents=True, exist_ok=True)
         p = plan(P, mission_scene(BASE, "escape"), PRESETS["fast"])

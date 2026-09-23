@@ -1081,7 +1081,7 @@ CREATE TABLE plays (
 
 - `top` は上位 10 件だけ。`cutoff` は 100 位のタイムで、100 件未満なら `null`。
 - `hist`（面）：面のヒストグラム（153 ビン、末尾の 0 を切り詰めたもの）。`boards.hist` が NULL か空の間は項目ごと省く。同じ行の列なので読む行は増えない。応答は 18 面で約 4.5 KB 増える（brotli で約 1 KB）。
-- `soft`：soft の安全弁（§7.8 の 9b）が入っている。次の段階のクライアントは、これを受け取ると急がない面の送信を送信待ちに残す（今のクライアントは読まない）。
+- `soft`：soft の安全弁（§7.8 の 9b）が入っている。クライアントは、これを受け取ると急がない面の送信（§7.9 の lazy）をその session の間は送信待ちに残す。
 
 **`POST /api/submit`**（本文 16 KB まで、1 リクエストに 4 件まで）
 
@@ -1119,7 +1119,7 @@ CREATE TABLE plays (
 
 - 面の答えの `rank` は、1〜100 なら `top` の中の正確な位置、101 以上ならヒストグラムからの推定（そのときは `pct` = 上位 x % も付ける）、null は不明。
   `was` はこのランの前の順位（100 位以内は正確、101 位以上は推定、数えられていなければ null）。`counted` はこのランの後の `plays.t120`（数えていなければ null）。
-  どれも項目が増えただけで、古いクライアントは読まない。
+  どれも項目が増えただけで、古いクライアントは読まない。今のクライアントは `counted` を `LevelProgress.sentSub` に写し（§7.9）、`rank`・`was` を結果カードの順位の行に使う。
 - `soft`：boot と同じ（§7.8 の 9b）。
 
 `status` の値：
@@ -1134,7 +1134,7 @@ CREATE TABLE plays (
 処理の手順は §7.8。
 
 **`GET /api/board/:key`**
-- トップ 100 をすべて返す（1 行読み取り）。`Cache-Control: public, max-age=60`。
+- トップ 100 をすべて返す（1 行読み取り）。`Cache-Control: public, max-age=60`。自分のランが `accepted` になった直後の 1 回だけ、クライアントは `cache: 'no-store'` で取り直す（§7.9）。
 - `hist`（面は 153 ビン、日替わりは 150 ビン。末尾の 0 を切り詰め、空なら省く）と、日替わりだけ `cleared` も付ける（同じ 1 行から）。
 
 **`GET /api/ghost/:key/:rank`**
@@ -1195,7 +1195,7 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
         100 位より下の AI 超えは replay を NULL にした runs 行を入れて `ai_beaten` を数え、`rank` はヒストグラムの推定（ないときは null）。
         `counted` のビンが変わるときは、同じ batch で `plays.t120` も動かす（soft の日も書く）。`n` は runs 行も `counted` もない人（初めて数える人）のときだけ 1 足す。
      5. それ以外（100 位の外）は `unranked`。ビンが変わり、soft の日でなければ `plays.t120` だけを動かす（1 行）。同じビンなら何も書かない。
-     - どの答えにも `was`（このランの前の順位）と `counted`（このランの後の `plays.t120`）を付ける。次の段階のクライアントは `counted` で、サーバーが何も書かない送信を省く（今のクライアントは読まず、§7.9 のとおりに送る）。
+     - どの答えにも `was`（このランの前の順位）と `counted`（このランの後の `plays.t120`）を付ける。クライアントは `counted` を覚えておき（`LevelProgress.sentSub`）、サーバーが何も書かない送信を省く（§7.9）。
      - 面の `prev` は見ない。
    - 日替わりは、自分の既存記録以下なら `notBetter`。
    - `boards` の行がなければ、手順 7 の batch の先頭で `INSERT OR IGNORE INTO boards(board, par) VALUES (?, ?)` を入れ、ver = 0 の行として扱う。
@@ -1234,8 +1234,8 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
    9b. **予算の安全弁（soft、2026-09-23 追加）**：今日の推定書き込みか推定リクエストが 50,000 を超えたら、なくてもよい書き込みを止める（lite の 80,000 より手前。lite なら soft でもある）。
    - 止めるもの：面の 100 位の外の `plays.t120`（初めての配置と、ビンの移動）、`notBetter` での位置の直し、日替わりと dup の人口の行。
    - 続けるもの：トップ 100 入りと初めての AI 超え（その `plays.t120` も含む）、日替わりのランキングの書き込み、毎時の再構築。
-   - boot と submit の応答に `soft: true` を付ける。次の段階のクライアントは、これを受け取ると急がない面の送信（100 位の外の位置の移動）を送信待ちに残す
-     （今のクライアントは soft を読まず、§7.9 のとおりに送る。サーバーはその送信の任意の書き込みをしないだけ）。
+   - boot と submit の応答に `soft: true` を付ける。クライアントは、これを受け取ると急がない面の送信（100 位の外の初めての配置と位置の移動、§7.9 の lazy）を
+     その session の間は送信待ちに残す（それでも届いた送信には、サーバーは任意の書き込みをしないだけ）。
    - 1 IP あたりの攻撃のコストは変わらない（新しい秘密 1 つにつき 1 面 1 行、つまり 1 分に 24 行まで）。soft の後は 0 行になる。
    - soft の後に初めて送った人は、その日は `plays` に入らない（面は、次に soft でない日の送信で数えられる。日替わりの人数は `boards.n` が数えている）。
 10. **予算の安全弁（lite）**：今日の推定書き込みが 80,000 行を超えるか、推定リクエストが 80,000 を超えたら次のようにする（cron の削除で書く行も推定書き込みに足す）。
@@ -1247,9 +1247,27 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
 - Worker のモジュールスコープ（`worker/warmup.ts`）で、同梱の 5 秒のボットリプレイを 3 回シミュレーションして JIT を温めておく。
   これは起動時間（無料枠の上限 1 s）に数えられ、リクエストの CPU には数えられない。温めにかかった時間を 1 回だけ `console.log` に出し、M12 で 50 ms 未満を確認する。
 
-#### 7.9 クライアントの送信規律（`src/net/outbox.ts`）
+#### 7.9 クライアントの送信規律（`src/net/outbox.ts`、`src/net/api.ts`）
 
-- 面の PB は、boot の `cutoff` より速いか、ランキングが 100 件未満のときだけ送信待ちに入れる。boot 前やオフラインなら無条件に入れる。
+- **面のランの分類**（2026-09-23、段階 2。`src/net/api.ts` の `levelClass`）：boot の面（キーが一致するもの）に照らして、面のランを 4 つに分ける。
+  - `rankIn`：boot の `cutoff` より速いか、ランキングが 100 件未満（トップ 100 に入りうる）。
+  - `urgent`：パー未満で、その面の AI 超えをまだ送っていない（`aiBeatenSent`。「AI に勝った人数」に数えるため）。
+  - `lazy`：サーバーがまだ数えていない（`LevelProgress.sentSub` がない）か、`sentSub` より速くて面のヒストグラムのビンが変わる（位置の移動。§7.7「面のヒストグラム」）。
+  - なし：サーバーが何も書かない（`sentSub` と同じビンのランや、`sentSub` 以上のラン）。送信待ちに入れない。すでに入っているものも、送る前に捨てる（lite と soft の日は捨てない）。
+  - boot 前・オフライン・キーが違う面では分類できないので、無条件に入れる。lite は分類に使わない（lite の日は面の送信をすべて残す。トップ 100 に入りうるランも消えない）。
+- **`sentSub`**：面の答えの `counted`（サーバーの `plays.t120`）を写す。数値なら更新、null なら消す、項目がなければ（古いサーバー）触らない。面の hash が変わったら消す。
+  `playSent` も今までどおり立てるが、送るかどうかの判断には使わない。
+- **ランクイン送信**：トップ 100 に入りうる PB（結果カードの `standing.candidate`）は、成功の瞬間（結果カードの 0.75 秒前）に `flush('rankIn', { first: 面のキー })` で送る。
+  120 秒の間隔の例外で、そのランを batch の先頭に置く（1 件目は CPU の予算を超えても必ず検証される）。
+  ランクイン送信どうしは 15 秒（`RANKIN_MIN_INTERVAL_MS`）あける。間隔の中の呼び出しは捨てずに、タイマー 1 つで間隔の終わりへずらす。
+  新しい呼び出しが先頭の面を置き換え、待っている呼び出しはすべて同じ答えを受け取る（ほかの候補も同じ batch に乗る）。
+  その面がすでに送信中なら、その送信の答えを返す（送信中に速いランが入ったら、その送信の後に続けて送る）。`pagehide` はずらしたランクイン送信を引き取り、そのランを先頭にして送る。
+  何も運べない（オフライン、429 の後の待ち）ときは null を返し、結果カードは「送信待ち」になる。lite と READ_ONLY の日はランクイン送信をせず（null）、
+  カードは「今日は反映されません」になる。
+- **急がない送信（lazy）**：この session で送信待ちに入れた `lazy` のランは、メニューと面選択では送らない（そのときは 120 秒の間隔も使わない）。
+  4 件そろって 1 回の送信が埋まるときと、`pagehide` では送る。前の session から残っているランは lazy と見なさず、最初の機会に送る
+  （答えを失った `pagehide` の送信が、session のたびに繰り返されないように）。batch の中では `first`、日替わり、面、lazy の面の順に並べる。
+- **soft**（boot か submit の応答の `soft: true`。その session の間は続く）：lazy のランは送信待ちに残す（`first` の面は残さない）。
 - 日替わりは 1 日 1 回送る。5 球を使い切ったとき、または `pagehide` で 1 球以上使っていれば `fetch(..., {keepalive:true})` で送る。
   途中で送ったあとにその日の記録が良くなった場合だけ、もう 1 回送る。受理された t120 を `SaveV1.daily.lastSentT120` に残し、次の送信の `prev` にする。
   5 球目まで送ったあと（`submitted: 'final'`）も、**その日の記録が `lastSentT120` より本当に速いものだけ**は送る（v1.1 R8 の安全網。
@@ -1261,12 +1279,19 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
 - **`pagehide` で 5 球目がまだ飛んでいるとき**は、その球を報告に入れない（tries 4 /`XXXX-` のまま送り、その日は `partial` のまま）。入れてしまうとサーバーがその日を「完了」と見なし、
   球の本当の結果が二度と送れなくなるため。1 球目の途中で隠れたときは、入れなくても tries 1 になるので、プレイヤーはちゃんと数に入る。
   その代わり、タブが本当に殺されるとその球は永久に報告されない（プレイヤー自体は数に入っている）。
-- 面の PB がトップ 100 に入らなくても、パー未満（AI 超え）で、その面で初めての AI 超えなら送信待ちに入れる（「AI に勝った人数」に数えるため）。
-- **その面の最初のクリア**（`LevelProgress.playSent` が立っていない）は、PB かどうか・`cutoff` に関係なく送信待ちに入れる（プレイ人口 `plays` に数えるため）。`accepted` / `notBetter` / `unranked` が返ったら `playSent` を立て、以後は上の規則に戻る。この仕組みより前に遊んでいた人は、次にその面をクリアしたときに 1 回だけ送る。面の hash が変わったら（新しいボード）`playSent` を消す。
+- **自己ベストでないクリア**：サーバーがまだその人を数えていない（`sentSub` がない）ときは、今回の遅いランではなく、保存してある自己ベスト（その replay・時間・replay ヘッダーの device）を
+  送信待ちに入れる（遅いランを送ると、その人はまず遅い時間で数えられてしまう）。
+- **boot での整理（1 session に 1 回）**：最初の boot の後、自己ベストが今の面のキーのもので、`sentSub` がない・`sentSub` とビンが違う・AI 超えを送っていない面について、
+  その自己ベストを送信待ちに入れる（送るのは次の flush で、たいていは lazy なので `pagehide`。lite・soft・READ_ONLY の日はしない。
+  送信待ちを 18 件より増やさない：21 件目で一番古いランが押し出されるので、残りは次の session に回す）。
 - 1 回の送信は、4 件・本文 16 KB・`Σ nTicks·2 ≤ 5400`（1 件目は例外）のどれかに達するまでまとめる。
 - 送信待ちはランキングごとに最良の 1 件だけを持つ（20 件まで）。
-- 送るタイミングは、結果画面からメニューへ移るとき・面選択を開いたとき・`pagehide` のとき。ただし 120 秒に 1 回まで。
-- `deferred` は残して次の機会に送る。`rejected` / `unranked` / `notBetter` は捨てる。
+- 送るタイミングは、成功の瞬間（ランクイン送信）・結果画面からメニューへ移るとき・面選択を開いたとき・`pagehide` のとき。ランクイン送信以外は 120 秒に 1 回まで
+  （日替わりの 5 球目と、日替わりかランクインのランが待っている `pagehide` は例外）。
+- `deferred`（と面の `rejected: lite`）は残して次の機会に送る。`accepted` / `unranked` / `notBetter` / ほかの `rejected` は捨てる。
+- **面の答えの後**：boot の面を書き換える（`cutoff`、`n`、ヒストグラムの自分のビンを `sentSub` の古いビンから新しいビンへ。sessionStorage の boot の写しも同じ `at` で書き直す）。
+  `accepted` の後は、その面の `/api/board/<key>` を 1 回だけ、手元のキャッシュも HTTP キャッシュ（max-age 60）も使わずに取る（`cache: 'no-store'`）。
+  答えは `onResults()` の購読者（core）にも渡り、結果カードの順位の行（§9.4）がそれで確定する。判子の直後にランキングを開いても、この取り直しで自分の新しい行が出る。
 
 #### 7.10 無料枠の予算（バズった日：プレイヤー 2 万人、セッション 3 万）
 
@@ -1402,6 +1427,8 @@ AI差 +0.92秒｜ギリ 6mm｜上位 8%｜連続 5日
   - 5 マスは、王冠 U+1F451、金以内の成功 U+1F7E9（緑の四角）、それ以外の成功 U+1F7E8（黄）、クラッシュ・途中リトライ・タイムアップ U+1F7E5（赤）、未使用 U+2B1C（白）。
   - 上位 n% は日替わりのヒストグラムから求める：`n = 100 × (自分より速いビンの人数 + 自分のビンの人数 / 2) / cleared`、小数 1 桁（1% 未満は「上位 1%」と出す）。
     サーバーは submit の応答の `pct` に同じ式の値を入れ、クライアントは応答がなければ boot の `hist` で計算する。オフラインならその項目を省く。
+- **面の「上位 x %」**（結果カードの順位の行とランキングの「あなた」の行、§9.4）：101 位以上のときだけ出し、順位 / n を小数 1 桁に**切り上げ**た値（`levelPct`、§7.7）。
+  書式は日替わりと同じ（`.0` は省き、1% 未満は「上位 1%」）。推定の順位なので、面の共有文には入れない。
 - **OGP**：静的な `public/og.png`（1200×630）を 1 枚だけ使う。`tools/og.mjs` がタイトル画面を Playwright で撮って作り、リポジトリに入れる。
   これは §9.1 の「画像ファイルを使わない」の唯一の例外で、ゲームの中では読み込まない（リンクのプレビュー専用。単一 HTML には入れない）。
   - `index.html` の `og:image` と `og:url` の絶対 URL は、ビルド時の環境変数 `VITE_PUBLIC_ORIGIN` から入れる（未設定なら省く）。
@@ -1710,8 +1737,37 @@ LEVEL_SELECT ↔ DAILY_HUB | SETTINGS | ABOUT | NOTES（理科ノート）
 - **結果カード**に出すもの：タイム（3 桁）、PB 差、AI 差、WR 差（オンライン時）、メダル（とアニメーション）、次のメダルまでの差、最小すき間（あなたと AI）、ピーク |F|（あなたと AI）、バッジ。
   ボタンは「もう一回」（主）、「次へ」、「AIの手本」、「ランキング」、「シェア」。
 - **失敗版の結果カード**には原因を 1 行だけ書く。例：「揺れ 5.2° → 3°未満で成功」「台車の速さ 0.12 m/s → 0.05 未満」「ボールがゾーンの外」。
+- **結果カードの世界順位の行**（2026-09-23、段階 2。`src/ui/results.ts`、`ResultsData.standing`）：面の成功だけ、タイムのすぐ下に 1 行出す
+  （日替わり・練習・補助つき・boot のない状態では出さない）。数字の出し方は §7.7「約」の規則のとおり。
+  - サーバーが確かめた 100 位以内だけ「約」なしで「世界 37位 ・1,065人中」。101 位以上と手元の推定はすべて「世界 約342位 ・1,065人中・上位32.2%」
+    （前の順位より上がったら小さな札で「↑約58」）。
+  - 送信中は「約37位の見込み・確認中…」、送れていないときは「約37位・送信待ち」、lite・READ_ONLY の日は「約37位相当・今日は反映されません」
+    （どれも手元の推定なので「約」を付ける）、ヒストグラムがなく 100 位より遅いときは「100位圏外」。自己ベストでないクリアは、自己ベストの順位を薄く「自己ベスト 世界 約342位 …」と出す。
+  - 数えられたランの答えに `rank` がないとき（100 位の外で、ヒストグラムがまだ使えない）は、`accepted`・`notBetter`・`unranked` のどれでも、
+    手元の 100 位以内の見込みを捨てて「100位圏外」にする（サーバーは 100 位以内のランには必ず順位を返すので）。
+  - **ランクインの判子**：答えが `accepted` で 100 位以内のときだけ、行が判子になる（「ランクイン！」、「ランクアップ！」と「↑12」の札、「世界一！」、
+    1 位のまま縮めたときは「世界記録更新！」）。「ピタッ」と同じ朱の二重枠（世界一はピンクの `--wr` の枠に、読める濃さの `--wr-lip` の文字）の角丸の四角に
+    言葉と順位を入れ、−5° 傾ける。カードが開いて 0.9 秒後（タイムのカウントアップとメダルの後）、答えがそれより遅ければ届いたときに、1.9 倍から 0.45 秒で押す。
+    「1,065人中」などの添え書きはその 0.15 秒後に、「↑n」の札は 0.35 秒後に出る（判子より先に添え書きだけが浮かないように）。
+    背の低いカード（横持ちのスマホ）で行が下に隠れているときは、押す直前にカードをその行まで送る。
+    1 枚のカードで 1 回だけ動く（回転やランキングから戻って描き直すと最後の形で出る）。動きを減らす設定では 0.3 秒のフェード。
+    読み上げには「ランクアップ！ 世界37位 12位アップ」のように上がった数も添える（「↑約58」の札は「約58位アップ」と読む）。
+  - 初めての王冠の「AIが負けた理由」のカードは、判子が押し終わってから開く（ランクインの答えがまだ来ていなければ、3.5 秒まで待つ）。
+  - core は答えが来ると `standing` を差し替え、UI は HUD のフレーム（6 フレームごと）でそれを見て、この行だけを描き直す。
+- **ランキング画面**（`src/ui/screens/board.ts`）：
+  - boot にその面（キーが一致するもの）か今日の日替わりがあれば、上位 10 件と 6 行の仮の行ですぐ描き、`/api/board` の答えで全体を置き換える。
+    答えが取れなければ上位 10 件のまま、下に「上位10位まで表示中」と添える（boot もなければ今までどおりオフラインの表示）。
+  - 自分の行は左の赤い帯と 2 px の墨の枠で目立たせる。画面を開いて最初に出たとき 1 回だけ金色から光らせ（動きを減らす設定ではしない）、真ん中までスクロールする。
+    光っている途中で `/api/board` の答えが表を置き換えても、新しい行が続きから光る。
+  - 自分が表にいなくて自己ベストがあるときは、「あなた」の行を画面の下端に貼り付ける（sticky）。表が 100 件で「あなた」が 100 位より下（「約342位」か「100位圏外」）なら、
+    その前に「⋮」の行を置く（表の中に入るはずの「反映待ち」「未送信」には置かない）。表と「あなた」の行はいつも同じデータから作る。
+  - 人数は結果カードと同じく 3 桁ごとに区切る（「参加 1,065人」）。
+    - 面（自己ベストが今の面のハッシュのもの）：100 位より速ければ「反映待ち」（boot の上位 10 件だけのときは、その下の見込み「約37位」）。
+      遅ければヒストグラムから「約342位」と「上位32.2%」、ヒストグラムがなければ「100位圏外」。サーバーがその時間でまだ数えていなければ（`sentSub` がないかビンが違う）「未送信」を付ける。
+    - 日替わり：最後の送信の答えの順位、なければヒストグラムの推定。101 位以上は「約」付き。表に入るはずの時間なら「反映待ち」。
 - **面選択**：ワールドごとの横ページで、面のタイルにメダル、王冠、AI のタイム、PB を出す。上部に「今日の5球」のカードと「人類 vs AI x/18」と称号を置く。
-- **今日の5球の画面**：5 球のラック、今日の面の縮図、トップ 10、あなたの順位と上位 n%、共有ボタン。
+- **今日の5球の画面**：5 球のラック、今日の面の縮図、トップ 10、あなたの順位と上位 n%、共有ボタン。順位が 101 位以上なら「約480位」（ヒストグラムからの推定なので）。
+  「上位9.6%」は狭い画面でも途中で切らず、まとめて次の行へ送る。
 - **リトライは 100 ms 未満**：シーンを作り直さず、状態を戻すだけ。
 
 ### 9.5 ジュース表（イベント → 見た目・音・振動）
@@ -2050,8 +2106,10 @@ export type Screen =
 export interface GhostSummary { parSub: number; planT: number; peakF: number; minGapMm: number; pumps: number; calmPath: Float32Array }
 export interface ResultsData { level: LevelDef; ok: boolean; score: number | null; parSub: number; pbSub: number | null; wrSub: number | null;
   medal: Medal; crown: boolean; nextMedalSub: number | null; gapMm: number; aiGapMm: number; peakF: number; aiPeakF: number;
-  badges: BadgeId[]; failReason: string | null; rank: number | null; aiBeaten: number | null /* この面で AI に勝った人数（オンライン時） */;
-  replay: string | null /* 6 KB を超えたら null */; strobe: Float32Array /* 0.1 s ごとの bx,by */ }
+  badges: BadgeId[]; failReason: string | null; rank: number | null /* 使わない（core はいつも null。世界順位は standing） */; aiBeaten: number | null /* この面で AI に勝った人数（オンライン時） */;
+  replay: string | null /* 6 KB を超えたら null */; strobe: Float32Array /* 0.1 s ごとの bx,by */;
+  standing?: Standing | null /* 面の成功だけ：タイムの下の世界順位の行（src/shared/rank.ts、§9.4）。答えが来ると core が差し替え、
+                                UI は結果カードの間 hud() のたびに見て、変わったらその行だけ描き直す。同じ ResultsData ではランクインの判子は 1 回だけ動く */ }
 export interface DailyView { dayIndex: number; n: number; level: LevelDef; balls: ('ok' | 'gold' | 'crown' | 'fail' | null)[];
   bestSub: number | null; parSub: number; top: BoardRow[] | null; rank: number | null; pct: number | null; streak: number; shareText: string }
 export type BoardRow = [pidh: string, nameSeed: number, t120: number, gapUm: number, device: number, created: number];
@@ -2076,7 +2134,8 @@ export interface UI {
 export interface LevelProgress { hash: string; cleared: boolean; skipped: boolean; attempts: number; fails: number;
   consecutiveCrashes: number; bestSub: number | null; bestReplay: string | null; medal: Medal; crown: boolean; badges: BadgeId[]; hintsSeen: number; briefed: boolean;
   demoShown: boolean; aiBeatenSent: boolean;     // 自動の手本を出したか / AI 超えを送信済みか（§7.9）
-  playSent?: boolean }                         // 最初のクリアを送信済みか（§7.9、プレイ人口）
+  playSent?: boolean;                          // 最初のクリアを送信済みか（§7.9、プレイ人口）
+  sentSub?: number }                           // サーバーがその人を数えている面のヒストグラムの時間（答えの counted、§7.9）。なし = 数えられていないか不明
 export interface SaveV1 {
   v: 1;
   id: { secret: string; pidh: string; nameSeed: number };
@@ -2102,11 +2161,13 @@ export interface PendingRun { board: string; level: string; replay: string | nul
 export interface Api {
   readonly enabled: boolean; readonly lite: boolean;
   boot(dayIndex: number): Promise<BootResponse | null>;       // 失敗なら null（オフライン扱い）
-  flush(reason: 'menu' | 'select' | 'pagehide' | 'dailyDone'): Promise<SubmitResponse | null>;
+  flush(reason: 'menu' | 'select' | 'pagehide' | 'dailyDone' | 'rankIn', opts?: { first?: string }): Promise<SubmitResponse | null>;
   enqueue(r: PendingRun): void;
   ghost(key: string, rank: number): Promise<GhostResponse | null>;
   board(key: string): Promise<BoardResponse | null>;
 }
+// 実装（NetApi）はさらに lastBoot()・readOnly・booting・soft と、submit の答えの購読
+// onResults(cb: (sent: readonly PendingRun[], results: readonly SubmitResult[]) => void): () => void を持つ（core が duck typing で使う）。
 ```
 
 `BootResponse / SubmitRequest / SubmitResponse / GhostResponse / BoardResponse` は、§7.7 の JSON をそのまま型にして `src/shared/api.ts`（O9）に置く。

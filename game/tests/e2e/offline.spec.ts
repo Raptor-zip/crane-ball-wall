@@ -46,6 +46,8 @@ test('/api/* blocked: playable, 「オフライン」 chip', async ({ page, cont
   const card = page.locator('section.res');
   await expect(card).toBeVisible();
   await expect(card.getByRole('button', { name: /ランキング/ })).toHaveCount(0);
+  // no world rank without a boot (§9.4): no row, never a made-up number
+  await expect(card.locator('.res-rank')).toHaveCount(0);
   await expect(card.getByRole('button', { name: /シェア/ })).toBeVisible();
   expect((await readSave(page))!.levels['1-1']!.bestSub).toBe(bot.score);
   await page.waitForTimeout(900);
