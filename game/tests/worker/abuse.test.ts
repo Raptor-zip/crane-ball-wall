@@ -371,7 +371,8 @@ describe('worker-6: a committed write batch whose answer was lost', () => {
       prepare: (sql: string) => real.prepare(sql),
       batch: async (stmts: D1PreparedStatement[]) => {
         const r = await real.batch(stmts);
-        if (lost === 0 && r.some((x) => (x.meta?.changes ?? 0) > 0)) {
+        // the write batch (boards INSERT / UPDATE first); the read batch writes only its trailing plays row
+        if (lost === 0 && r.slice(0, 2).some((x) => (x.meta?.changes ?? 0) > 0)) {
           lost++;
           throw new Error('D1_ERROR: Network connection lost.');
         }

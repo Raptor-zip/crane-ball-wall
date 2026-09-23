@@ -7,6 +7,7 @@
 //   4  re-simulation (mismatch)                               verify.ts simulateRun
 //   5  gap_um / peak_cn                                       verify.ts simulateRun
 //   6  read boards row + own runs row, rank in `top`, dups    decide(), dup.ts
+//      (and INSERT OR IGNORE the plays row: the play population, whatever the rank)
 //   7  one DB.batch: UPDATE boards (optimistic lock, per-request tok) + EXISTS-guarded runs writes
 //   8  one retry on a ver conflict, then `deferred`
 //   9  isolate counters flushed every 50 rows / 100 requests
@@ -373,6 +374,7 @@ function estimateRank(hist: readonly number[], t: number): number {
 
 const SQL_READ_BOARD = 'SELECT ver, top, n, cleared, ai_beaten, hist FROM boards WHERE board = ?';
 const SQL_READ_OWN = 'SELECT t120 FROM runs WHERE board = ? AND pidh = ?';
+const SQL_PLAY = 'INSERT OR IGNORE INTO plays (board, pidh, created) VALUES (?, ?, ?)';
 const SQL_NEW_BOARD = 'INSERT OR IGNORE INTO boards (board, par) VALUES (?, ?)';
 const SQL_UPDATE_BOARD =
   'UPDATE boards SET ver = ver + 1, tok = ?, top = ?, n = ?, cleared = ?, ai_beaten = ?, hist = ?, wr = COALESCE(?, wr), par = ?, updated = ? ' +
@@ -400,10 +402,12 @@ async function place(c: RunCtx, target: Target, run: SubmitRun, cand: Candidate)
   const tries = run.tries ?? 1;
   const balls = run.balls ?? null;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const [bRes, oRes] = await db.batch([
-      db.prepare(SQL_READ_BOARD).bind(key),
-      db.prepare(SQL_READ_OWN).bind(key, c.pidh),
-    ]);
+    const reads = [db.prepare(SQL_READ_BOARD).bind(key), db.prepare(SQL_READ_OWN).bind(key, c.pidh)];
+    // The play population counts every verified run once per board and player, ranked or not (first attempt only).
+    if (attempt === 0) reads.push(db.prepare(SQL_PLAY).bind(key, c.pidh, c.now));
+    const readRes = await db.batch(reads);
+    const [bRes, oRes] = readRes;
+    if (attempt === 0) c.rows += rowsWritten(readRes.slice(2));
     const b = (bRes!.results[0] ?? null) as { ver: number; top: string; n: number; cleared: number; ai_beaten: number; hist: string | null } | null;
     const own = (oRes!.results[0] ?? null) as { t120: number | null } | null;
     const state: BoardState = b

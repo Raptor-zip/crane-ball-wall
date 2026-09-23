@@ -11,7 +11,7 @@ import { setParOverrideForTest } from '../../worker/verify';
 import { runFingerprint } from '../../worker/dup';
 import {
   NOW, awayFromMinuteBoundary, boardRow, encode, fakeRows, freshIp, level, levelKey, pidhOf, proxyDb, request, resetAll,
-  runRow, seedBoard, submit, successBot, wallBots, type BotRun,
+  playRow, runRow, seedBoard, submit, successBot, wallBots, type BotRun,
 } from './helpers';
 
 const P11 = level('1-1').physics;
@@ -217,16 +217,37 @@ describe('rejected', () => {
 });
 
 describe('top 100', () => {
-  it('unranked below the 100th without beating the AI: no writes at all', async () => {
+  it('unranked below the 100th without beating the AI: only the plays row is written', async () => {
     setParOverrideForTest({ '1-1': 100 });
     await seedBoard(KEY, fakeRows(100, 10));
     const p = proxyDb(env.DB);
     const res = await submit(request(1, [run11(b().fast)]), { env: { DB: p.db } });
     expect((await results(res))[0]).toEqual({ board: KEY, status: 'unranked', rank: null, n: 100, cutoff: 109, aiBeaten: false });
-    expect(p.sqls.every((s) => s.startsWith('SELECT'))).toBe(true);
+    expect(p.sqls.every((s) => s.startsWith('SELECT') || s.startsWith('INSERT OR IGNORE INTO plays'))).toBe(true);
     expect((await boardRow(KEY))!.ver).toBe(0);
     expect(await runRow(KEY, pidhOf(1))).toBeNull();
-    expect(pendingForTest().wr).toBe(0);
+    expect(await playRow(KEY, pidhOf(1))).not.toBeNull();
+    expect(pendingForTest().wr).toBe(1);
+  });
+
+  it('plays: one row per board and player, kept from the first verified run', async () => {
+    setParOverrideForTest({ '1-1': 100 });
+    await seedBoard(KEY, fakeRows(100, 10));
+    const first = await playRow(KEY, pidhOf(1));
+    expect(first).toBeNull();
+    await one(1, run11(b().fast));
+    const row = (await playRow(KEY, pidhOf(1)))!;
+    await one(1, run11(b().fast));
+    expect(await playRow(KEY, pidhOf(1))).toEqual(row);
+    await one(2, run11(b().fast));
+    const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM plays WHERE board = ?').bind(KEY).first<{ n: number }>();
+    expect(n!.n).toBe(2);
+  });
+
+  it('plays: a run rejected by the re-simulation is not counted', async () => {
+    const bad = { ...run11(b().fast), t120: b().fast.t120 + 1 };
+    expect((await one(1, bad)).status).toBe('rejected');
+    expect(await playRow(KEY, pidhOf(1))).toBeNull();
   });
 
   it('accepts a first AI-beaten run below the 100th with a NULL replay; a second one is unranked', async () => {

@@ -984,6 +984,15 @@ CREATE TABLE counters (
   k TEXT PRIMARY KEY,    -- 'req:<JST日付>' / 'wr:<JST日付>'
   n INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
+
+-- プレイ人口（2026-09-23 追加、migrations/0002_plays.sql）。検証を通ったランを、順位に関係なく「面 × 端末」で 1 行だけ残す。
+-- runs はトップ 100 と AI 超えしか残らないので、遊んだ人数には使えない。INSERT OR IGNORE なので、既知の組は書き込み 0 行。
+CREATE TABLE plays (
+  board   TEXT    NOT NULL,
+  pidh    TEXT    NOT NULL,
+  created INTEGER NOT NULL,     -- 最初に検証を通ったランの時刻（ms）
+  PRIMARY KEY (board, pidh)
+) WITHOUT ROWID;
 ```
 
 副次インデックスは作らない。書き込み 1 行が行書き込み 1 回に対応する。
@@ -1083,7 +1092,7 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
 1. **CPU 予算**：そのリクエストで検証したサブステップの合計を数える。**1 件目は長さによらず必ず検証する**（1 件の上限は `RANKED_MAX_TICKS` の 5400 サブステップ）。
    2 件目以降は、合計が 5400 を超えるものを `deferred` にする。アイソレートの最初のリクエスト（温めの直後）では 2 件目以降をすべて `deferred` にする。
    （v1.0 の「最初のリクエストは 2400 まで」は、アクセスの少ない時間帯に 20 秒を超えるランが毎回 deferred になって永久に受理されないので改めた。）
-   **D1 の文の予算**：そのリクエストで発行した文の数（batch の中の 1 文ずつ）を数え、次の件を始める前に「使った文の数 + 12（1 件の最大：読み 2 + 書き 4、競合のやり直しでもう 6）+ 1（counters の書き込み）」が 49 を超えるなら、残りを `deferred` にする。
+   **D1 の文の予算**：そのリクエストで発行した文の数（batch の中の 1 文ずつ）を数え、次の件を始める前に「使った文の数 + 13（1 件の最大：読み 2 + plays 1 + 書き 4、競合のやり直しでもう 6）+ 1（counters の書き込み）」が 49 を超えるなら、残りを `deferred` にする。
 2. `board` キーを解析し、同梱の `levels.json` / `daily_pool.json` から面を引く（面のパーは同梱の `ghosts_summary.json`、日替わりのパーは `daily_pool.json` の `parSub` から取る）。
    - `levelHash` と `sim` が一致しなければ `stale`。
    - 日替わりで、今日でも昨日（00:00〜02:00 JST の猶予）でもなければ `badBoard`。
@@ -1150,6 +1159,7 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
   球の本当の結果が二度と送れなくなるため。1 球目の途中で隠れたときは、入れなくても tries 1 になるので、プレイヤーはちゃんと数に入る。
   その代わり、タブが本当に殺されるとその球は永久に報告されない（プレイヤー自体は数に入っている）。
 - 面の PB がトップ 100 に入らなくても、パー未満（AI 超え）で、その面で初めての AI 超えなら送信待ちに入れる（「AI に勝った人数」に数えるため）。
+- **その面の最初のクリア**（`LevelProgress.playSent` が立っていない）は、PB かどうか・`cutoff` に関係なく送信待ちに入れる（プレイ人口 `plays` に数えるため）。`accepted` / `notBetter` / `unranked` が返ったら `playSent` を立て、以後は上の規則に戻る。この仕組みより前に遊んでいた人は、次にその面をクリアしたときに 1 回だけ送る。面の hash が変わったら（新しいボード）`playSent` を消す。
 - 1 回の送信は、4 件・本文 16 KB・`Σ nTicks·2 ≤ 5400`（1 件目は例外）のどれかに達するまでまとめる。
 - 送信待ちはランキングごとに最良の 1 件だけを持つ（20 件まで）。
 - 送るタイミングは、結果画面からメニューへ移るとき・面選択を開いたとき・`pagehide` のとき。ただし 120 秒に 1 回まで。
@@ -1929,7 +1939,8 @@ export interface UI {
 ```ts
 export interface LevelProgress { hash: string; cleared: boolean; skipped: boolean; attempts: number; fails: number;
   consecutiveCrashes: number; bestSub: number | null; bestReplay: string | null; medal: Medal; crown: boolean; badges: BadgeId[]; hintsSeen: number; briefed: boolean;
-  demoShown: boolean; aiBeatenSent: boolean }   // 自動の手本を出したか / AI 超えを送信済みか（§7.9）
+  demoShown: boolean; aiBeatenSent: boolean;     // 自動の手本を出したか / AI 超えを送信済みか（§7.9）
+  playSent?: boolean }                         // 最初のクリアを送信済みか（§7.9、プレイ人口）
 export interface SaveV1 {
   v: 1;
   id: { secret: string; pidh: string; nameSeed: number };

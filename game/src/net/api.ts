@@ -4,7 +4,7 @@
 // 5xx / non-JSON answer (e.g. Cloudflare's 1027 page) / network error silently switches to offline;
 // retries then wait 1 -> 2 -> 4 -> 8 -> 16 -> 30 (-> 30 ...) minutes. Nothing here ever throws or logs.
 //
-// Sending discipline (§7.9): enqueue() filters (cutoff / first AI-beaten / daily once-a-day) and keeps the
+// Sending discipline (§7.9): enqueue() filters (first clear / cutoff / first AI-beaten / daily once-a-day) and keeps the
 // best run per board in SaveV1.outbox; flush() sends one batch (4 runs / 16 KB / 5400 substeps) at most
 // every 120 s ('dailyDone', and 'pagehide' with a daily run waiting, are exempt), always with keepalive.
 // deferred (and rejected:lite) stay queued; accepted / unranked / notBetter / rejected are dropped.
@@ -328,6 +328,7 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
   }
 
   function levelWorthSending(r: PendingRun, d: SaveV1): boolean {
+    if (d.levels[r.level]?.playSent !== true) return true;   // first clear: counts the player (plays), whatever the rank
     const b = online() ? bootBoardFor(r) : null;
     if (!b || r.t120 === null) return true;                 // before boot / offline / unknown board: unconditionally
     if (b.cutoff === null || r.t120 < b.cutoff) return true; // fewer than 100 rows, or faster than the 100th
@@ -468,6 +469,7 @@ export function createApi(store: Store, opts: ApiOptions = {}): NetApi {
           const par = bootBoardFor(run)?.par;
           const lp = d.levels[run.level];
           if (lp && (r.aiBeaten === true || (par !== undefined && run.t120 < par))) lp.aiBeatenSent = true;
+          if (lp) lp.playSent = true;
         }
       }
     });

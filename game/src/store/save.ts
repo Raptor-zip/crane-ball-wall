@@ -23,6 +23,8 @@ export interface LevelProgress {
   hash: string; cleared: boolean; skipped: boolean; attempts: number; fails: number;
   consecutiveCrashes: number; bestSub: number | null; bestReplay: string | null; medal: Medal; crown: boolean; badges: BadgeId[]; hintsSeen: number; briefed: boolean;
   demoShown: boolean; aiBeatenSent: boolean;
+  /** A clear of this level reached the server once (§7.9: counts the player in `plays`); absent = not yet. */
+  playSent?: boolean;
 }
 export interface SaveV1 {
   v: 1;
@@ -170,6 +172,7 @@ function parseLevel(x: unknown): LevelProgress | null {
   p.briefed = bool(x.briefed, false);
   p.demoShown = bool(x.demoShown, false);
   p.aiBeatenSent = bool(x.aiBeatenSent, false);
+  if (x.playSent === true) p.playSent = true;
   return p;
 }
 
@@ -292,6 +295,7 @@ export function reconcileLevelHashes(d: SaveV1, hashes: Readonly<Record<string, 
       p.bestReplay = null;
       p.aiBeatenSent = false;
     }
+    delete p.playSent;   // a new board key: the player is counted again there
     p.hash = h;
     changed = true;
   }

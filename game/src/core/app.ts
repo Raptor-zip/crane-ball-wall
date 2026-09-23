@@ -1093,7 +1093,10 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
       const rec = updateProgress(level, (p) => applySuccess(p, score, par, replay, badges, rankable()));
       pb = rec.pb;
       firstCrown = rec.firstCrown;
-      if (rankable() && (prevBest === null || score < prevBest)) {
+      const isPb = prevBest === null || score < prevBest;
+      // A clear that never reached the server (players from before the play count) is sent once even without a PB.
+      if (rankable() && replay && !isPb && save().levels[level.id]?.playSent !== true) enqueueLevelRun(level, replay, score, res);
+      if (rankable() && isPb) {
         if (pl.lastTrack) pendingPb = { ...pl.lastTrack, kind: 'pb', label: 'PB' };
         if (replay) enqueueLevelRun(level, replay, score, res);
       }

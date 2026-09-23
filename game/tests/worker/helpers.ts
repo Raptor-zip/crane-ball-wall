@@ -120,7 +120,7 @@ export function dailyAt(pool: readonly DailyDef[], now: number): DailyInfo {
 // ---- Reset ----
 
 export async function resetAll(opts: { now?: number; pool?: DailyDef[] | null } = {}): Promise<void> {
-  await env.DB.batch([env.DB.prepare('DELETE FROM runs'), env.DB.prepare('DELETE FROM boards'), env.DB.prepare('DELETE FROM counters')]);
+  await env.DB.batch([env.DB.prepare('DELETE FROM runs'), env.DB.prepare('DELETE FROM boards'), env.DB.prepare('DELETE FROM counters'), env.DB.prepare('DELETE FROM plays')]);
   resetBootMemoForTest();
   resetLimitsForTest();
   setParOverrideForTest(null);
@@ -264,6 +264,10 @@ export function fakeRows(n: number, start: number, step = 1): BoardRow[] {
 
 export async function boardRow(key: string): Promise<{ ver: number; top: string; n: number; cleared: number; ai_beaten: number; par: number; hist: string | null; wr: number[] | null; tok: string | null } | null> {
   return env.DB.prepare('SELECT * FROM boards WHERE board = ?').bind(key).first();
+}
+
+export async function playRow(key: string, pidh: string): Promise<{ created: number } | null> {
+  return env.DB.prepare('SELECT created FROM plays WHERE board = ? AND pidh = ?').bind(key, pidh).first();
 }
 
 export async function runRow(key: string, pidh: string): Promise<{ t120: number | null; replay: number[] | null; tries: number; balls: string | null; name_seed: number; gap_um: number | null; peak_cn: number | null } | null> {

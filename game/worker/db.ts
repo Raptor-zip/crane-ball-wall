@@ -4,8 +4,8 @@ import { isFingerprint } from './dup';
 
 /** D1 free plan: 50 statements per invocation; we stay at or below this (§7.8 step 1). */
 export const STATEMENT_LIMIT = 49;
-/** Worst case of one run: read 2 + write 4, and the same again for one conflict retry. */
-export const STATEMENTS_PER_RUN = 12;
+/** Worst case of one run: read 2 + plays 1 + write 4, then read 2 + write 4 for one conflict retry. */
+export const STATEMENTS_PER_RUN = 13;
 /** The counters flush at the end of a submit. */
 export const STATEMENTS_COUNTERS = 1;
 
@@ -36,7 +36,7 @@ export class Db {
     this.used += stmts.length;
     return this.d1.batch<T>(stmts);
   }
-  /** "used + 12 + 1 <= 49" before starting the next run (§7.8 step 1). */
+  /** "used + 13 + 1 <= 49" before starting the next run (§7.8 step 1). */
   canStartRun(): boolean {
     return this.used + STATEMENTS_PER_RUN + STATEMENTS_COUNTERS <= STATEMENT_LIMIT;
   }

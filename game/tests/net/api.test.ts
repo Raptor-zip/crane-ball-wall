@@ -579,6 +579,7 @@ describe('enqueue filters (§7.9)', () => {
   it('level PB: only when faster than the boot cutoff, or while the board has < 100 rows', async () => {
     const api = mkApi();
     await api.boot(23);                                   // 2-2: cutoff 402, par 318
+    store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc').playSent = true; });   // first clear already counted
     api.enqueue(pb(402));                                 // not faster than the 100th, not below par
     api.enqueue(pb(450));
     expect(store.data().outbox).toEqual([]);
@@ -609,7 +610,7 @@ describe('enqueue filters (§7.9)', () => {
     server.boot = boot;
     const api = mkApi();
     await api.boot(23);
-    store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc').bestSub = 300; });
+    store.update((d) => { const p = ensureLevel(d, '2-2', '9f3a12bc'); p.bestSub = 300; p.playSent = true; });
     api.enqueue(pb(330));                                 // above par: dropped
     expect(store.data().outbox).toEqual([]);
     api.enqueue(pb(300));                                 // below par, first time: queued
@@ -633,6 +634,33 @@ describe('enqueue filters (§7.9)', () => {
     await api.flush('menu');
     expect(store.data().levels['2-2']!.aiBeatenSent).toBe(true);
     expect(store.data().outbox).toEqual([]);
+  });
+});
+
+describe('first clear (§7.9 playSent)', () => {
+  it('sends the first clear whatever the cutoff, once; a counted answer marks playSent', async () => {
+    const api = mkApi();
+    await api.boot(23);                                   // 2-2: cutoff 402
+    store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc'); });
+    api.enqueue(pb(900));                                 // far below the 100th: still the first clear
+    expect(store.data().outbox.map((r) => r.t120)).toEqual([900]);
+    server.submitStatus = () => ({ status: 'unranked' });
+    await api.flush('menu');
+    expect(store.data().levels['2-2']!.playSent).toBe(true);
+    expect(store.data().outbox).toEqual([]);
+    api.enqueue(pb(800));                                 // counted: back to the cutoff filter
+    expect(store.data().outbox).toEqual([]);
+  });
+
+  it('a deferred answer keeps playSent unset', async () => {
+    const api = mkApi();
+    await api.boot(23);
+    store.update((d) => { ensureLevel(d, '2-2', '9f3a12bc'); });
+    api.enqueue(pb(900));
+    server.submitStatus = () => ({ status: 'deferred' });
+    await api.flush('menu');
+    expect(store.data().levels['2-2']!.playSent).toBeUndefined();
+    expect(store.data().outbox).toHaveLength(1);
   });
 });
 

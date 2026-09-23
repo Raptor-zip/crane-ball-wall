@@ -102,11 +102,11 @@ describe('optimistic lock (steps 7-8)', () => {
 });
 
 describe('D1 statement budget (step 1)', () => {
-  it('Db.canStartRun: used + 12 + 1 <= 49', () => {
+  it('Db.canStartRun: used + 13 + 1 <= 49', () => {
     const db = new Db(env.DB);
-    db.used = 36;
+    db.used = 35;
     expect(db.canStartRun()).toBe(true);
-    db.used = 37;
+    db.used = 36;
     expect(db.canStartRun()).toBe(false);
   });
 
@@ -133,7 +133,7 @@ describe('D1 statement budget (step 1)', () => {
   });
 
   it('defers the remaining runs when the next one could exceed the budget', async () => {
-    // Pretend the counters read already used 37 statements: 37 + 12 + 1 > 49.
+    // Pretend the counters read already used 37 statements: 37 + 13 + 1 > 49.
     const origAll = Db.prototype.all;
     Db.prototype.all = async function <T>(this: Db, stmt: D1PreparedStatement): Promise<T[]> {
       const r = (await origAll.call(this, stmt)) as T[];
