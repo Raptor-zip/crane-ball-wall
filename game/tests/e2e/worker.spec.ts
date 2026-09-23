@@ -6,8 +6,10 @@
 //   - GET /api/boot is 200 with the §7.7 shape and Cache-Control; GET / is the game (static assets);
 //   - POST /api/submit with a 1-1 replay is accepted (rank 1); a replay with one q flipped is a mismatch, and the
 //     same inputs under a second secret are a 'dup' (§7.8 step 6);
-//   - in the browser: clear 1-1 -> the rank-in send at the success tick -> accepted; the ranking screen shows the
-//     run as 「あなた」; a second visitor gets the WR ghost from boot.
+//   - in the browser: clear 1-1 -> the rank-in send at the success tick -> accepted, 「世界一！」 on the card; the
+//     ranking screen shows the run as 「あなた」 (flashed); a second visitor gets the WR ghost from boot;
+//   - a seeded 1-1 board (100-row top, 150 counted players) and the hourly rebuild (/__scheduled): a slow clear shows
+//     「世界 約N位」 and the ranking pins 「あなた 約N位」; a faster clear enters the top 100 with 「ランクイン！」 (§9.4).
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -21,7 +23,7 @@ import { levelBoardKey } from '../../src/shared/api';
 import type { BoardResponse, BootResponse, SubmitResponse } from '../../src/shared/api';
 import { newSecret, pidhFromSecret } from '../../src/shared/names';
 import {
-  GAME_DIR, STATUS, WORKER_DIR, WORKER_INSPECTOR_PORT, WORKER_PORT, altBot11, bot11, collectErrors, command, level,
+  GAME_DIR, STATUS, WORKER_DIR, WORKER_INSPECTOR_PORT, WORKER_PORT, altBot11, bangBang11, bot11, collectErrors, command, level,
   playReplay, readSave, shot, state, waitForApp, waitForState,
 } from './helpers';
 
@@ -34,6 +36,15 @@ test.use({ viewport: { width: 1280, height: 720 }, locale: 'ja-JP' });
 
 let server: ChildProcess | null = null;
 let serverLog = '';
+/** The generated wrangler config and the local D1 directory (set in beforeAll; the seeding test writes through them). */
+let wranglerCfg = '';
+let d1State = '';
+const wranglerEnv = (): NodeJS.ProcessEnv => {
+  const env: NodeJS.ProcessEnv = { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1', NO_COLOR: '1' };
+  delete env.VITE_TEST;
+  delete env.VITE_PUBLIC_ORIGIN;
+  return env;
+};
 
 /** wrangler.jsonc without comments (strings are left alone). */
 function readJsonc(path: string): Record<string, unknown> {
@@ -82,9 +93,14 @@ test.beforeAll(async () => {
   delete cfg.$schema;
   cfg.main = join(GAME_DIR, String(cfg.main));
   (cfg.assets as Record<string, unknown>).directory = dist;
+  // `--test-scheduled` answers /__scheduled from the Worker, but the SPA fallback of the assets would take it first
+  const assets = cfg.assets as { run_worker_first?: string[] };
+  assets.run_worker_first = [...(assets.run_worker_first ?? []), '/__scheduled'];
   for (const d of cfg.d1_databases as Record<string, unknown>[]) d.migrations_dir = join(GAME_DIR, String(d.migrations_dir ?? 'migrations'));
   const cfgPath = join(WORKER_DIR, 'wrangler.json');
   writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+  wranglerCfg = cfgPath;
+  d1State = state;
 
   // 3) a fresh local D1 with the migrations
   run(BIN('wrangler'), ['d1', 'migrations', 'apply', 'yurapita', '--local', '--persist-to', state, '-c', cfgPath], env);
@@ -92,7 +108,7 @@ test.beforeAll(async () => {
   // 4) wrangler dev (DEV=1 as .dev.vars would give it)
   server = spawn(BIN('wrangler'), [
     'dev', '-c', cfgPath, '--local', '--persist-to', state, '--ip', '127.0.0.1', '--port', String(WORKER_PORT),
-    '--inspector-port', String(WORKER_INSPECTOR_PORT), '--var', 'DEV:1', '--show-interactive-dev-session=false',
+    '--inspector-port', String(WORKER_INSPECTOR_PORT), '--var', 'DEV:1', '--show-interactive-dev-session=false', '--test-scheduled',
   ], { cwd: WORKER_DIR, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   server.stdout!.on('data', (b: Buffer) => { serverLog += b.toString(); });
   server.stderr!.on('data', (b: Buffer) => { serverLog += b.toString(); });
@@ -230,6 +246,11 @@ test('in the game: clear 1-1 online, the rank-in send submits, the ranking shows
   expect(r).toMatchObject({ status: STATUS.Success, score: bot.score, state: 'RESULTS' });
   const card = page.locator('section.res');
   await expect(card.getByRole('button', { name: /ランキング/ })).toBeEnabled();
+  // the server's answer lands on the card: rank 1 (the API run above is slower) -> the 世界一！ stamp (§9.4)
+  await expect(card.locator('.res-rank .stamp--rank')).toContainText('世界一！', { timeout: 3000 });
+  await expect(card.locator('.res-rank .sr-only')).toHaveText('世界一！ 世界1位');
+  await page.waitForTimeout(700);
+  await shot(page, info, 'worker-results-wr-stamp');
   const resp = await submitted;
   expect(resp.status()).toBe(200);
   const body = (await resp.json()) as SubmitResponse;
@@ -246,6 +267,7 @@ test('in the game: clear 1-1 online, the rank-in send submits, the ranking shows
   await card.getByRole('button', { name: /ランキング/ }).click();
   const mine = page.locator('table.board tr.is-me');
   await expect(mine).toBeVisible();
+  await expect(mine).toHaveClass(/is-flash/);
   await expect(mine).toContainText((bot.score / 120).toFixed(3));
   await expect(mine).toContainText('あなた');
   const pidh = (await readSave(page))!.id.pidh;
@@ -279,4 +301,112 @@ test('in the game: clear 1-1 online, the rank-in send submits, the ranking shows
   info.annotations.push({ type: 'player', description: pidh });
   expect(errors).toEqual([]);
   expect(errors2).toEqual([]);
+});
+
+/** Runs SQL against the local D1 of the running `wrangler dev` (the same --persist-to directory). */
+function d1Exec(sqlFile: string): void {
+  run(BIN('wrangler'), ['d1', 'execute', 'yurapita', '--local', '--persist-to', d1State, '-c', wranglerCfg, '--file', sqlFile, '--yes'], wranglerEnv());
+}
+
+test('a seeded board: 世界 約N位 on the card and on the pinned row; a faster clear gets ランクイン！', async ({ browser, request }, info) => {
+  test.setTimeout(240_000);
+  const slow = bangBang11(19, 12);
+  const fast = bangBang11(18, 11);
+  // 1) Seed 1-1: keep today's rows (the fixture's and the API run), fill the top to 100 with times below the slow
+  //    clear and above the fast one, and count 150 players in plays (50 of them slower than the top 100).
+  const cur = (await (await request.get(`${BASE}/api/board/${encodeURIComponent(KEY_11)}`)).json()) as BoardResponse;
+  const last = cur.top[cur.top.length - 1]?.[2] ?? 235;   // (empty when this test runs alone)
+  const pid = (i: number): string => (0x5eed0000 + i).toString(16).padStart(16, '0');
+  const seededTop: [string, number, number, number, number, number][] = [];
+  for (let i = 0; seededTop.length + cur.top.length < 100; i++) seededTop.push([pid(i), i, last + 5 + 3 * i, -1, 0, 1790000000000 + i]);
+  const top = [...cur.top, ...seededTop];
+  const cutoff = top[99]![2];
+  expect(fast.score).toBeLessThan(cutoff);
+  expect(slow.score).toBeGreaterThan(cutoff);
+  const slower = Array.from({ length: 50 }, (_, i) => cutoff + 10 + Math.round(((1100 - cutoff) * i) / 49));
+  const plays = [...seededTop.map((r) => [r[0], r[2]] as const), ...slower.map((t, i) => [pid(1000 + i), t] as const)];
+  const sql = [
+    // (the boards row exists after the tests above; alone, this test creates it)
+    `INSERT INTO boards (board, ver, top, n, par, updated) VALUES ('${KEY_11}', 1, '${JSON.stringify(top)}', ${top.length}, ${cur.par}, 1790000000000) ` +
+      `ON CONFLICT (board) DO UPDATE SET top = excluded.top, ver = boards.ver + 1;`,
+    `INSERT INTO plays (board, pidh, created, t120) VALUES ${plays.map(([p, t], i) => `('${KEY_11}', '${p}', ${1790000000000 + i}, ${t})`).join(', ')};`,
+    `INSERT INTO counters (k, n) VALUES ('hist:next', 0) ON CONFLICT (k) DO UPDATE SET n = 0;`,
+  ].join('\n');
+  const sqlFile = join(WORKER_DIR, 'seed-rank.sql');
+  writeFileSync(sqlFile, sql);
+  d1Exec(sqlFile);
+
+  // 2) The hourly histogram rebuild (worker/hist.ts), then boot carries the histogram once the 30 s memo is gone.
+  const logAt = serverLog.length;
+  const sched = await fetch(`${BASE}/__scheduled?cron=7+*+*+*+*`);
+  expect(sched.status).toBe(200);
+  await expect.poll(() => /"evt":"hist-rebuild"[^\n]*/.exec(serverLog.slice(logAt))?.[0] ?? '', { timeout: 20_000 }).toMatch(/"written":/);
+  await expect.poll(async () => {
+    const b = (await (await request.get(`${BASE}/api/boot?day=0`)).json()) as BootResponse;
+    const h = b.boards['1-1']?.hist ?? [];
+    return `${h.reduce((a, x) => a + x, 0)} ${b.boards['1-1']?.cutoff}`;
+  }, { timeout: 60_000, intervals: [3000] }).toBe(`${plays.length + cur.top.length} ${cutoff}`);
+
+  // 3) A new player clears slowly: outside the top 100, the card says 世界 約N位 from the boot histogram.
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'ja-JP', hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  const errors = collectErrors(page);
+  await gotoOnline(page, info);
+  expect((await playReplay(page, '1-1', slow.replay)).state).toBe('RESULTS');
+  const card = page.locator('section.res');
+  const row = card.locator('.res-rank');
+  await expect(row).toContainText(/世界 約\d+位/);
+  const n = Number(/約(\d+)位/.exec((await row.textContent()) ?? '')![1]);
+  expect(n).toBeGreaterThan(100);
+  expect(n).toBeLessThanOrEqual(plays.length + cur.top.length + 1);
+  await expect(row).toContainText(/上位[\d.]+%/);
+  await page.waitForTimeout(900);
+  await shot(page, info, 'worker-results-estimate');
+
+  // 4) The ranking: the whole top 100, a 「⋮」 row, and 「あなた 約N位」 pinned (not sent yet: 未送信).
+  await card.getByRole('button', { name: /ランキング/ }).click();
+  await expect(page.locator('table.board tbody tr[data-rank]')).toHaveCount(100);
+  await expect(page.locator('table.board tr.is-gap')).toHaveCount(1);
+  const pin = page.locator('.board-pin');
+  await expect(pin).toBeVisible();
+  await expect(pin.locator('.board-pin-rank')).toHaveText(`約${n}位`);
+  await expect(pin).toContainText('あなた');
+  await expect(pin).toContainText((slow.score / 120).toFixed(3));
+  await expect(pin).toContainText('未送信');
+  await page.waitForTimeout(300);
+  await shot(page, info, 'worker-board-pinned');
+
+  // 5) A faster clear can enter the top 100: sent at the success tick, answered on the card with ランクイン！
+  await page.locator('.page-head .btn--icon').first().click();
+  await command(page, 'openLevel:1-1');
+  await waitForState(page, (s) => s.state === 'READY' && s.level === '1-1', 'READY on 1-1');
+  const submitted = page.waitForResponse((resp) => resp.url().endsWith('/api/submit') && resp.request().method() === 'POST');
+  expect((await playReplay(page, '1-1', fast.replay)).state).toBe('RESULTS');
+  const body = (await (await submitted).json()) as SubmitResponse;
+  const mineRes = body.results.find((x) => x.board === KEY_11)!;
+  info.annotations.push({ type: 'rank-in', description: JSON.stringify(mineRes) });
+  expect(mineRes).toMatchObject({ status: 'accepted' });
+  expect(mineRes.rank!).toBeLessThanOrEqual(100);
+  await expect(card.locator('.res-rank .stamp--rank')).toContainText('ランクイン！', { timeout: 5000 });
+  await expect(card.locator('.res-rank .stamp--rank')).toContainText(`${mineRes.rank}位`);
+  await page.waitForTimeout(900);
+  await shot(page, info, 'worker-results-rank-in');
+
+  // 6) The ranking (fetched past every cache after the accepted run) has my row, centred and flashed; no pinned row.
+  await card.getByRole('button', { name: /ランキング/ }).click();
+  const mine = page.locator('table.board tr.is-me');
+  await expect(mine).toBeVisible();
+  await expect(mine).toHaveClass(/is-flash/);
+  await expect(mine).toHaveAttribute('data-rank', String(mineRes.rank));
+  await expect(page.locator('.board-pin')).toHaveCount(0);
+  await page.waitForTimeout(1200);   // the smooth scroll
+  const off = await page.evaluate(() => {
+    const r = document.querySelector('table.board tr.is-me')!.getBoundingClientRect();
+    const b = document.querySelector('.page-body')!.getBoundingClientRect();
+    return Math.abs((r.top + r.bottom) / 2 - (b.top + b.bottom) / 2);
+  });
+  expect(off).toBeLessThan(40);
+  await shot(page, info, 'worker-board-me');
+  await ctx.close();
+  expect(errors).toEqual([]);
 });

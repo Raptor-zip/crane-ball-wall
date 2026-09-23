@@ -1291,7 +1291,7 @@ IPv6 は 1 人に /64 が丸ごと配られるので、アドレスそのまま�
 - `deferred`（と面の `rejected: lite`）は残して次の機会に送る。`accepted` / `unranked` / `notBetter` / ほかの `rejected` は捨てる。
 - **面の答えの後**：boot の面を書き換える（`cutoff`、`n`、ヒストグラムの自分のビンを `sentSub` の古いビンから新しいビンへ。sessionStorage の boot の写しも同じ `at` で書き直す）。
   `accepted` の後は、その面の `/api/board/<key>` を 1 回だけ、手元のキャッシュも HTTP キャッシュ（max-age 60）も使わずに取る（`cache: 'no-store'`）。
-  答えは `onResults()` の購読者（core）にも渡り、結果カードの順位の行（§9.4）がそれで確定する。
+  答えは `onResults()` の購読者（core）にも渡り、結果カードの順位の行（§9.4）がそれで確定する。判子の直後にランキングを開いても、この取り直しで自分の新しい行が出る。
 
 #### 7.10 無料枠の予算（バズった日：プレイヤー 2 万人、セッション 3 万）
 
@@ -1427,6 +1427,8 @@ AI差 +0.92秒｜ギリ 6mm｜上位 8%｜連続 5日
   - 5 マスは、王冠 U+1F451、金以内の成功 U+1F7E9（緑の四角）、それ以外の成功 U+1F7E8（黄）、クラッシュ・途中リトライ・タイムアップ U+1F7E5（赤）、未使用 U+2B1C（白）。
   - 上位 n% は日替わりのヒストグラムから求める：`n = 100 × (自分より速いビンの人数 + 自分のビンの人数 / 2) / cleared`、小数 1 桁（1% 未満は「上位 1%」と出す）。
     サーバーは submit の応答の `pct` に同じ式の値を入れ、クライアントは応答がなければ boot の `hist` で計算する。オフラインならその項目を省く。
+- **面の「上位 x %」**（結果カードの順位の行とランキングの「あなた」の行、§9.4）：101 位以上のときだけ出し、順位 / n を小数 1 桁に**切り上げ**た値（`levelPct`、§7.7）。
+  書式は日替わりと同じ（`.0` は省き、1% 未満は「上位 1%」）。推定の順位なので、面の共有文には入れない。
 - **OGP**：静的な `public/og.png`（1200×630）を 1 枚だけ使う。`tools/og.mjs` がタイトル画面を Playwright で撮って作り、リポジトリに入れる。
   これは §9.1 の「画像ファイルを使わない」の唯一の例外で、ゲームの中では読み込まない（リンクのプレビュー専用。単一 HTML には入れない）。
   - `index.html` の `og:image` と `og:url` の絶対 URL は、ビルド時の環境変数 `VITE_PUBLIC_ORIGIN` から入れる（未設定なら省く）。
@@ -1735,8 +1737,27 @@ LEVEL_SELECT ↔ DAILY_HUB | SETTINGS | ABOUT | NOTES（理科ノート）
 - **結果カード**に出すもの：タイム（3 桁）、PB 差、AI 差、WR 差（オンライン時）、メダル（とアニメーション）、次のメダルまでの差、最小すき間（あなたと AI）、ピーク |F|（あなたと AI）、バッジ。
   ボタンは「もう一回」（主）、「次へ」、「AIの手本」、「ランキング」、「シェア」。
 - **失敗版の結果カード**には原因を 1 行だけ書く。例：「揺れ 5.2° → 3°未満で成功」「台車の速さ 0.12 m/s → 0.05 未満」「ボールがゾーンの外」。
+- **結果カードの世界順位の行**（2026-09-23、段階 2。`src/ui/results.ts`、`ResultsData.standing`）：面の成功だけ、タイムのすぐ下に 1 行出す
+  （日替わり・練習・補助つき・boot のない状態では出さない）。数字の出し方は §7.7「約」の規則のとおり。
+  - サーバーが確かめた 100 位以内だけ「約」なしで「世界 37位 ・1,065人中」。101 位以上と手元の推定はすべて「世界 約342位 ・1,065人中・上位32.2%」
+    （前の順位より上がったら小さな札で「↑約58」）。
+  - 送信中は「37位の見込み・確認中…」、送れていないときは「約37位・送信待ち」、lite・READ_ONLY の日は「37位相当・今日は反映されません」、
+    ヒストグラムがなく 100 位より遅いときは「100位圏外」。自己ベストでないクリアは、自己ベストの順位を薄く「自己ベスト 世界 約342位 …」と出す。
+  - **ランクインの判子**：答えが `accepted` で 100 位以内のときだけ、行が判子になる（「ランクイン！」、「ランクアップ！」と「↑12」の札、「世界一！」、
+    1 位のまま縮めたときは「世界記録更新！」）。「ピタッ」と同じ朱の二重枠（世界一はピンクの `--wr`）の角丸の四角に言葉と順位を入れ、−5° 傾ける。
+    カードが開いて 0.9 秒後（タイムのカウントアップとメダルの後）、答えがそれより遅ければ届いたときに、1.9 倍から 0.45 秒で押す。「↑n」の札はその 0.35 秒後に浮き上がる。
+    1 枚のカードで 1 回だけ動く（回転やランキングから戻って描き直すと最後の形で出る）。動きを減らす設定では 0.3 秒のフェード。読み上げには「ランクイン！ 世界37位」を添える。
+  - core は答えが来ると `standing` を差し替え、UI は HUD のフレーム（6 フレームごと）でそれを見て、この行だけを描き直す。
+- **ランキング画面**（`src/ui/screens/board.ts`）：
+  - boot にその面（キーが一致するもの）か今日の日替わりがあれば、上位 10 件と 6 行の仮の行ですぐ描き、`/api/board` の答えで全体を置き換える。
+    答えが取れなければ上位 10 件のまま、下に「上位10位まで表示中」と添える（boot もなければ今までどおりオフラインの表示）。
+  - 自分の行は左の赤い帯と 2 px の墨の枠で目立たせる。画面を開いて最初に出たとき 1 回だけ金色から光らせ（動きを減らす設定ではしない）、真ん中までスクロールする。
+  - 自分が表にいなくて自己ベストがあるときは、「あなた」の行を画面の下端に貼り付ける（sticky）。表が 100 件なら、その前に「⋮」の行を置く。表と「あなた」の行はいつも同じデータから作る。
+    - 面（自己ベストが今の面のハッシュのもの）：100 位より速ければ「反映待ち」（boot の上位 10 件だけのときは、その下の見込み「約37位」）。
+      遅ければヒストグラムから「約342位」と「上位32.2%」、ヒストグラムがなければ「100位圏外」。サーバーがその時間でまだ数えていなければ（`sentSub` がないかビンが違う）「未送信」を付ける。
+    - 日替わり：最後の送信の答えの順位、なければヒストグラムの推定。101 位以上は「約」付き。表に入るはずの時間なら「反映待ち」。
 - **面選択**：ワールドごとの横ページで、面のタイルにメダル、王冠、AI のタイム、PB を出す。上部に「今日の5球」のカードと「人類 vs AI x/18」と称号を置く。
-- **今日の5球の画面**：5 球のラック、今日の面の縮図、トップ 10、あなたの順位と上位 n%、共有ボタン。
+- **今日の5球の画面**：5 球のラック、今日の面の縮図、トップ 10、あなたの順位と上位 n%、共有ボタン。順位が 101 位以上なら「約480位」（ヒストグラムからの推定なので）。
 - **リトライは 100 ms 未満**：シーンを作り直さず、状態を戻すだけ。
 
 ### 9.5 ジュース表（イベント → 見た目・音・振動）
@@ -2075,9 +2096,10 @@ export type Screen =
 export interface GhostSummary { parSub: number; planT: number; peakF: number; minGapMm: number; pumps: number; calmPath: Float32Array }
 export interface ResultsData { level: LevelDef; ok: boolean; score: number | null; parSub: number; pbSub: number | null; wrSub: number | null;
   medal: Medal; crown: boolean; nextMedalSub: number | null; gapMm: number; aiGapMm: number; peakF: number; aiPeakF: number;
-  badges: BadgeId[]; failReason: string | null; rank: number | null; aiBeaten: number | null /* この面で AI に勝った人数（オンライン時） */;
+  badges: BadgeId[]; failReason: string | null; rank: number | null /* 使わない（core はいつも null。世界順位は standing） */; aiBeaten: number | null /* この面で AI に勝った人数（オンライン時） */;
   replay: string | null /* 6 KB を超えたら null */; strobe: Float32Array /* 0.1 s ごとの bx,by */;
-  standing?: Standing | null /* 面の成功だけ：タイムの下の世界順位の行（src/shared/rank.ts、§9.4）。答えが来ると core が差し替える */ }
+  standing?: Standing | null /* 面の成功だけ：タイムの下の世界順位の行（src/shared/rank.ts、§9.4）。答えが来ると core が差し替え、
+                                UI は結果カードの間 hud() のたびに見て、変わったらその行だけ描き直す。同じ ResultsData ではランクインの判子は 1 回だけ動く */ }
 export interface DailyView { dayIndex: number; n: number; level: LevelDef; balls: ('ok' | 'gold' | 'crown' | 'fail' | null)[];
   bestSub: number | null; parSub: number; top: BoardRow[] | null; rank: number | null; pct: number | null; streak: number; shareText: string }
 export type BoardRow = [pidh: string, nameSeed: number, t120: number, gapUm: number, device: number, created: number];

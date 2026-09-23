@@ -3793,3 +3793,243 @@ input {
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
+
+/* ---------------------------------------------------------------- world rank (GAME_DESIGN.md §9.4) */
+
+/* Results card: the row under the time (世界 約342位 ・1,065人中・上位32.2%), or the rank stamp once the server confirmed
+   a top-100 entry. Any number without 約 is the server's own (§7.7 「約」の規則). */
+.res-rank {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 7px;
+  row-gap: 2px;
+  margin: 2px 0 4px;
+  min-height: 26px;
+  font: 800 1rem/1.25 var(--font-head);
+  color: var(--ink);
+}
+.res-rank > .ico {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  color: var(--gold-edge);
+}
+.res-rank-main {
+  white-space: nowrap;
+}
+.res-rank-main.is-quiet {
+  color: var(--ink-2);
+  font-size: 0.9rem;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.res-rank-sub {
+  font: 800 0.78rem/1.25 var(--font-head);
+  color: var(--ink-2);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.res-rank-pre {
+  font: 800 0.78rem/1.25 var(--font-head);
+  white-space: nowrap;
+}
+.res-rank--muted,
+.res-rank--muted > .ico {
+  color: var(--ink-2);
+}
+.res-rank--muted .res-rank-main {
+  font-size: 0.92rem;
+}
+.res-rank--wait > .ico {
+  color: var(--ink-3);
+}
+.res-rank--stamp {
+  flex-wrap: nowrap;
+  column-gap: 14px;
+  margin: 8px 0 8px 4px;
+}
+.res-rank-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+.res-rank-side .rank-up {
+  margin-bottom: 2px;
+}
+/* The rank stamp: the same ink stamp as ピタッ, as a rounded box (word over the rank). Fixed px: never wraps at 125 %. */
+.stamp.stamp--rank {
+  display: inline-grid;
+  place-items: center;
+  gap: 1px;
+  width: auto;
+  height: auto;
+  min-width: 92px;
+  padding: 5px 12px 6px;
+  border-radius: 12px;
+  border: 3.5px solid var(--stamp);
+  box-shadow: inset 0 0 0 2px var(--card), inset 0 0 0 3.5px var(--stamp);
+  transform: rotate(-5deg);
+  filter: none;
+  opacity: 1;
+  font-size: 14px;
+  line-height: 1.1;
+  letter-spacing: 0;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.stamp--rank .stamp-word {
+  font: 800 14px/1.15 var(--font-head);
+}
+.stamp--rank .stamp-num {
+  font: 800 28px/1 var(--font-num);
+  letter-spacing: -0.03em;
+}
+.stamp--wr {
+  --stamp: var(--wr);
+}
+.rank-up {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #eaf1ff;
+  color: var(--ahead);
+  font: 800 0.95rem/1.1 var(--font-num);
+  white-space: nowrap;
+}
+.rank-up--muted {
+  padding: 2px 7px;
+  font-size: 0.74rem;
+}
+.stamp--rank.is-new {
+  animation: yp-stamp-press 0.45s cubic-bezier(0.3, 1.7, 0.5, 1) var(--rank-delay, 0ms) both;
+}
+.rank-up.is-new {
+  animation: yp-rise 0.35s ease-out var(--rank-delay, 0ms) both;
+}
+@keyframes yp-stamp-press {
+  0% { transform: rotate(-5deg) scale(1.9); opacity: 0; }
+  45% { transform: rotate(-5deg) scale(0.94); opacity: 1; }
+  75% { transform: rotate(-5deg) scale(1.03); opacity: 1; }
+  100% { transform: rotate(-5deg) scale(1); opacity: 1; }
+}
+@keyframes yp-fade-in {
+  from { opacity: 0; }
+}
+.yp--reduce .stamp--rank.is-new,
+.yp--reduce .rank-up.is-new {
+  animation: yp-fade-in 0.3s ease both !important;
+  animation-delay: var(--rank-delay, 0ms) !important;
+}
+.yp--still .stamp--rank.is-new,
+.yp--still .rank-up.is-new {
+  animation: none !important;
+}
+
+/* Ranking: my row stands out (red tab, ink border), flashes once and is scrolled to the middle. */
+.board tr.is-me td {
+  border-top-width: 2px;
+  border-bottom-width: 2px;
+}
+.board tr.is-me td:first-child {
+  border-left-width: 2px;
+  box-shadow: inset 5px 0 0 var(--ball);
+}
+.board tr.is-me td:last-child {
+  border-right-width: 2px;
+}
+.board tr.is-me.is-flash td {
+  animation: yp-me-flash 1.4s ease-out both;
+}
+@keyframes yp-me-flash {
+  from { background: var(--pb-solid); }
+  to { background: #fff3c4; }
+}
+/* 「⋮」 between the 100th row and my pinned row. */
+.board tr.is-gap td {
+  padding: 0 0 2px;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  color: var(--ink-3);
+  font: 800 1rem/1 var(--font-num);
+  text-align: center;
+}
+/* My row when it is not in the list: pinned to the bottom of the page while the list scrolls. */
+.board-pin {
+  position: sticky;
+  bottom: calc(10px + var(--safe-b));
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 7px 12px 7px 8px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  background: #fff3c4;
+  box-shadow: inset 5px 0 0 var(--ball), 0 3px 0 var(--ink);
+  color: var(--ink);
+  font-size: 0.88rem;
+}
+.board-pin-rank {
+  flex: 0 0 auto;
+  min-width: 3em;
+  padding-left: 4px;
+  text-align: center;
+  font: 800 0.9rem/1 var(--font-num);
+  white-space: nowrap;
+}
+.board-pin-who {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.board-pin-who .me-chip {
+  margin-left: 0;
+}
+.board-pin-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+.board-pin-sub {
+  font: 800 0.72rem/1.2 var(--font-head);
+  color: var(--ink-2);
+  word-break: keep-all;
+}
+.board-pin-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1.5px solid var(--ink-2);
+  border-radius: 6px;
+  color: var(--ink-2);
+  font: 800 0.66rem/1.2 var(--font-head);
+  white-space: nowrap;
+}
+.board-pin-time {
+  flex: 0 0 auto;
+  font: 800 0.88rem/1 var(--font-num);
+}
+/* The fetch failed after the instant render (boot top 10): say how much is shown. */
+.board-partial {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 6px 0 2px;
+  color: var(--ink-2);
+  font: 800 0.78rem/1.3 var(--font-head);
+}
+.board-partial .ico {
+  width: 16px;
+  height: 16px;
+}

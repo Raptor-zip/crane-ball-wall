@@ -39,6 +39,7 @@ test('file:// single HTML completes 1-1 with only Google Fonts requests', async 
   expect(r).toMatchObject({ status: STATUS.Success, score: bot.score, state: 'RESULTS' });
   await expect(page.locator('section.res')).toBeVisible();
   await expect(page.locator('section.res .res-time')).toContainText((bot.score / 120).toFixed(3));
+  await expect(page.locator('section.res .res-rank')).toHaveCount(0);   // no API, no world rank row (§9.4)
   expect((await readSave(page))!.levels['1-1']!.bestSub).toBe(bot.score);
   await page.waitForTimeout(900);
   await shot(page, info, 'single-results');
