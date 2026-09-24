@@ -21,6 +21,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:single": "vite build --mode single && node tools/check-single.mjs",
+    "stats": "node tools/stats.mjs",
     "build:test": "VITE_TEST=1 vite build",
     "worker:dev": "npm run build && wrangler dev --local --persist-to .wrangler/state",
     "db:migrate:local": "wrangler d1 migrations apply yurapita --local",

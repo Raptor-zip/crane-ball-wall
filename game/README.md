@@ -35,6 +35,7 @@
 | `npm run db:migrate:local` | ローカル D1 にマイグレーションを適用 |
 | `npm run ghosts` / `npm run daily` / `npm run fixtures` | AI ゴースト / 日替わりプール / テスト用固定データを生成（Python） |
 | `npm run daily -- --bisect` | 既存の日替わりプールのパーだけを、物理を変えずにキャンペーンと同じ二分探索で締め直す（§8.2。数時間かかる。`tools/.cache` が要る） |
+| `npm run stats`（`-- --json` で JSON） | 本番 D1 からプレイ人口（端末数）・今日遊んだ端末・全クリア数・面ごとのクリア数と AI に勝った数・今日の5球の参加を読み取り専用で集計（要 `npx wrangler login`） |
 | `npm run deploy` | `tools/check-epoch.mjs`（§7.5 の `DAILY_EPOCH` が未来ならここで止まる）→ 本番ビルド → `wrangler deploy` |
 
 ## Worker をローカルで動かす（`worker:dev`）
