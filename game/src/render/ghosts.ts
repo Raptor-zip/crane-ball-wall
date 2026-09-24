@@ -5,7 +5,8 @@
 // a tag over the trolley. Ghosts live at z = -0.12, behind the player's plane.
 // Tags ride on the beam face; one that would sit on the player's trolley or on another tag moves to
 // the row above the beam, where tags are packed side by side and centred over their trolleys (at the
-// start pose: [AI][PB] over the start). Row switches glide instead of popping.
+// start pose: [AI][PB] over the start). Row switches glide instead of popping. Row 1 keeps out of the
+// HUD's READY pill and chips over it (keepOut): a group moves aside by at most its width, else it has no tag.
 // Accessibility (§3.5): colour + shape + label — AI = hexagon, PB = circle, WR = star,
 // rival = triangle, challenge = flag.
 //
@@ -141,6 +142,20 @@ const TAG_GAP = 0.03;
 /** Time constant of the row / offset easing [s]. */
 const TAG_EASE = 0.05;
 
+/** Row 1 (above the beam): its tags' centre height and height [m] (pxToM: metres per CSS px at the ghost plane). */
+export function tagRow1(pxToM: number): { y: number; h: number } {
+  const tagH = 17 * pxToM;
+  const y0 = (BEAM_BOTTOM + BEAM_TOP) / 2;
+  // Row 1 clears row 0 by at least 3 px whatever the scale (landscape phones are the tightest).
+  return { y: Math.max(BEAM_TOP + 0.012 + tagH * 0.55, y0 + tagH * 1.05 + 3 * pxToM), h: tagH * 1.05 };
+}
+
+/** Does [x0, x0 + w] come within TAG_GAP of one of the ranges? (A place exactly TAG_GAP away is free.) */
+function hitsKeepOut(ranges: readonly (readonly [number, number])[], x0: number, w: number): boolean {
+  for (const r of ranges) if (x0 < r[1] + TAG_GAP - 1e-6 && x0 + w > r[0] - TAG_GAP + 1e-6) return true;
+  return false;
+}
+
 /** Tag layout (exported for tests): which row each ghost's tag takes and its left edge. */
 export interface TagRect { label: string; x0: number; x1: number; y0: number; y1: number; row: number }
 const rectPool: TagRect[] = [];
@@ -163,9 +178,10 @@ export function resetGhostTags(): void {
  * Rebuilds the ghost batch for this frame. pxToM converts CSS px to metres at the ghost plane.
  * playerX: the player's trolley x — tags avoid the beam face right above it (the trolley's side plates
  * would hide them, and at the start pose every ghost sits there). dt: wall-clock step for the easing.
+ * keepOut: x ranges [m] that row 1 keeps out of (READY: the HUD's pill and chips drawn over that row).
  */
 export function drawGhosts(b: QuadBatch, ghosts: readonly GhostPose[], L: number, pxToM: number, time: number, fade: number,
-  visX: readonly [number, number] | null = null, playerX = Number.NaN, dt = 0): void {
+  visX: readonly [number, number] | null = null, playerX = Number.NaN, dt = 0, keepOut: readonly (readonly [number, number])[] | null = null): void {
   b.begin();
   const z = Z_GHOST;
   const tagH = 17 * pxToM;
@@ -261,18 +277,43 @@ export function drawGhosts(b: QuadBatch, ghosts: readonly GhostPose[], L: number
   }
   for (let c = 0; c < nc; c++) {
     const end = c + 1 < nc ? (clFirst[c + 1] as number) : row1.length;
+    // Under the READY pill / a chip: the nearest free place at most the group's width away (still over its
+    // trolleys), else no tag this frame (NaN: its trolley and colour still tell whose it is).
+    const x0 = clX0[c] as number, w = clW[c] as number;
+    let shifted = false;
+    if (keepOut && keepOut.length && hitsKeepOut(keepOut, x0, w)) {
+      shifted = true;
+      let best = Number.NaN;
+      for (const r of keepOut) {
+        for (let side = 0; side < 2; side++) {
+          const cand = side === 0 ? r[0] - TAG_GAP - w : r[1] + TAG_GAP;
+          if (cand < lo || cand + w > hi || Math.abs(cand - x0) > w || hitsKeepOut(keepOut, cand, w)) continue;
+          if (!(Math.abs(best - x0) <= Math.abs(cand - x0))) best = cand;
+        }
+      }
+      clX0[c] = best;
+    }
     for (let j = clFirst[c] as number; j < end; j++) {
       const t = row1[j] as TagSlot;
       t.x0 = (clX0[c] as number) + t.off;
-      t.group = end - (clFirst[c] as number);
+      // a group that moved aside (or back) glides like a row switch
+      t.group = end - (clFirst[c] as number) + (shifted ? 100 : 0);
     }
   }
 
   rectN = 0;
   const k = dt > 0 ? 1 - Math.exp(-dt / TAG_EASE) : 1;
+  const rowY0 = (BEAM_BOTTOM + BEAM_TOP) / 2, rowY1 = tagRow1(pxToM).y;
   for (const t of tags) {
     const i = t.idx;
     wasRow1[i] = t.row === 1;
+    if (!Number.isFinite(t.x0)) {
+      // no room for it in row 1 (keepOut): not drawn; it glides in from its last place when there is room again
+      rowPos[i] = 1;
+      lastRow[i] = -1;
+      jumpX[i] = 0;
+      continue;
+    }
     const prevRow = rowPos[i];
     const rp = prevRow === undefined ? t.row : prevRow + (t.row - prevRow) * k;
     rowPos[i] = rp;
@@ -289,9 +330,7 @@ export function drawGhosts(b: QuadBatch, ghosts: readonly GhostPose[], L: number
     lastGroup[i] = t.group;
     const x0 = t.x0 + j;
     lastX[i] = x0;
-    // Row 1 clears row 0 by at least 3 px whatever the scale (landscape phones are the tightest).
-    const y0 = (BEAM_BOTTOM + BEAM_TOP) / 2, y1 = Math.max(BEAM_TOP + 0.012 + tagH * 0.55, y0 + tagH * 1.05 + 3 * pxToM);
-    const ty = y0 + (y1 - y0) * rp;
+    const ty = rowY0 + (rowY1 - rowY0) * rp;
     const tz = 0.1;
     b.icon(b.atlasShape(t.st.tag), x0 + tagH * 0.5, ty, tz, tagH * 1.05, t.st.color, Math.min(1, t.st.alpha * fade + 0.25), 0.9);
     b.label(t.label, x0 + tagH * 1.1, ty, tz, tagH * 0.95, t.st.label, fade, -1, 0.9);

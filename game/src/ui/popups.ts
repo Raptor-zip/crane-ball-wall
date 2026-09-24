@@ -39,8 +39,11 @@ export const BANNER_DELAY_MS = 150;
 export const BANNER_TICK_MS = 350;
 
 export interface Popups {
-  /** Generic onomatopoeia at a screen position (CSS px in the UI root). */
-  show(text: string, x: number, y: number, kind?: string): void;
+  /**
+   * Generic onomatopoeia at a screen position (CSS px in the UI root). Returns the y it was centred on after keeping
+   * it inside the bounds (a label under it keeps its distance: the crash word and its info pill).
+   */
+  show(text: string, x: number, y: number, kind?: string): number;
   /** Near-miss label: at (x, y), or beside a wall when `at` is given (x / y are then ignored). */
   near(mm: number, x: number, y: number, at?: NearPlace): void;
   /** overlapMm null: a crash without a depth (the string caught on a wall, the egg cracked): only the cause. */
@@ -140,9 +143,9 @@ export function createPopups(root: HTMLElement): Popups {
   /**
    * Adds a popup centred on (x, y) (its animation keeps it centred there), clamped so the label stays inside the
    * bounds. `rise`: how far the animation lifts the label, as a fraction of its height (kept inside too).
-   * `beside`: place the label next to (x, y) on that side instead of centring it there.
+   * `beside`: place the label next to (x, y) on that side instead of centring it there. Returns the final centre y.
    */
-  function add(el: HTMLElement, x: number, y: number, ttl: number, word = false, opt: { rise?: number; beside?: -1 | 1; minTop?: number } = {}): void {
+  function add(el: HTMLElement, x: number, y: number, ttl: number, word = false, opt: { rise?: number; beside?: -1 | 1; minTop?: number } = {}): number {
     if (word) {
       const words = live.filter((e) => e.classList.contains('pop--word'));
       while (words.length >= MAX_WORDS) drop(words.shift()!);
@@ -171,12 +174,13 @@ export function createPopups(root: HTMLElement): Popups {
       // that the card is shown the way the player sees it once the celebration is over.
       if (top || !layer.closest('.yp--still')) drop(el);
     }, ttl);
+    return Math.round(y);
   }
 
   return {
     show(text, x, y, kind = 'word') {
       const el = h('div', { class: `pop pop--word pop--${kind}` }, h('div', { class: 'pop-in' }, text));
-      add(el, x, y, 800, true, { rise: 0.7 });
+      return add(el, x, y, 800, true, { rise: 0.7 });
     },
     near(mm, x, y, at) {
       const tier = nearTier(mm);
@@ -278,8 +282,15 @@ export function createPopups(root: HTMLElement): Popups {
  */
 export interface ToastArea { x0: number; x1: number; top?: number; bottom?: number; limit: number; max?: number }
 
+/**
+ * 'skin': a skin unlock, drawn like 'info'; 'cardBadge': a badge of the run the results card lists (一発, 紙一重), drawn
+ * like 'badge'. Kinds of their own so that they can be dropped with the card (the tricks and rank news posted as 'badge'
+ * are on no card: they stay).
+ */
+export type ToastKind = 'info' | 'badge' | 'warn' | 'notice' | 'skin' | 'cardBadge';
+
 export interface Toasts {
-  show(text: string, kind?: 'info' | 'badge' | 'warn' | 'notice'): void;
+  show(text: string, kind?: ToastKind): void;
   clear(): void;
   /**
    * The free area changed (screen, layout, a card opened): re-place the stack. Visible toasts that no longer fit go
@@ -289,7 +300,7 @@ export interface Toasts {
   /** Toasts waiting for room. */
   pending(): number;
   /** Drops the visible and waiting toasts of one kind (badges belong to the run and its results card). */
-  drop(kind: 'info' | 'badge' | 'warn' | 'notice'): void;
+  drop(kind: ToastKind): void;
 }
 
 const TOAST_MS = 2900;
@@ -302,11 +313,13 @@ const TOAST_MAX = 3;
 const TOAST_STALE_MS = 8000;
 /** On screen this long, a toast has been read: a relayout that has no room for it drops it instead of replaying it. */
 const TOAST_SEEN_MS = 1200;
+/** A toast area narrower than this (CSS px) is marked data-narrow: no phrase-keeping line breaks there. */
+export const TOAST_NARROW = 200;
 
 export function createToasts(root: HTMLElement, area: () => ToastArea | null = () => null): Toasts {
   const box = h('div', { class: 'yp-toasts', role: 'status', 'aria-live': 'polite' });
   root.appendChild(box);
-  interface Item { text: string; kind: 'info' | 'badge' | 'warn' | 'notice'; at: number; el: HTMLElement | null; timer: number; shownAt: number }
+  interface Item { text: string; kind: ToastKind; at: number; el: HTMLElement | null; timer: number; shownAt: number }
   const queue: Item[] = [];
   const shown: Item[] = [];
   let current: ToastArea | null = null;
@@ -324,9 +337,12 @@ export function createToasts(root: HTMLElement, area: () => ToastArea | null = (
     const st = box.style;
     if (!a) {
       st.left = st.right = st.top = st.bottom = st.width = st.transform = st.flexDirection = '';
+      box.removeAttribute('data-narrow');
       return;
     }
     const w = Math.max(0, a.x1 - a.x0);
+    // Too narrow for a whole ja phrase on a line (styles.css keeps the normal line breaks then).
+    box.toggleAttribute('data-narrow', w < TOAST_NARROW);
     st.left = `${Math.round(a.x0)}px`;
     st.width = `${Math.round(w)}px`;
     st.right = 'auto';
@@ -354,8 +370,9 @@ export function createToasts(root: HTMLElement, area: () => ToastArea | null = (
 
   function make(it: Item): HTMLElement {
     // info: done (✓); warn: no connection; notice: something did not work, not the connection (ⓘ).
-    const ic: IconName = it.kind === 'badge' ? 'star' : it.kind === 'warn' ? 'offline' : it.kind === 'notice' ? 'info' : 'check';
-    return h('div', { class: `toast toast--${it.kind}` }, icon(ic), h('span', null, it.text));
+    const kind = it.kind === 'skin' ? 'info' : it.kind === 'cardBadge' ? 'badge' : it.kind;
+    const ic: IconName = kind === 'badge' ? 'star' : kind === 'warn' ? 'offline' : kind === 'notice' ? 'info' : 'check';
+    return h('div', { class: `toast toast--${kind}` }, icon(ic), h('span', null, it.text));
   }
 
   function expire(it: Item): void {

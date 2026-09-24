@@ -1,5 +1,5 @@
 // createUI end to end in happy-dom: mount, every screen renders, HUD diffing, actions, keyboard. Owner: O7.
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { LevelDef } from '../../src/sim/level';
 import type { SaveV1, Store } from '../../src/store/save';
 import type { HudState, ResultsData, Screen, UI, UiAction } from '../../src/ui/ui';
@@ -443,9 +443,15 @@ describe('review fixes', () => {
     ui.mount(root);
     ui.fx({ t: 'levelLoaded', level: lv('2-2') });
     ui.show({ id: 'hud' });
-    ui.hud(hudState({ running: true, timeSub: 200, ampDeg: 30, nearGapMm: 34, anchors }));
-    expect([shown('.anc-meter'), shown('.anc-req'), shown('.anc-gap'), shown('.anc-hold')]).toEqual([true, true, true, true]);
+    ui.hud(hudState({ running: true, timeSub: 200, ampDeg: 30, nearGapMm: 34, anchors: { ...anchors, holdFrac: 0 } }));
+    expect([shown('.anc-meter'), shown('.anc-req'), shown('.anc-gap'), shown('.anc-hold')]).toEqual([true, true, true, false]);
     expect(root.querySelector('.anc-req-label')!.textContent).toBe('64°');
+    // The hold (still running): the ring fills around the ball and the gap gauge beside it steps back (inside a pocket
+    // the ball is always within 25 cm of a wall); it comes back when the hold resets.
+    ui.hud(hudState({ running: true, timeSub: 260, ampDeg: 1, nearGapMm: 34, anchors }));
+    expect([shown('.anc-meter'), shown('.anc-gap'), shown('.anc-hold')]).toEqual([true, false, true]);
+    ui.hud(hudState({ running: true, timeSub: 262, ampDeg: 4, nearGapMm: 34, anchors: { ...anchors, holdFrac: 0 } }));
+    expect([shown('.anc-gap'), shown('.anc-hold')]).toEqual([true, false]);
     ui.hud(hudState({ running: false, timeSub: 400, ampDeg: 2, nearGapMm: 34, anchors: { ...anchors, holdFrac: 1 } }));
     expect([shown('.anc-meter'), shown('.anc-req'), shown('.anc-gap'), shown('.anc-hold')]).toEqual([false, false, false, true]);
     ui.hud(hudState({ running: true, timeSub: 10, ampDeg: NaN, anchors: { ...anchors, pivot: { x: NaN, y: 0 } } }));
@@ -762,5 +768,350 @@ describe('release review fixes', () => {
     ui = createUI({ store });
     ui.mount(root);
     expect(root.querySelector<HTMLElement>('.yp')!.dataset.panel).toBe('full');
+  });
+});
+
+// Play-area polish (audit, fix-play): the checks that need no layout engine; the rest is noted per test. The layout
+// itself (what covers what at 568x320 .. 1280x720) is measured in a real browser.
+describe('play polish (audit)', () => {
+  const cssText = readFileSync(resolve(process.cwd(), 'src/ui/styles.css'), 'utf8');
+  /** The declarations of the first rule whose selector list is exactly `sel`. */
+  const ruleOf = (sel: string): string => {
+    const i = cssText.indexOf(`${sel} {`);
+    return i < 0 ? '' : cssText.slice(i, cssText.indexOf('}', i));
+  };
+  const texts = (): string[] => [...root.querySelectorAll('.yp-toasts .toast')].map((e) => e.textContent ?? '');
+  /**
+   * happy-dom has no layout: sizes for the elements `size` knows (offset* / client*; the UI root gets the viewport),
+   * 0 for the others; `at` places some of them (getBoundingClientRect, relative to the root at 0, 0).
+   */
+  function stubLayout(size: (el: HTMLElement) => { w: number; h: number } | null, at: (el: HTMLElement) => { x: number; y: number } | null = () => null): () => void {
+    const P = HTMLElement.prototype;
+    const keys = ['offsetWidth', 'offsetHeight', 'clientWidth', 'clientHeight'] as const;
+    const saved = [...keys, 'getBoundingClientRect'].map((k) => [k, Object.getOwnPropertyDescriptor(P, k)] as const);
+    const sizeOf = (el: HTMLElement): { w: number; h: number } | null => (el.classList.contains('yp') ? { w: root.clientWidth, h: root.clientHeight } : size(el));
+    for (const k of keys) {
+      const wide = k.endsWith('Width');
+      Object.defineProperty(P, k, { configurable: true, get(this: HTMLElement) { const s = sizeOf(this); return s ? (wide ? s.w : s.h) : 0; } });
+    }
+    Object.defineProperty(P, 'getBoundingClientRect', {
+      configurable: true, writable: true,
+      value(this: HTMLElement) {
+        const p = at(this) ?? { x: 0, y: 0 };
+        const s = at(this) ? sizeOf(this) ?? { w: 0, h: 0 } : { w: 0, h: 0 };
+        return { left: p.x, top: p.y, right: p.x + s.w, bottom: p.y + s.h, width: s.w, height: s.h, x: p.x, y: p.y, toJSON: () => ({}) };
+      },
+    });
+    return () => {
+      for (const [k, d] of saved) {
+        if (d) Object.defineProperty(P, k, d);
+        else delete (P as unknown as Record<string, unknown>)[k];
+      }
+    };
+  }
+  const resize = (w: number, h: number): void => {
+    Object.defineProperty(root, 'clientWidth', { configurable: true, value: w });
+    Object.defineProperty(root, 'clientHeight', { configurable: true, value: h });
+  };
+  const ty = (el: Element | null): number => Number(/translate\([^,]+,\s*(-?[\d.]+)px\)/.exec((el as HTMLElement | null)?.style.transform ?? '')?.[1]);
+
+  it('#2 a rail crash: the word pushed down inside the bounds takes its info pill down with it (46 px under it)', () => {
+    const restore = stubLayout((el) => el.classList.contains('yp-pop') ? { w: 390, h: 844 }
+      : el.classList.contains('pop-in') ? (el.parentElement!.classList.contains('pop--crashinfo') ? { w: 96, h: 57 } : { w: 118, h: 46 }) : null);
+    try {
+      ui.mount(root);
+      ui.fx({ t: 'levelLoaded', level: lv('1-1') });
+      ui.show({ id: 'hud' });
+      const hudTop = parseFloat(root.querySelector<HTMLElement>('.yp')!.style.getPropertyValue('--hud-top'));
+      // At the rail (top of the view): the word is clamped down, and the pill keeps the designed 46 px under it.
+      ui.fx({ t: 'crash', kind: 3, wall: -1, x: 1, y: 1.24, overlapMm: 4 }, { x: 195, y: hudTop + 20 });
+      const word = ty(root.querySelector('.pop--crash'));
+      const info = ty(root.querySelector('.pop--crashinfo'));
+      expect(word).toBeGreaterThan(hudTop + 20 - 30);
+      expect(info - word).toBe(46);
+      // In the open (nothing clamped): exactly the old places, word at y - 30 and the pill 46 px under it.
+      ui.fx({ t: 'retry' });
+      ui.fx({ t: 'crash', kind: 1, wall: 0, x: 1, y: 0.5, overlapMm: 4 }, { x: 195, y: 400 });
+      expect([ty(root.querySelector('.pop--crash')), ty(root.querySelector('.pop--crashinfo'))]).toEqual([370, 416]);
+    } finally {
+      restore();
+    }
+  });
+
+  it('#3 tall: the dock fades out while the PB / crown banner is up over the scoreboard, and comes back after it', () => {
+    ui.mount(root);
+    vi.useFakeTimers();
+    try {
+      const yp = root.querySelector<HTMLElement>('.yp')!;
+      ui.fx({ t: 'levelLoaded', level: lv('2-2') });
+      ui.show({ id: 'hud' });
+      ui.fx({ t: 'success', score: 300, medal: 3, crown: false, firstCrown: false, pb: true, badges: [] });
+      expect(yp.classList.contains('yp--banner')).toBe(false);
+      vi.advanceTimersByTime(BANNER_DELAY_MS);
+      expect(yp.classList.contains('yp--banner')).toBe(true);
+      vi.advanceTimersByTime(1800);
+      expect(yp.classList.contains('yp--banner')).toBe(false);
+      // a retry during the beat takes the banner and the fade away at once
+      ui.fx({ t: 'success', score: 300, medal: 3, crown: false, firstCrown: false, pb: true, badges: [] });
+      vi.advanceTimersByTime(BANNER_DELAY_MS);
+      ui.fx({ t: 'retry' });
+      expect(yp.classList.contains('yp--banner')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(ruleOf('.yp[data-layout="tall"].yp--banner .hud-dock')).toMatch(/opacity: 0/);
+  });
+
+  it('#6 leaving the results card for the next attempt drops the toasts of what the card lists (badges, skins), not tricks', () => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    ui.mount(root);
+    ui.fx({ t: 'levelLoaded', level: lv('2-2') });
+    ui.toast('技「追いかけ減衰」を見つけた!', 'badge');   // posted by the core during the run
+    ui.show({ id: 'results', data: { ...results(true), badges: ['ippatsu', 'pashi'] } });
+    ui.toast('スキンが開いた!', 'skin');
+    vi.advanceTimersByTime(700);   // the card announces its first badge (results.ts)
+    expect(texts()).toEqual(['技「追いかけ減衰」を見つけた!', 'スキンが開いた!', 'バッジ「一発」']);
+    // the card's badge looks like a badge, a skin toast like 'info'
+    expect([...root.querySelectorAll('.yp-toasts .toast')].map((e) => e.className)).toEqual(['toast toast--badge', 'toast toast--info', 'toast toast--badge']);
+    ui.toast('技「逆振りの溜め」を見つけた!', 'badge');   // waiting: three are on screen
+    ui.toast('2-2 ランクイン！ 4位', 'badge');           // rank news of another run (flushRankNews): on no card
+    vi.advanceTimersByTime(450);   // the card's second badge waits too
+    ui.show({ id: 'hud' });   // retry
+    // the card's badges and skin go (shown or waiting); the tricks and the rank news are on no card: they come
+    expect(texts()).toEqual(['技「追いかけ減衰」を見つけた!', '技「逆振りの溜め」を見つけた!', '2-2 ランクイン！ 4位']);
+    vi.advanceTimersByTime(10000);
+    expect(texts()).toEqual([]);
+    // A trick found in a crashed run (no card in between) still shows after the crash.
+    ui.toast('技「ブレーキ振り出し」を見つけた!', 'badge');
+    ui.fx({ t: 'crash', kind: 1, wall: 0, x: 1, y: 0.5, overlapMm: 4 });
+    ui.fx({ t: 'ready' });
+    expect(texts()).toContain('技「ブレーキ振り出し」を見つけた!');
+    // the level select still drops the run's toasts, the card's badges with them
+    ui.show({ id: 'results', data: { ...results(true), badges: ['ippatsu'] } });
+    vi.advanceTimersByTime(700);
+    ui.show({ id: 'select', world: 2 });
+    expect(texts()).toEqual([]);
+  });
+
+  it('#34 wide HUD: toasts one at a time in the bottom-right corner (never under the clock, on the gantry)', () => {
+    resize(1280, 720);
+    const restore = stubLayout(() => null);
+    onTestFinished(restore);
+    ui.mount(root);
+    ui.fx({ t: 'levelLoaded', level: lv('1-1') });
+    ui.show({ id: 'hud' });
+    ui.toast('AIのライン：非表示');
+    ui.toast('ゴースト：AIだけ');
+    const box = root.querySelector<HTMLElement>('.yp-toasts')!;
+    expect(texts()).toEqual(['AIのライン：非表示']);
+    expect(parseFloat(box.style.left)).toBeGreaterThanOrEqual(1280 * 0.62);
+    expect(box.style.top).toBe('auto');
+    expect(parseFloat(box.style.bottom)).toBeLessThanOrEqual(10);
+    expect(ruleOf('.yp[data-short="1"][data-screen="hud"] .yp-toasts,\n.yp[data-layout="wide"][data-screen="hud"] .yp-toasts,\n.yp[data-layout="wide"][data-screen="demo"] .yp-toasts')).toMatch(/align-items: flex-end/);
+  });
+
+  it('#34 wide HUD: the toast keeps beside a READY hint card that reaches past the force bar, or waits for it to go', () => {
+    resize(1024, 768);
+    let hintW = 554;
+    const shown = (el: HTMLElement): boolean => el.style.display !== 'none';
+    const restore = stubLayout(
+      (el) => (el.classList.contains('hud-hint') && shown(el) ? { w: hintW, h: 46 } : el.classList.contains('hud-force') ? { w: 430, h: 12 } : el.classList.contains('yp-toasts') ? { w: 200, h: 50 } : null),
+      (el) => (el.classList.contains('hud-hint') ? { x: 512 - hintW / 2, y: 670 } : el.classList.contains('hud-force') ? { x: 297, y: 738 } : el.classList.contains('yp-toasts') ? { x: 800, y: 700 } : null));
+    onTestFinished(restore);
+    ui.mount(root);
+    ui.fx({ t: 'levelLoaded', level: lv('2-1') });
+    ui.show({ id: 'hud' });
+    const box = root.querySelector<HTMLElement>('.yp-toasts')!;
+    ui.hud(hudState({ hint: 'You need 64°. Build up until the angle arc turns green' }));
+    ui.toast('You can skip this level (pause menu)');
+    expect(texts()).toEqual(['You can skip this level (pause menu)']);
+    expect(parseFloat(box.style.left)).toBe(512 + 554 / 2 + 8);
+    // the run starts, the card goes: back to the corner beside the force bar
+    ui.hud(hudState({ hint: 'You need 64°. Build up until the angle arc turns green', running: true, timeSub: 5 }));
+    expect(parseFloat(box.style.left)).toBe(297 + 430 + 10);
+    // a card that leaves under 180 px beside it: the toast waits for the run to start, then comes
+    ui.fx({ t: 'retry' });
+    hintW = 700;
+    ui.hud(hudState({ hint: 'Hit the end just as the ball passes under the trolley backwards' }));
+    ui.toast('AIのライン：非表示');
+    expect(texts()).toEqual([]);
+    ui.hud(hudState({ hint: 'Hit the end just as the ball passes under the trolley backwards', running: true, timeSub: 5 }));
+    expect(texts()).toHaveLength(1);
+    expect(parseFloat(box.style.left)).toBe(297 + 430 + 10);
+  });
+
+  it('#13 landscape phones: a READY hint that would grow up into the resting ball widens to the left (is-wide)', () => {
+    resize(568, 320);
+    ui.mount(root);
+    ui.fx({ t: 'levelLoaded', level: lv('1-1') });
+    ui.show({ id: 'hud' });
+    const hint = root.querySelector<HTMLElement>('.hud-hint')!;
+    // the card's layout box (three lines above the force bar: top 232); the ball rests at (172, 230), 8 px
+    const card = { left: 163, top: 232, w: 242, h: 54 };
+    const props: [string, () => unknown][] = [['offsetParent', () => root], ['offsetLeft', () => card.left], ['offsetTop', () => card.top], ['offsetWidth', () => card.w], ['offsetHeight', () => card.h]];
+    for (const [k, get] of props) Object.defineProperty(hint, k, { configurable: true, get });
+    const anchors = { pivot: { x: 172, y: 110 }, ball: { x: 172, y: 230 }, pxPerM: 133, slack: false, holdFrac: 0, reqDeg: null };
+    ui.hud(hudState({ hint: 'ボールが振れていく方へ、台車を少しだけ追いかけると揺れが消える', anchors }));
+    expect(hint.classList.contains('is-wide')).toBe(true);
+    // two lines (top 246) clear the ball: the card stays centred over the force bar
+    card.top = 246;
+    card.h = 40;
+    ui.hud(hudState({ hint: '指を離すと台車はその場で止まる。ボールは止まらない', anchors }));
+    expect(hint.classList.contains('is-wide')).toBe(false);
+    // the ball clear of the card sideways: no change either
+    card.top = 232;
+    ui.hud(hudState({ hint: 'ボールが振れていく方へ、台車を少しだけ追いかけると揺れが消える', anchors: { ...anchors, ball: { x: 135, y: 230 } } }));
+    expect(hint.classList.contains('is-wide')).toBe(false);
+    // is-wide: right end at the force bar's, growing left (styles.css)
+    expect(ruleOf('.yp[data-short="1"][data-layout="wide"] .hud-hint.is-wide')).toMatch(/left: 10px;\s*right: calc\(50% - min\(21vw, 260px\) - 2px\);\s*margin: 0 0 0 auto;\s*max-width: none;/);
+  });
+
+  it('#9 a tall status row without room for the 125 % English egg meter: it gives the room back before the chips lose their labels', () => {
+    resize(320, 568);
+    ui.mount(root);
+    ui.fx({ t: 'levelLoaded', level: lv('4-3') });
+    ui.show({ id: 'hud' });
+    const st = root.querySelector<HTMLElement>('.hud-status')!;
+    // 320 px, offline: 8 px too wide with the 164 px meter, fits with the 150 px one (is-close)
+    Object.defineProperty(st, 'clientWidth', { configurable: true, get: () => 304 });
+    Object.defineProperty(st, 'scrollWidth', { configurable: true, get: () => (st.classList.contains('is-close') ? 302 : 312) });
+    ui.hud(hudState({ Tmax: 18, offline: true }));
+    expect([...st.classList]).toEqual(['hud-status', 'is-snug', 'is-close']);
+  });
+
+  it('#14 results on a landscape phone: one toast at a time beside the card (a burst never stacks over the scene)', () => {
+    const restore = stubLayout((el) => (el.classList.contains('sheet') ? { w: 360, h: 300 } : null), (el) => (el.classList.contains('sheet') ? { x: 16, y: 20 } : null));
+    try {
+      resize(844, 390);
+      ui.mount(root);
+      ui.fx({ t: 'levelLoaded', level: lv('2-2') });
+      ui.show({ id: 'results', data: results(true) });
+      for (const x of ['技「追いかけ減衰」を見つけた!', '技「逆振りの溜め」を見つけた!', 'スキンが開いた!']) ui.toast(x, 'badge');
+      expect(texts()).toEqual(['技「追いかけ減衰」を見つけた!']);
+      // a desktop keeps its stack of up to three
+      root.replaceChildren();
+      resize(1280, 720);
+      ui = createUI({ store });
+      ui.mount(root);
+      ui.fx({ t: 'levelLoaded', level: lv('2-2') });
+      ui.show({ id: 'results', data: results(true) });
+      for (const x of ['A', 'B', 'C']) ui.toast(x, 'badge');
+      expect(texts()).toEqual(['A', 'B', 'C']);
+    } finally {
+      restore();
+    }
+    // ja trick / badge / rank toasts break between phrases in a stack wide enough for one (data-narrow: popups.ts);
+    // the other toasts keep the normal breaks
+    expect(ruleOf('.yp-toasts:not([data-narrow]) .toast--badge > span')).toMatch(/word-break: keep-all;\s*overflow-wrap: anywhere/);
+    expect(cssText).not.toMatch(/\.yp-toasts:not\(\[data-narrow\]\) \.toast > span/);
+  });
+
+  it('#44 wide 1-1 onboarding: the ←/→ keycaps sit left of centre, off the ruler\'s 1 m label', () => {
+    resize(1280, 720);
+    save.levels['1-1'] = { ...save.levels['1-1']!, cleared: false };
+    ui.mount(root);
+    ui.fx({ t: 'levelLoaded', level: lv('1-1') });
+    ui.show({ id: 'hud' });
+    ui.hud(hudState());
+    const caps = root.querySelector<HTMLElement>('.wide-onboard .keycaps')!;
+    expect(caps).not.toBeNull();
+    expect(caps.style.transform).toBe('');
+    // desktops only: landscape phones keep the pair centred (to the left it would cover the resting ball)
+    expect(ruleOf('.wide-onboard .keycaps')).toMatch(/transform: none/);
+    expect(ruleOf('.yp:not([data-short="1"]) .wide-onboard .keycaps')).toMatch(/transform: translateX\(-70px\)/);
+  });
+
+  it('#43 wide title: the top-left スキン comes first in the Tab order, あそぶ last', () => {
+    resize(1280, 720);
+    root.replaceChildren();
+    ui = createUI({ store, skins: () => ({ items: [], equipped: { ball: 'ball.red', crane: 'crane.yellow', trail: 'trail.dots', stage: 'stage.paper' }, unseen: 0 }) as never });
+    ui.mount(root);
+    ui.show({ id: 'title' });
+    const order = [...root.querySelectorAll<HTMLElement>('.title button')].map((b) => b.classList.contains('title-play') ? 'play' : b.classList.contains('title-skins') ? 'skins' : 'corner');
+    expect(order).toEqual(['skins', 'corner', 'corner', 'play']);
+  });
+
+  it('#24 the required-angle label moves out along its ray off a wall-height label written in the scene', () => {
+    ui.mount(root);
+    ui.fx({ t: 'levelLoaded', level: lv('3-3') });
+    ui.show({ id: 'hud' });
+    const a = { pivot: { x: 100, y: 100 }, ball: { x: 100, y: 160 }, pxPerM: 100, slack: false, holdFrac: 0, reqDeg: 49, reqDir: 1 as const };
+    const at = (): [number, number] => [Number(root.querySelector('.anc-req-label')!.getAttribute('x')), Number(root.querySelector('.anc-req-label')!.getAttribute('y'))];
+    ui.hud(hudState({ anchors: a }));
+    const [x0, y0] = at();
+    // Rr = 46 px: the label at 72 px along the 49° ray
+    expect(x0).toBeCloseTo(72 * Math.sin(49 * Math.PI / 180), 0);
+    // "0.80 m" right there: the label goes further out until it is clear, along the same ray
+    const label = { x0: 100 + x0 - 20, y0: 100 + y0 - 10, x1: 100 + x0 + 25, y1: 100 + y0 + 2 };
+    ui.hud(hudState({ anchors: { ...a, keepOut: [label] } }));
+    const [x1, y1] = at();
+    expect(x1).toBeGreaterThan(x0);
+    expect(y1 - y0).toBeCloseTo((x1 - x0) * Math.cos(49 * Math.PI / 180) / Math.sin(49 * Math.PI / 180), 0);
+    expect(100 + y1 + 5 - 12).toBeGreaterThanOrEqual(label.y1);
+    // a label elsewhere changes nothing
+    ui.hud(hudState({ anchors: { ...a, keepOut: [{ x0: 0, y0: 0, x1: 20, y1: 20 }] } }));
+    expect(at()).toEqual([x0, y0]);
+    // moved off the text, it keeps off the text's dashed line too (goes on to below it, never struck through)
+    const line = { x0: 100 + x0 - 60, y0: label.y1 + 3, x1: 100 + x0 + 200, y1: label.y1 + 7 };
+    ui.hud(hudState({ anchors: { ...a, keepOut: [label], keepOutLines: [line] } }));
+    const [x2, y2] = at();
+    expect(x2).toBeGreaterThan(x1);
+    expect(100 + y2 - 12).toBeGreaterThanOrEqual(line.y1);
+    // on a line but clear of every text: where it always was
+    ui.hud(hudState({ anchors: { ...a, keepOut: [{ x0: 0, y0: 0, x1: 20, y1: 20 }], keepOutLines: [{ x0: 0, y0: 100 + y0 - 6, x1: 400, y1: 100 + y0 - 2 }] } }));
+    expect(at()).toEqual([x0, y0]);
+  });
+
+  it('#23 READY in wide: the HUD boxes over the row above the beam, for the ghost tags to keep out of', () => {
+    const shown = (el: HTMLElement): boolean => el.style.display !== 'none';
+    const restore = stubLayout(
+      (el) => el.classList.contains('hud-ready') && shown(el) ? { w: 130, h: 24 } : el.classList.contains('chip-btn') && shown(el) ? { w: 84, h: 44 } : null,
+      (el) => el.classList.contains('hud-ready') ? { x: 162, y: 58 } : el.classList.contains('chip-btn') ? { x: 8, y: 64 } : null);
+    try {
+      resize(568, 320);
+      ui.mount(root);
+      ui.fx({ t: 'levelLoaded', level: lv('1-4') });
+      ui.show({ id: 'hud' });
+      ui.fx({ t: 'ready' });
+      ui.hud(hudState());
+      const boxes = ui.tagKeepOut!()!;
+      expect(boxes.length).toBeGreaterThanOrEqual(1);
+      expect(boxes.some((b) => b.x1 - b.x0 === 130 && b.y1 - b.y0 === 24)).toBe(true);
+      // cached until the HUD changes; nothing while running (the pill is gone) or in another screen
+      ui.hud(hudState({ running: true, timeSub: 20 }));
+      expect(ui.tagKeepOut!()?.some((b) => b.x1 - b.x0 === 130) ?? false).toBe(false);
+      ui.show({ id: 'pause' });
+      expect(ui.tagKeepOut!()).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  it('text and CSS fixes: Snap toast, the tagline, the logo and the tagline at 125 %, the egg meter, the title hint, the READY hint', () => {
+    // #25 / #39: one '!' in every English trick toast (the in-scene pop keeps 'Snap!')
+    for (const k of Object.keys(en).filter((x) => x.startsWith('trick.') && x !== 'trick.toast')) {
+      expect(en['trick.toast'].replace('{name}', en[k as keyof typeof en]), k).not.toMatch(/!!/);
+    }
+    expect(en['pop.snap']).toBe('Snap!');
+    // #8: no break after 'optimal-' (U+2011), ja after 「、」 (keep-all)
+    expect(en['app.tagline']).toContain('optimal‑control');
+    expect(cssText).toMatch(/\.tagline \{\s*white-space: normal;[^}]*word-break: keep-all;\s*overflow-wrap: anywhere;/);
+    // #0: 125 % logo capped to the width
+    expect(ruleOf('.yp-ts125 .logo-a,\n.yp-ts125 .logo-b')).toMatch(/font-size: min\(1em, calc\(\(100vw - 32px\) \/ 7\.2\)\)/);
+    // #21: English tagline on 568-644 px landscape phones: one smaller line; at 125 % only where it then fits (637 px+)
+    expect(cssText).toMatch(/@media \(max-width: 644px\) \{\s*html:not\(\.yp-ts125\) \.yp\[lang="en"\]\[data-short="1"\] \.tagline \{\s*padding: 6px 12px;\s*font-size: 0\.8rem;\s*white-space: nowrap;/);
+    expect(cssText).toMatch(/@media \(min-width: 637px\) and \(max-width: 644px\) \{\s*html\.yp-ts125 \.yp\[lang="en"\]\[data-short="1"\] \.tagline \{\s*padding: 6px 12px;\s*font-size: 0\.8rem;\s*\}/);
+    // #22: the title hint's paper pill on landscape phones (over the ruler)
+    expect(ruleOf('.yp[data-short="1"] .title-hint')).toMatch(/background: rgba\(251, 248, 241, 0\.86\)/);
+    // #9: 125 % English egg meter; a status row without room for it gets the old box in a smaller type (is-close)
+    expect(ruleOf('.yp-ts125 .yp[lang="en"][data-layout="tall"] .hud-tension')).toMatch(/width: 164px/);
+    expect(ruleOf('.yp-ts125 .yp[lang="en"][data-layout="tall"] .hud-status.is-close .hud-tension')).toMatch(/width: 150px;\s*font-size: 0\.6rem;/);
+    // #13: landscape phones' READY hint: compact, just above the force bar, no wider than it
+    expect(ruleOf('.yp[data-short="1"][data-layout="wide"] .hud-hint')).toMatch(/bottom: calc\(34px \+ var\(--safe-b\)\);\s*max-width: calc\(42vw \+ 4px\);/);
+    // #13 / review: the hint keeps the normal line breaks (keep-all pushed hints to three lines, up into the ball)
+    expect(ruleOf('.yp[data-short="1"][data-layout="wide"] .hud-hint')).not.toMatch(/keep-all|anywhere/);
   });
 });

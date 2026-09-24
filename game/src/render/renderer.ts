@@ -32,8 +32,8 @@ import { createBricks } from './bricks';
 import type { Bricks } from './bricks';
 import { createString } from './string';
 import type { StringLine } from './string';
-import { createGhostMaterial, drawGhosts, lastTagRects, resetGhostTags } from './ghosts';
-import { QuadBatch, createInkMaterial, drawBackInk, drawMarginInk } from './overlays';
+import { createGhostMaterial, drawGhosts, lastTagRects, resetGhostTags, tagRow1 } from './ghosts';
+import { QuadBatch, Z_BACKINK, createInkMaterial, drawBackInk, drawMarginInk, heightLabels } from './overlays';
 import { Particles, PointsBatch, S_DISC, S_EMBER, S_RECT, S_RING } from './particles';
 import { Trail } from './trail';
 import { DEFAULT_LOOK, SKIN_PARTS, ballTrailColour, confettiPalette, craneAccent, patternAt } from './skinLooks';
@@ -90,7 +90,22 @@ export interface RendererExtras {
    * only (menus, title, results, READY). Physics, hitboxes, the camera and the ghosts never change.
    */
   setSkin(look: SkinLook): void;
+  /**
+   * READY: screen boxes (CSS px) of the HUD's pill and chips drawn over the row above the beam; the ghost tags of that
+   * row keep out of them (moving aside or hiding, ghosts.ts). null: none (the run started).
+   */
+  setTagKeepOut(boxes: readonly ScreenBox[] | null): void;
+  /**
+   * Screen boxes (CSS px) of the wall-height labels ("0.75 m") written in the scene this frame: the HUD's
+   * required-angle label keeps clear of them (§9.3).
+   */
+  heightLabelBoxes(): ScreenBox[];
+  /** Their dashed lines, as 4 px tall screen boxes: a label moved off a height label keeps off its line too. */
+  heightLineBoxes(): ScreenBox[];
 }
+
+/** A rectangle in viewport CSS px. */
+export interface ScreenBox { x0: number; y0: number; x1: number; y1: number }
 
 /** Extra, non-contract hooks for dev pages and tests. */
 export interface RendererDebug {
@@ -300,6 +315,9 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
   let pendingDecal: { level: string; d: Decal } | null = null;
   let vigLevel = 0;
   let aiMarginMm = 20;
+  /** READY: the HUD's boxes over the tags' row 1 (setTagKeepOut), and those as x ranges at the tags (reused). */
+  let tagKeepOut: readonly ScreenBox[] | null = null;
+  const tagKeepX: [number, number][] = [];
   /** Board heading text and the last label core gave per level id (levelLoaded.label). */
   let boardLabel = '';
   const boardLabels = new Map<string, string>();
@@ -540,6 +558,29 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
   };
 
   const mapper = createRailMapper(() => (rig ? rig.base : null), () => (layout ? layout.scene : null));
+
+  /** Viewport CSS px of a world point at depth z through this frame's camera. */
+  const project = (x: number, y: number, z: number): { x: number; y: number } => {
+    if (!rig || !layout) return { x: 0, y: 0 };
+    v3.set(x, y, z).project(rig.view);
+    return { x: layout.scene.x + (v3.x + 1) * 0.5 * layout.scene.w, y: layout.scene.y + (1 - v3.y) * 0.5 * layout.scene.h };
+  };
+
+  /** The keep-out boxes that cross the tags' row 1, as x ranges [m] at the tags (z = 0.1, ghosts.ts); null: none. */
+  const tagKeepOutX = (pxToM: number): readonly (readonly [number, number])[] | null => {
+    if (!tagKeepOut || !rig || !layout) return null;
+    const row = tagRow1(pxToM);
+    const a = project(0, row.y, 0.1), b = project(1, row.y, 0.1);
+    const k = b.x - a.x;
+    const top = project(0, row.y + row.h / 2, 0.1).y, bottom = project(0, row.y - row.h / 2, 0.1).y;
+    if (!(k > 1e-6) || !Number.isFinite(top + bottom)) return null;
+    tagKeepX.length = 0;
+    for (const bx of tagKeepOut) {
+      if (!(bx.y1 > top && bx.y0 < bottom)) continue;
+      tagKeepX.push([(bx.x0 - a.x) / k, (bx.x1 - a.x) / k]);
+    }
+    return tagKeepX.length ? tagKeepX : null;
+  };
 
   // ---- per-frame ink ----------------------------------------------------------------------
 
@@ -1060,7 +1101,7 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
         (gm.uniforms.uTime as { value: number }).value = time;
         (gm.uniforms.uPx as { value: number }).value = quality.state.dpr;
         (gm.uniforms.uFlicker as { value: number }).value = reduced ? 0 : 1;
-        drawGhosts(ghostBatch, f.ghosts, L, px, time, 1, rig.visibleX(), x, dt);
+        drawGhosts(ghostBatch, f.ghosts, L, px, time, 1, rig.visibleX(), x, dt, tagKeepOutX(px));
       }
 
       // Trail + particles.
@@ -1348,6 +1389,32 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
       const out = {} as Record<SkinPart, string>;
       for (const p of SKIN_PARTS) out[p] = applied ? applied[p] : look[p].id;
       return out;
+    },
+
+    setTagKeepOut(boxes) {
+      tagKeepOut = boxes && boxes.length ? boxes : null;
+    },
+
+    heightLabelBoxes() {
+      if (!rig || !level) return [];
+      const r = rig;
+      // As drawBackInk writes them: left-aligned at xa, the glyph cells th * 0.12..1.12 above the line, at depth
+      // Z_BACKINK; the digits' ink is about 0.35..1.05 of that.
+      return heightLabels(level.physics.walls, r.pxPerM(), r.kind === 'tall').map((l) => {
+        const y = r.projectY(l.h, Z_BACKINK);
+        const p0 = project(l.xa, y + l.th * 1.05, Z_BACKINK), p1 = project(l.xa + l.w, y + l.th * 0.35, Z_BACKINK);
+        return { x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y };
+      });
+    },
+
+    heightLineBoxes() {
+      if (!rig || !level) return [];
+      const r = rig;
+      return heightLabels(level.physics.walls, r.pxPerM(), r.kind === 'tall').map((l) => {
+        const y = r.projectY(l.h, Z_BACKINK);
+        const p0 = project(l.xa, y, Z_BACKINK), p1 = project(l.xb, y, Z_BACKINK);
+        return { x0: p0.x, y0: p0.y - 2, x1: p1.x, y1: p1.y + 2 };
+      });
     },
 
     setAiMarginMm(mm) {

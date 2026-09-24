@@ -140,7 +140,8 @@ export interface ScreenEnv {
   /** How the run shown on the results card was played (practice / assist runs record no PB or medal). */
   lastRun(): { practice: boolean; assist: boolean; pb: boolean | null; firstCrown: boolean };
   layoutKind(): 'wide' | 'tall';
-  toast(text: string, kind?: 'info' | 'badge' | 'warn' | 'notice'): void;
+  /** 'cardBadge': a badge the results card lists (dropped when the card closes, popups.ts ToastKind). */
+  toast(text: string, kind?: 'info' | 'badge' | 'warn' | 'notice' | 'cardBadge'): void;
   /** Re-renders the current screen (e.g. after a language change). */
   refresh(): void;
 }

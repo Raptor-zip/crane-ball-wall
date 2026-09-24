@@ -1,5 +1,6 @@
 // HUD overlay: top band, 3D-anchored meters, force bar (GAME_DESIGN.md §9.3), tall dock (D10). Owner: O7.
 import type { HudState, HudAnchors } from './ui';
+import type { Box } from './popups';
 import type { LevelDef } from '../sim/level';
 import type { GameEvent } from '../core/bus';
 import type { GhostKind, Layout } from '../render/renderer';
@@ -320,11 +321,12 @@ export function createHud(root: HTMLElement, deps?: HudDeps): Hud {
 
   /**
    * tall: the status row must never overflow sideways (320 px phones, long English labels). Measured only when its
-   * content changes: first the offline chip drops its word, then the chip buttons their labels (44 px icon buttons with
-   * aria-labels), then the mode chip and the rack get smaller, and last the offline chip goes.
+   * content changes: first the offline chip drops its word, then the 125 % English egg meter its wider box (is-close,
+   * styles.css), then the chip buttons their labels (44 px icon buttons with aria-labels), then the mode chip and the
+   * rack get smaller, and last the offline chip goes.
    */
   function fitDock(): void {
-    status.classList.remove('is-snug', 'is-tight', 'is-tighter', 'is-tightest');
+    status.classList.remove('is-snug', 'is-close', 'is-tight', 'is-tighter', 'is-tightest');
     if (placed !== 'tall') return;
     let any = false;
     for (const c of [...chips.children, ...statusEnd.children]) if ((c as HTMLElement).style.display !== 'none') any = true;
@@ -333,6 +335,8 @@ export function createHud(root: HTMLElement, deps?: HudDeps): Hud {
     if (status.scrollWidth <= status.clientWidth + 1) return;
     // the 「オフライン」 chip (§7.12) keeps its word while there is room, and is the first to give it up
     status.classList.add('is-snug');
+    if (status.scrollWidth <= status.clientWidth + 1) return;
+    status.classList.add('is-close');
     if (status.scrollWidth <= status.clientWidth + 1) return;
     status.classList.add('is-tight');
     if (status.scrollWidth <= status.clientWidth + 1) return;
@@ -470,11 +474,13 @@ export function createHud(root: HTMLElement, deps?: HudDeps): Hud {
       const ex = Math.sin(dir * r * RAD);
       const ey = Math.cos(r * RAD);
       setAttr(rLine, 'd', `M0 0L${(ex * (Rr + 10)).toFixed(1)} ${(ey * (Rr + 10)).toFixed(1)}`);
-      setAttr(rLabel, 'x', (ex * (Rr + 26)).toFixed(1));
-      setAttr(rLabel, 'y', (ey * (Rr + 26) + 5).toFixed(1));
+      const text = `${Math.round(r)}°`;
+      const d = reqLabelDist(a, ex, ey, Rr + 26, text.length);
+      setAttr(rLabel, 'x', (ex * d).toFixed(1));
+      setAttr(rLabel, 'y', (ey * d + 5).toFixed(1));
       setAttr(rSpark, 'cx', (ex * Rr).toFixed(1));
       setAttr(rSpark, 'cy', (ey * Rr).toFixed(1));
-      setText(rLabel, `${Math.round(r)}°`);
+      setText(rLabel, text);
       const now = amp >= r && !slack;
       if (now !== reached) {
         reached = now;
@@ -484,10 +490,11 @@ export function createHud(root: HTMLElement, deps?: HudDeps): Hud {
       show(req, false);
     }
 
-    // Gap gauge next to the ball.
+    // Gap gauge next to the ball; not during the hold (inside a pocket the ball is always within 25 cm of a wall: the
+    // gauge would sit on the wall beside the hold ring, unchanging, while the player watches the ball settle).
     const g = hs.nearGapMm;
     const ballR = 0.06 * scale;
-    if (g !== null && g <= 250 && hs.running) {
+    if (g !== null && g <= 250 && hs.running && !((a.holdFrac ?? 0) > 0)) {
       show(gap, true);
       const label = fmtGap(Math.max(0, g));
       setText(gText, label);
@@ -512,6 +519,28 @@ export function createHud(root: HTMLElement, deps?: HudDeps): Hud {
     }
 
     updateHold(a, hs, scale);
+  }
+
+  /**
+   * How far along its ray (from the pivot) the required-angle label goes: `d0` unless it would sit on a label written
+   * in the scene (a.keepOut: the wall height "0.80 m", which a short string on a landscape phone puts right there,
+   * reading "0.849°"); then further out in 4 px steps (up to 48 px) to the first place clear of those labels and of their
+   * dashed lines (a.keepOutLines: under the "0.80 m", not struck through on its line).
+   */
+  function reqLabelDist(a: HudAnchors, ex: number, ey: number, d0: number, chars: number): number {
+    const ko = a.keepOut;
+    if (!ko || !ko.length) return d0;
+    // 15 px text: about 9 px per glyph and 12 px above its baseline (5 px under the anchor), plus the paper halo.
+    const hw = chars * 4.5 + 2;
+    const hits = (boxes: readonly Box[], d: number): boolean => {
+      const x = a.pivot.x + ex * d;
+      const y = a.pivot.y + ey * d + 5;
+      return boxes.some((b) => x - hw < b.x1 && x + hw > b.x0 && y - 12 < b.y1 && y + 2 > b.y0);
+    };
+    if (!hits(ko, d0)) return d0;
+    const all = a.keepOutLines?.length ? [...ko, ...a.keepOutLines] : ko;
+    for (let d = d0 + 4; d <= d0 + 48; d += 4) if (!hits(all, d)) return d;
+    return d0;
   }
 
   /** Hold ring around the ball: fills in 0.5 s while holding (§9.3). */
@@ -602,12 +631,42 @@ export function createHud(root: HTMLElement, deps?: HudDeps): Hud {
     if (hintOn !== lastHintShown) {
       lastHintShown = hintOn;
       show(hint, hintOn);
+      hintFit = '';
       // tall: the READY hint takes the scoreboard's place until the run starts.
       show(board, !hintOn);
     }
     if (dockChanged) fitDock();
     fbar.update(hs.F, hs.Fmax, hs.aiF, hs.saturated);
     updateAnchors(hs, hs.anchors);
+    fitHint(hs.anchors);
+  }
+
+  /**
+   * Landscape phones: the compact READY hint sits just above the force bar, no wider than it (styles.css). A long text
+   * there takes three lines and grows up into the resting ball: then it widens to the left (is-wide), keeping its right
+   * end at the force bar's (the toasts' corner beside it stays free), so that it keeps to one or two lines under the
+   * ball. Measured when the text, the layout, the text size, the fonts or the ball's place changed, not every frame.
+   */
+  let hintFit = '';
+  function fitHint(a: HudAnchors | null | undefined): void {
+    if (!lastHintShown || placed !== 'wide' || !layout || layout.h >= 520 || !a || !level) return;
+    const scale = a.pxPerM && a.pxPerM > 0 ? a.pxPerM : Math.hypot(a.ball.x - a.pivot.x, a.ball.y - a.pivot.y) / level.physics.L;
+    if (!Number.isFinite(scale + a.ball.x + a.ball.y) || scale <= 0) return;
+    const doc = typeof document !== 'undefined' ? document : null;
+    const key = [lastHint, layout.w, layout.h, doc?.documentElement.classList.contains('yp-ts125'), doc?.fonts?.status, Math.round(a.ball.x / 4), Math.round(a.ball.y / 4)].join('|');
+    if (key === hintFit) return;
+    hintFit = key;
+    hint.classList.remove('is-wide');
+    // Layout boxes (the card's rise animation moves it by a transform, which must not count).
+    const par = hint.offsetParent;
+    if (!par || !(hint.offsetWidth > 0)) return;
+    const p = par.getBoundingClientRect();
+    const o = root.getBoundingClientRect();
+    const x0 = p.left - o.left + hint.offsetLeft;
+    const y0 = p.top - o.top + hint.offsetTop;
+    const qx = Math.max(x0, Math.min(a.ball.x, x0 + hint.offsetWidth));
+    const qy = Math.max(y0, Math.min(a.ball.y, y0 + hint.offsetHeight));
+    if (Math.hypot(a.ball.x - qx, a.ball.y - qy) < 0.06 * scale + 2) hint.classList.add('is-wide');
   }
 
   function fx(e: GameEvent): void {

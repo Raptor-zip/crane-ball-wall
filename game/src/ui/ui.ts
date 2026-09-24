@@ -49,6 +49,8 @@ export interface HudAnchors {
   holdFrac?: number;                      // 0..1 hold ring
   reqDeg?: number | null;                 // required angle of the next wall within 1.2 m (RenderFrame.reqDeg)
   reqDir?: 1 | -1;                        // side of that wall relative to the trolley
+  keepOut?: readonly Box[];               // scene labels the required-angle label keeps clear of (wall heights "0.80 m")
+  keepOutLines?: readonly Box[];          // their dashed lines: a label moved off keepOut keeps off these too
 }
 
 export interface HudState {
@@ -97,13 +99,20 @@ export interface UI {
   show(s: Screen): void;
   hud(h: HudState): void;                        // once per frame (diffed into the DOM)
   fx(e: GameEvent, screenPos?: { x: number; y: number }): void;
-  toast(text: string, kind?: 'info' | 'badge' | 'warn' | 'notice'): void;
+  // 'skin' (O7 addition): a skin unlock, drawn like 'info'; it belongs to the results card like the badges
+  toast(text: string, kind?: 'info' | 'badge' | 'warn' | 'notice' | 'skin'): void;
   on(a: UiAction, cb: (payload?: unknown) => void): void;
   /**
    * Esc / gamepad B from outside the UI layer (core): closes the settings / about / notes / board sub-screen on
    * top, exactly as Escape inside the layer does. Returns true when it closed one (the core state stays).
    */
   back?(): boolean;
+  /**
+   * O7 addition (non-breaking): READY in wide, the boxes (CSS px in the UI root) of the HUD's pill, mode chip and chip
+   * column, which sit over the row above the gantry beam; the renderer keeps the ghost tags of that row out of them
+   * (RendererExtras.setTagKeepOut). null: nothing there. Cached; re-read after the HUD changed.
+   */
+  tagKeepOut?(): Box[] | null;
 }
 
 /** What a screen renderer may return. */
@@ -118,6 +127,8 @@ export interface ScreenHandle {
 const COMPACT_PANEL_H = 60;
 /** The floor's front edge (z = 0.32 m, seen from 6° above) lines up with this y (m) in the ball plane (render/scene.ts). */
 const FLOOR_FRONT_Y = -0.08;
+/** wide HUD: a toast corner beside the READY hint card narrower than this (px) waits for the card to go instead. */
+const TOAST_BESIDE_MIN = 180;
 
 type SubId = 'settings' | 'about' | 'notes' | 'board' | 'skins';
 const SUB_SCREENS: ReadonlySet<Screen['id']> = new Set<SubId>(['settings', 'about', 'notes', 'board', 'skins']);
@@ -168,6 +179,11 @@ export function createUI(ctx: UiContext = {}): UI {
   let mounted = false;
   let lastSafe = 0;
   let lastInsets = { r: 0, b: 0 };
+  // READY pill / chips boxes for the ghost tags (tagKeepOut): re-read after the HUD, the screen or the layout changed.
+  let keepOut: Box[] | null = null;
+  let keepOutDirty = true;
+  // wide READY: the hint card is up (the HUD's toasts keep beside it, toastArea).
+  let lastHintUp = false;
   // How the last finished run was played (for the results card: practice / assist runs keep no PB or medal).
   let lastRun = { practice: false, assist: false, pb: null as boolean | null, firstCrown: false };
 
@@ -400,6 +416,7 @@ export function createUI(ctx: UiContext = {}): UI {
     if (kindChanged || force) buildDeck();
     else placeDeck();
     hud.setLayout(layout);
+    keepOutDirty = true;
     for (const cb of layoutCbs) cb(layout);
     if (kindChanged && current.id !== 'hud') render();
     pops.placeBanners();
@@ -459,7 +476,9 @@ export function createUI(ctx: UiContext = {}): UI {
     handle?.dispose?.();
     handle = null;
     const sc = current;
+    const prevId = yp.dataset.screen;
     yp.dataset.screen = sc.id;
+    keepOutDirty = true;
     hud.setMenu(sc.id === 'results');
     layer.replaceChildren();
     layer.dataset.kind = PAGE_SCREENS.has(sc.id) ? 'page' : sc.id === 'pause' || sc.id === 'briefing' ? 'scrim' : 'none';
@@ -516,8 +535,18 @@ export function createUI(ctx: UiContext = {}): UI {
     // to the run and the results, so it does not follow the player to the level select, the ranking, the AI demo.
     if (sc.id === 'hud' || sc.id === 'results') pops.placeBanners();
     else pops.clearBanners();
-    // Trick / badge toasts are about the run (the results card lists them): they do not pile up on the level select.
-    if (PAGE_SCREENS.has(sc.id) || sc.id === 'title') toasts.drop('badge');
+    // Trick / badge / rank toasts are about the run: they do not pile up on the level select.
+    if (PAGE_SCREENS.has(sc.id) || sc.id === 'title') {
+      toasts.drop('badge');
+      toasts.drop('cardBadge');
+    }
+    // Leaving the results card (retry, next, the AI demo): the toasts of what the card lists (its badges, the skins the
+    // run unlocked), still showing or waiting for room (a small phone's card leaves none), never come on the next
+    // attempt. Tricks and rank news are on no card: they still show, one at a time, in the HUD's place.
+    if (prevId === 'results' && sc.id !== 'results') {
+      toasts.drop('cardBadge');
+      toasts.drop('skin');
+    }
     // Toasts never cover the card that just opened (results buttons, pause menu): they move or wait (see toastArea).
     toasts.refresh();
     // Focus: into the layer for menus, back to the page for play.
@@ -625,7 +654,7 @@ export function createUI(ctx: UiContext = {}): UI {
     if (wideShow) {
       wideOnboard.replaceChildren(
         want === 'keys'
-          ? h('div', { class: 'keycaps', style: 'position:relative;left:auto;bottom:auto;transform:none' }, h('span', { class: 'keycap' }, '←'), h('span', { class: 'keycap' }, '→'))
+          ? h('div', { class: 'keycaps', style: 'position:relative;left:auto;bottom:auto' }, h('span', { class: 'keycap' }, '←'), h('span', { class: 'keycap' }, '→'))
           : h('div', { class: 'deck-hand', style: 'position:relative;width:260px;height:80px;margin:0' }, h('span', { class: 'deck-hand-track' }), h('span', { class: 'deck-hand-finger' }, icon('hand'))),
       );
     }
@@ -643,13 +672,34 @@ export function createUI(ctx: UiContext = {}): UI {
     const prev = lastHud;
     lastHud = hs;
     hud.update(hs);
+    // wide: the HUD's toast keeps beside the READY hint card (toastArea); it moves when the card comes or goes.
+    const hintUp = layout.kind === 'wide' && !!hs.hint && !hs.running && hs.timeSub === 0;
+    if (hintUp !== lastHintUp) {
+      lastHintUp = hintUp;
+      if (current.id === 'hud') toasts.refresh();
+    }
     if (deck) {
       deck.force(hs.F, hs.Fmax, hs.aiF, hs.saturated);
       // tall: "move to start" is written on the drag surface itself (not squeezed into the HUD).
       deck.ready(!hs.running && hs.timeSub === 0 && hs.mode !== 'demo' && current.id === 'hud');
     }
     handle?.onHud?.(hs);
-    if (!prev || prev.running !== hs.running || (prev.timeSub === 0) !== (hs.timeSub === 0) || prev.mode !== hs.mode) updateOnboarding();
+    if (!prev || prev.running !== hs.running || (prev.timeSub === 0) !== (hs.timeSub === 0) || prev.mode !== hs.mode) {
+      updateOnboarding();
+      keepOutDirty = true;
+    }
+  }
+
+  /** READY in wide: the HUD boxes over the ghost tags' row above the beam (UI.tagKeepOut). */
+  function tagKeepOut(): Box[] | null {
+    if (!mounted || layout.kind !== 'wide' || current.id !== 'hud') return null;
+    if (keepOutDirty) {
+      keepOutDirty = false;
+      const els = hud.el.querySelectorAll<HTMLElement>('.hud-ready, .hud-mode, .hud-chips > *');
+      const boxes = [...els].map(boxOf).filter((b): b is Box => !!b);
+      keepOut = boxes.length ? boxes : null;
+    }
+    return keepOut;
   }
 
   // ------------------------------------------------------------ popups & toasts: where they may go
@@ -682,8 +732,8 @@ export function createUI(ctx: UiContext = {}): UI {
 
   /**
    * Toast area for the current screen. HUD: tall one at a time on the bench band at the bottom of the 3D view, right
-   * under the floor's front edge (never on the ball, the goal zone or its floor pad), landscape phones one at a time in
-   * the bottom-right corner, wide otherwise the stylesheet's place under the clock. AI demo in wide: one at a time
+   * under the floor's front edge (never on the ball, the goal zone or its floor pad), wide one at a time in the
+   * bottom-right corner (never on the gantry, the trolley or its spring). AI demo in wide: one at a time
    * under the skip button (the F(t) strip is under the floor, the ball swings above it). Screens with a card (results,
    * pause, briefing, share sheet, the tall demo's graph panel): the largest free side of the card, so that toasts never
    * cover its buttons (nor a crown / PB banner there); when nothing fits they wait until the card closes.
@@ -703,15 +753,25 @@ export function createUI(ctx: UiContext = {}): UI {
         const top = Math.max(playBottom, Number.isFinite(front) ? front : playBottom + 8) + 4;
         return { x0: 10, x1: W - 10, top, limit: H - 8 - lastInsets.b, max: 1 };
       }
-      if (yp.dataset.short === '1') {
-        // Landscape phones: the stylesheet's place under the clock is the gantry and the wall tops, where the ball
-        // clears the walls. One toast at a time in the bottom-right corner instead, in the finger band under the
-        // floor, beside the force bar (like tall, which keeps toasts off the play area).
+      if (layout.kind === 'wide') {
+        // The stylesheet's place under the clock is the gantry, the trolley and the wall tops, where the ball clears
+        // the walls. One toast at a time in the bottom-right corner instead, in the finger band under the floor,
+        // beside the force bar (like tall, which keeps toasts off the play area).
         const o = yp.getBoundingClientRect();
         const bar = hud.el.querySelector<HTMLElement>('.hud-force')?.getBoundingClientRect();
         const x1 = W - 10 - lastInsets.r;
-        const x0 = Math.max(bar && bar.width > 0 ? bar.right - o.left + 10 : W * 0.62, x1 - 280);
-        return { x0, x1, bottom: H - 6 - lastInsets.b, limit: layout.hudTop + 8, max: 1 };
+        let x0 = Math.max(bar && bar.width > 0 ? bar.right - o.left + 10 : W * 0.62, x1 - 280);
+        const bottom = H - 6 - lastInsets.b;
+        // The READY hint card (bottom centre, up to 640 px) reaches past the force bar on 4:3 / 3:2 screens: the toast
+        // keeps beside it, or waits for the run to start (the card goes) when the corner left is too narrow for one.
+        const hint = hud.el.querySelector<HTMLElement>('.hud-hint');
+        const hb = hint && hint.getClientRects().length ? hint.getBoundingClientRect() : null;
+        if (hb && hb.width > 0 && hb.right - o.left + 8 > x0) {
+          const hx = hb.right - o.left + 8;
+          if (x1 - hx < TOAST_BESIDE_MIN) return { x0, x1, bottom, limit: H, max: 1 };
+          x0 = hx;
+        }
+        return { x0, x1, bottom, limit: layout.hudTop + 8, max: 1 };
       }
       return null;
     }
@@ -744,8 +804,10 @@ export function createUI(ctx: UiContext = {}): UI {
       const x1 = leftW >= rightW ? c.x0 - gap : W - 10;
       const mid = (x0 + x1) / 2;
       const hw = Math.min(210, (x1 - x0) / 2);
-      // From the bottom of the free side: the stamp and the PB / crown banners live in its upper part.
-      return { x0: mid - hw, x1: mid + hw, bottom: bottom - 6, limit: under(mid - hw, mid + hw, layout.hudTop + 16) };
+      // From the bottom of the free side: the stamp and the PB / crown banners live in its upper part. Landscape
+      // phones: one at a time (the HUD's rule), so that a burst never stacks up over the ball and the goal zone there.
+      const one = yp.dataset.short === '1' ? { max: 1 } : {};
+      return { x0: mid - hw, x1: mid + hw, bottom: bottom - 6, limit: under(mid - hw, mid + hw, layout.hudTop + 16), ...one };
     }
     const x0 = Math.max(10, W / 2 - 210);
     const x1 = Math.min(W - 10, W / 2 + 210);
@@ -837,6 +899,7 @@ export function createUI(ctx: UiContext = {}): UI {
         break;
       case 'ready':
         hud.refreshChips();
+        keepOutDirty = true;
         break;
       case 'retry':
         pops.clear();
@@ -891,9 +954,11 @@ export function createUI(ctx: UiContext = {}): UI {
       case 'crash': {
         crashesHere++;
         const p = anchorPos(screenPos);
-        pops.show(t('pop.crash'), p.x, p.y - 30, 'crash');
-        // string (2) and egg (5) crashes have no depth: "−0mm" would say nothing, the cause says it all
-        pops.crashInfo(e.kind === 2 || e.kind === 5 ? null : Math.max(0, e.overlapMm), t(CRASH_KEYS[e.kind as 1] ?? 'crash.ball'), p.x, p.y + 56);
+        const wordY = pops.show(t('pop.crash'), p.x, p.y - 30, 'crash');
+        // string (2) and egg (5) crashes have no depth: "−0mm" would say nothing, the cause says it all. The info pill
+        // sits 46 px under the word; a crash at the top of the view (the rail) pushes the word down inside the bounds,
+        // and the pill goes down with it instead of covering it.
+        pops.crashInfo(e.kind === 2 || e.kind === 5 ? null : Math.max(0, e.overlapMm), t(CRASH_KEYS[e.kind as 1] ?? 'crash.ball'), p.x, Math.max(p.y + 56, wordY + 86));
         hud.refreshChips();
         break;
       }
@@ -934,8 +999,12 @@ export function createUI(ctx: UiContext = {}): UI {
       });
       yp.appendChild(layer);
       toasts = createToasts(yp, toastArea);
-      // A crown / PB banner takes room from the toasts next to the results card while it is up.
-      pops.onBannerChange(() => toasts.refresh());
+      // A crown / PB banner takes room from the toasts next to the results card while it is up. tall: it sits over the
+      // scoreboard during the success beat; the dock steps back (styles.css) as it does when the card opens.
+      pops.onBannerChange(() => {
+        yp.classList.toggle('yp--banner', !!yp.querySelector('.yp-banner > .pop'));
+        toasts.refresh();
+      });
       // A card opened on top of the screen (share sheet, notes) moves the toasts too.
       try {
         let queued = false;
@@ -1000,6 +1069,7 @@ export function createUI(ctx: UiContext = {}): UI {
       goBack();
       return true;
     },
+    tagKeepOut,
   };
 }
 

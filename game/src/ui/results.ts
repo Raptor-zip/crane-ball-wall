@@ -457,7 +457,7 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
       announced.add(data);
       data.badges.forEach((b, i) => {
         window.setTimeout(() => {
-          if (card.isConnected) env.toast(t('badge.toast', { name: t(`badge.${b}` as 'badge.kamihitoe') }), 'badge');
+          if (card.isConnected) env.toast(t('badge.toast', { name: t(`badge.${b}` as 'badge.kamihitoe') }), 'cardBadge');
         }, still ? 0 : 700 + i * 450);
       });
     }

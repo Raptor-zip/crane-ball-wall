@@ -230,6 +230,14 @@ input {
   0%, 100% { transform: translateY(0); box-shadow: 0 4px 0 var(--ink); background: var(--card); }
   40% { transform: translateY(3px); box-shadow: 0 1px 0 var(--ink); background: var(--gantry); }
 }
+/* wide 1-1 onboarding (ui.ts wideOnboard): on a desktop the pair sits 70 px left of centre, off the floor ruler's "1";
+   landscape phones keep it centred (to the left it would cover the resting ball). */
+.wide-onboard .keycaps {
+  transform: none;
+}
+.yp:not([data-short="1"]) .wide-onboard .keycaps {
+  transform: translateX(-70px);
+}
 
 /* ---------------------------------------------------------------- force bar */
 
@@ -561,6 +569,29 @@ input {
 .yp[data-layout="wide"] .hud-hint {
   bottom: calc(52px + var(--safe-b));
 }
+/* Landscape phones: the resting ball and the goal zone's floor are just above that; the tall short-phone card
+   (compact) sits just above the force bar instead, in the finger band under the floor, no wider than the force bar
+   (the toasts' corner beside it stays free). */
+.yp[data-short="1"][data-layout="wide"] .hud-hint {
+  bottom: calc(34px + var(--safe-b));
+  max-width: calc(42vw + 4px);
+  padding: 3px 9px;
+  gap: 6px;
+  font-size: 0.76rem;
+  line-height: 1.22;
+}
+.yp[data-short="1"][data-layout="wide"] .hud-hint-mark {
+  width: 17px;
+  height: 17px;
+}
+/* A long hint that would take three lines up into the resting ball (hud.ts fitHint): wider, to the left, its right end
+   still the force bar's. */
+.yp[data-short="1"][data-layout="wide"] .hud-hint.is-wide {
+  left: 10px;
+  right: calc(50% - min(21vw, 260px) - 2px);
+  margin: 0 0 0 auto;
+  max-width: none;
+}
 
 /* practice: "R長押しで5秒もどす" (wide: under the rewind chip; tall: the bottom line of the dock). */
 .hud-rewind-hint {
@@ -639,6 +670,14 @@ input {
 }
 .yp:not([data-screen="hud"]) .hud-dock {
   display: none;
+}
+/* The crown / PB banner of the success beat sits over the scoreboard (ui.ts bannerPlace): the dock fades out under
+   it instead of showing cut digits around it (the results card opening a moment later hides the dock anyway). */
+.yp[data-layout="tall"] .hud-dock {
+  transition: opacity 0.2s ease-out;
+}
+.yp[data-layout="tall"].yp--banner .hud-dock {
+  opacity: 0;
 }
 
 /* status row */
@@ -726,6 +765,16 @@ input {
 }
 .yp[data-layout="tall"] .hud-tension-row {
   margin-bottom: 3px;
+}
+/* 125 % English: "Tension 18.5 / 18 N" needs 143 px of the row's 130: a fixed wider box (it never jumps with the value).
+   A status row without room for it (320 px with the offline chip, hud.ts fitDock is-close) gets the old box back with
+   a smaller type before the chips give up their labels. */
+.yp-ts125 .yp[lang="en"][data-layout="tall"] .hud-tension {
+  width: 164px;
+}
+.yp-ts125 .yp[lang="en"][data-layout="tall"] .hud-status.is-close .hud-tension {
+  width: 150px;
+  font-size: 0.6rem;
 }
 
 /* the panel: scoreboard, or the READY hint (which may run over the top of the resting scene, never over the deck) */
@@ -1262,6 +1311,12 @@ input {
 .toast > span {
   text-wrap: balance;
 }
+/* The run's trick / badge / rank toasts (ja) break between phrases, not inside 「追いかけ減衰」; the other toasts, and a
+   stack too narrow for a whole phrase (landscape phones' corner, data-narrow: popups.ts), keep the normal breaks. */
+.yp-toasts:not([data-narrow]) .toast--badge > span {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
 .toast .ico {
   width: 20px;
   height: 20px;
@@ -1602,6 +1657,11 @@ input {
   border-radius: 0.05em;
   background: var(--ink);
 }
+/* 125 % text: the wordmark (about 7.2 em wide) never runs past a narrow phone's edges (it keeps 16 px each side). */
+.yp-ts125 .logo-a,
+.yp-ts125 .logo-b {
+  font-size: min(1em, calc((100vw - 32px) / 7.2));
+}
 .logo-sub {
   margin-top: 12px;
   font: 800 0.9rem/1 var(--font-head);
@@ -1731,11 +1791,33 @@ input {
 .title-hint {
   text-shadow: 0 1px 0 var(--paper-1), 0 -1px 0 var(--paper-1), 1px 0 0 var(--paper-1), -1px 0 0 var(--paper-1);
 }
+/* Landscape phones: the hint sits on the floor ruler's numbers; the rewind hint's paper pill keeps it readable. */
+.yp[data-short="1"] .title-hint {
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: rgba(251, 248, 241, 0.86);
+}
 
 /* ---------------------------------------------------------------- short landscape (wide, under 520 px tall) */
 
 .yp[data-short="1"] .logo {
   font-size: 2.3rem;
+}
+/* Narrow landscape phones (568-644 px): between the corner buttons the English tagline wrapped to two lines and hid
+   the gantry beam and the trolley; a smaller pill keeps it to one line. At 125 % text only where that line then fits
+   (637 px and wider); narrower, the 125 % tagline stays as it was (two lines). */
+@media (max-width: 644px) {
+  html:not(.yp-ts125) .yp[lang="en"][data-short="1"] .tagline {
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+}
+@media (min-width: 637px) and (max-width: 644px) {
+  html.yp-ts125 .yp[lang="en"][data-short="1"] .tagline {
+    padding: 6px 12px;
+    font-size: 0.8rem;
+  }
 }
 .yp[data-short="1"] .title-foot {
   height: 92px;
@@ -3590,6 +3672,9 @@ input {
   max-width: min(calc(100vw - 32px), 560px);
   text-align: center;
   text-wrap: balance;
+  /* ja: a line break goes after 「、」, never inside 人間 (125 % on narrow phones) */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 .yp[data-layout="tall"] .wtab {
   flex: 1 1 0;
@@ -3663,15 +3748,18 @@ input {
   0%, 100% { transform: translateX(0); }
   50% { transform: translateX(4px); }
 }
-/* wide: toasts under the clock so they never sit on the force bar or the READY hint. */
+/* wide: toasts under the clock so they never sit on the force bar or the READY hint (the HUD's own place, bottom
+   right, is ui.ts toastArea's). */
 .yp[data-layout="wide"] .yp-toasts {
   top: calc(var(--safe-t) + 92px);
   bottom: auto;
   flex-direction: column;
 }
-/* In play, one small toast at a time (ui.ts toastArea): landscape phones in the bottom-right corner beside the force
-   bar, tall on the bench band under the floor. The landscape AI demo: top right, under the skip button. */
+/* In play, one toast at a time (ui.ts toastArea): wide in the bottom-right corner beside the force bar (small on
+   landscape phones), tall small on the bench band under the floor. The landscape AI demo: top right, under the skip
+   button. */
 .yp[data-short="1"][data-screen="hud"] .yp-toasts,
+.yp[data-layout="wide"][data-screen="hud"] .yp-toasts,
 .yp[data-layout="wide"][data-screen="demo"] .yp-toasts {
   align-items: flex-end;
 }

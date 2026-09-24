@@ -41,11 +41,12 @@ export function renderTitleScreen(root: HTMLElement, _screen: Extract<Screen, { 
 
   const el = h('div', { class: 'title', tabindex: '-1', 'data-autofocus': '', 'aria-label': `${t('app.title')} — ${t('title.hint')}` });
   if (wide) {
+    // DOM order = Tab order = reading order: the top-left スキン, the top-right corner, then あそぶ at the bottom.
     el.append(
       h('div', { class: 'title-logo' }, logo(), tagline),
+      ...(skins ? [h('div', { class: 'title-corner title-corner--left' }, skins)] : []),
       h('div', { class: 'title-corner' }, about, settings),
       h('div', { class: 'title-foot' }, play, h('div', { class: 'title-hint' }, t('title.hint'))));
-    if (skins) el.append(h('div', { class: 'title-corner title-corner--left' }, skins));
   } else {
     el.append(
       h('div', { class: 'title-logo' }, logo(), h('div', { class: 'logo-sub' }, t('app.titleAlt'))),

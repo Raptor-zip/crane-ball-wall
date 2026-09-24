@@ -467,6 +467,22 @@ describe('1-1 contextual hint (§2.2 0:10, §7.4)', () => {
     until(r2, () => r2.app.debugState().ticks > 300, 400);
     expect(r2.ui.toasts.filter((t) => t.text === hint.text)).toEqual([]);
   });
+
+  it('with the steady assist, letting go over the pad is what the hint asks for: it never comes after the fact', () => {
+    const store = new MemStore();
+    const r = rig({ store });
+    expect(store.d.settings.steady).toBe(true);
+    r.input.command('any');
+    // a key held for 1/3 s (40 N) and let go: the trolley coasts onto the pad with the ball swinging well above
+    // 5 deg, and the assist holds it there and damps the swing (it used to toast 1.5 s later, then on the card)
+    r.input.push(40);
+    for (let i = 0; i < 20; i++) r.app.advance(1 / 60);
+    r.input.idle();
+    until(r, () => r.app.state() !== 'RUNNING' && r.app.state() !== 'READY', 1200, 1 / 60);
+    expect(r.app.state()).toBe('SUCCESS_BEAT');
+    expect(r.ui.toasts.filter((t) => t.kind === 'info')).toEqual([]);
+    expect(store.d.levels['1-1']?.hintsSeen ?? 0).toBeLessThan(2);
+  });
 });
 
 describe('assist (§3.6)', () => {
