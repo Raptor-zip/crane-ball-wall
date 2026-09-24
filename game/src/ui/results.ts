@@ -360,6 +360,7 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
   const openAt = performance.now();
   let rankEl: HTMLElement | null = null;
   let rankKey = '';
+  let rankRoom = false;
   let syncRank: (() => void) | null = null;
   /** performance.now() when this card's rank stamp has finished landing (null: no stamp pressed on this card). */
   let stampLandsAt: number | null = null;
@@ -431,6 +432,10 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
         });
       }
       renderRankRow(rankEl, st, press);
+      // While the server's answer is on its way the row keeps the rank stamp's room, and keeps it on this card: a wide
+      // card is as tall as its content, and もう一回 / 次へ under it must not jump when the stamp lands (styles.css).
+      if (st.phase === 'pending') rankRoom = true;
+      if (rankRoom) rankEl.classList.add('res-rank--room');
       if (press) {
         // A short card (a phone held sideways) can have the row below the fold: bring it in just before the press.
         const row = rankEl;

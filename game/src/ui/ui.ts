@@ -736,10 +736,13 @@ export function createUI(ctx: UiContext = {}): UI {
     const aboveH = c.y0 - gap - top;
     const belowH = bottom - (c.y1 + gap);
     const side = Math.max(leftW, rightW);
+    // A results card on the right of a landscape phone stands 48 px further in (clear of ≡, styles.css): the side left
+    // of it still counts as before, so the same screens (640-735 px wide) keep their toasts there, in a narrower column.
+    const room = side + (yp.dataset.short === '1' && leftW > rightW && layer.querySelector('.res[data-side="right"]') ? 48 : 0);
     // A crown / PB banner in the free area: toasts stay under it (or wait until it is gone, onBannerChange).
     const ban = pops.bannerBox();
     const under = (x0: number, x1: number, y: number): number => (ban && ban.x0 < x1 && x0 < ban.x1 ? Math.max(y, ban.y1 + 8) : y);
-    if (side >= 240 && side >= Math.min(W * 0.28, 420)) {
+    if (room >= 240 && room >= Math.min(W * 0.28, 420)) {
       const x0 = leftW >= rightW ? 10 : c.x1 + gap;
       const x1 = leftW >= rightW ? c.x0 - gap : W - 10;
       const mid = (x0 + x1) / 2;

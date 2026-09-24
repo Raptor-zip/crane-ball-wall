@@ -1,13 +1,15 @@
 // Screens that must fit small and short screens without a redesign: the results card, the pause menu, the briefing, the
 // level select, the daily hub, the ranking's pinned row, landscape phones (GAME_DESIGN.md §9.4). happy-dom has no layout
 // engine: the geometry helpers get stubbed rects, and what only CSS does is checked in the stylesheet itself. The pixels
-// are measured in a real browser by tests/e2e/ui-screens.spec.ts (landscape phone 844x390, world rank, ui-3).
+// are measured in a real browser by tests/e2e/ui-screens.spec.ts ('small and short screens': what each finding looked
+// like, per size and language; also landscape phone 844x390, world rank, ui-3).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { LevelDef } from '../../src/sim/level';
 import type { SaveV1, Store } from '../../src/store/save';
-import type { ResultsData, UI } from '../../src/ui/ui';
+import type { BoardRow, HudState, ResultsData, UI } from '../../src/ui/ui';
+import type { Standing } from '../../src/shared/rank';
 import { BUNDLED_LEVELS, createUI, defaultSettings } from '../../src/ui/ui';
 import { BANNER_DELAY_MS } from '../../src/ui/popups';
 import { resultsSide, revealRow, stampFollower } from '../../src/ui/results';
@@ -63,9 +65,11 @@ describe('results card', () => {
     expect(prop(ruleBody('.res-medal > div'), 'min-width')).toBe('0');
   });
 
-  it('a landscape card of 340 px or less drops the medal slots so the next-medal line stays whole (finding 27)', () => {
+  it('a landscape phone\'s card of 340 px or less drops the medal slots so the next-medal line stays whole (finding 27)', () => {
     const b = block('@container res (max-width: 340px)');
-    expect(prop(ruleBody('.yp[data-layout="wide"] .res-slots', b), 'display')).toBe('none');
+    // only on a short screen: a tall window this narrow (683x740, half a laptop screen) has room for both lines
+    expect(prop(ruleBody('.yp[data-short="1"] .res-slots', b), 'display')).toBe('none');
+    expect(b).not.toContain('data-layout');
     // portrait keeps them
     expect(b).not.toMatch(/\n\s*\.res-slots\s*\{/);
   });
@@ -81,9 +85,13 @@ describe('results card', () => {
     expect(css).not.toMatch(/\.yp\[data-layout="wide"\] \.res\[data-fail\]\s*\{/);
   });
 
-  it('a mouse window 366-416 px wide gives each G / H / ? / M toggle its own row (「AIの…」「ミュ…」, finding 41)', () => {
-    const b = block('@container res (max-width: 416px)');
-    expect(prop(ruleBody('.yp:not([data-pointer="coarse"]) .res-keys', b), 'grid-template-columns')).toBe('minmax(0, 1fr)');
+  it('a 366-416 px card in Japanese drops the G / H / ? / M key chips instead of cutting 「AIの…」「ミュ…」 (finding 41)', () => {
+    const b = block('@container res (width > 365px) and (width <= 416px)');
+    // English fits beside its chips; 125 % text is one column already (room for them)
+    expect(prop(ruleBody(':root:not(.yp-ts125) .yp:lang(ja) .res-keys .kbd', b), 'display')).toBe('none');
+    // the two columns stay (the card does not grow a row per toggle)
+    expect(b).not.toContain('grid-template-columns');
+    expect(css).not.toMatch(/\.yp:not\(\[data-pointer="coarse"\]\) \.res-keys\s*\{/);
   });
 
   it('landscape phones: the HUD band does not peek out around the card, ≡ stays clear of a card on the right (finding 28)', () => {
@@ -264,6 +272,71 @@ describe('results card in the page (findings 28, 42)', () => {
     // happy-dom resolves var(--res-w) to 0 px: the free side is [0, 568 - 64] (the card's margin there is 64 px)
     expect(parseFloat(banner.style.left)).toBeCloseTo((568 - 64) / 2, 0);
   });
+
+  /** Where the toasts go beside a results card placed like the stylesheet does (happy-dom has no layout): its box. */
+  function toastsBeside(level: string, w: number, hgt: number): { left: number; width: number; bottom: string } {
+    mountAt(w, hgt);
+    ui.show({ id: 'results', data: results(lv(level)) });
+    const yp = root.querySelector<HTMLElement>('.yp')!;
+    const card = root.querySelector<HTMLElement>('.res')!;
+    const cardW = Math.min(460, w * 0.56);
+    const right = card.dataset.side === 'right';
+    const x0 = right ? w - 64 - cardW : 16;
+    for (const [k, v] of Object.entries({ offsetLeft: x0, offsetTop: 8, offsetWidth: cardW, offsetHeight: hgt - 16, offsetParent: yp })) {
+      Object.defineProperty(card, k, { configurable: true, value: v });
+    }
+    ui.toast('技「ブレーキ振り出し」を見つけた！');
+    const box = root.querySelector<HTMLElement>('.yp-toasts')!.style;
+    return { left: parseFloat(box.left), width: parseFloat(box.width), bottom: box.bottom };
+  }
+
+  it('landscape phone, card on the right (2-3, 48 px further in than a left one): toasts still go beside it (finding 28)', () => {
+    // 667x375: the free side is 229.5 - 20 = 209.5 px, 257.5 before the card moved clear of ≡: toasts there, as then
+    const t = toastsBeside('2-3', 667, 375);
+    expect(t.left).toBe(10);
+    expect(t.width).toBeCloseTo(667 - 64 - 667 * 0.56 - 20, 0);
+    expect(t.bottom).not.toBe('auto');
+  });
+
+  it('landscape phone 568x320: no room beside a card on either side (as before): toasts are not put beside it', () => {
+    for (const level of ['2-3', '2-2']) {
+      document.body.innerHTML = '<div id="app"></div>';
+      root = document.getElementById('app')!;
+      const t = toastsBeside(level, 568, 320);
+      // the centred column (x 74..494) over the card: it waits there (no side column of 10..~176 or ~352..558)
+      expect([level, t.left, t.width]).toEqual([level, 74, 420]);
+    }
+  });
+
+  it('a rank-in answer on its way keeps the stamp\'s room on this card, whatever the answer (finding 31)', () => {
+    mountAt(1920, 1080);
+    const st = (over: Partial<Standing>): Standing => ({
+      runKey: 'L:2-2:00000000:s1:314', forPb: true, rank: 37, n: 1065, pct: null, was: null, exact: false, candidate: true, phase: 'local', stamp: null, ...over,
+    });
+    const hud: HudState = {
+      timeSub: 0, running: false, F: 0, Fmax: 40, aiF: null, saturated: false, ampDeg: 0, restDeg: 3, T: 9.8, Tmax: null,
+      nearGapMm: null, offline: false, mode: 'campaign', hint: null, dailyBalls: null,
+    };
+    const data = { ...results(lv('2-2')), standing: st({ phase: 'pending' }) };
+    ui.show({ id: 'results', data });
+    const row = (): HTMLElement => root.querySelector<HTMLElement>('.res-rank')!;
+    expect(row().classList.contains('res-rank--room')).toBe(true);
+    // the answer is no stamp (the same rank as before): the row keeps the room, the buttons under it stay put
+    data.standing = st({ phase: 'confirmed', exact: true, was: 37 });
+    for (let i = 0; i < 6; i++) ui.hud(hud);
+    expect(row().classList.contains('res-rank--wait')).toBe(false);
+    expect(row().classList.contains('res-rank--room')).toBe(true);
+    // a card whose answer was already there never takes it
+    ui.show({ id: 'results', data: { ...results(lv('2-2')), standing: st({ phase: 'confirmed', exact: true, stamp: 'in' }) } });
+    expect(row().classList.contains('res-rank--room')).toBe(false);
+    ui.show({ id: 'results', data: { ...results(lv('2-2')), standing: st({ phase: 'queued' }) } });
+    expect(row().classList.contains('res-rank--room')).toBe(false);
+    // the room is the stamp row's: 62 px and its 8 px margins, on a wide card as tall as its content only
+    const room = ruleBody('.yp[data-layout="wide"]:not([data-short="1"]) .res-rank--room:not(.res-rank--stamp)');
+    expect(prop(room, 'min-height')).toBe('62px');
+    expect(prop(room, 'margin-block')).toBe('8px');
+    expect(prop(ruleBody('.res-rank--stamp'), 'margin')).toBe('8px 0 8px 4px');
+  });
 });
 
 describe('pause menu (findings 20, 40)', () => {
@@ -276,12 +349,19 @@ describe('pause menu (findings 20, 40)', () => {
     expect(prop(ruleBody(`${P} .pause-grid`, b), 'row-gap')).toBe('4px');
     // buttons keep their 44 px touch height
     expect(b).not.toMatch(/min-height/);
+    // the focus ring (2.5 px) comes 2 px off its button, not 4: with 4 px margins it keeps clear of the title row
+    const ring = ruleBody(`${P} .pause-grid .btn:focus-visible`, b);
+    expect(px(prop(ring, 'outline-offset')) + 2.5).toBeLessThanOrEqual(px(prop(ruleBody(`${P} .pause-grid`, b), 'margin-top')) + 0.5);
   });
 
-  it('windows up to 411 px wide hide the key chips (「理科ノー／ト」「リトラ／イ」 with a mouse)', () => {
+  it('Japanese windows up to 411 px wide hide the key chips (「理科ノー／ト」「リトラ／イ」 with a mouse); English keeps them', () => {
     const b = block('@media (max-width: 411px)');
-    expect(prop(ruleBody('.pause-grid .kbd', b), 'display')).toBe('none');
-    expect(block('@media (max-width: 359px)')).not.toContain('.kbd');
+    expect(prop(ruleBody('.yp:lang(ja) .pause-grid .kbd', b), 'display')).toBe('none');
+    expect(ruleBody('.pause-grid .kbd', b)).toBe('');
+    // below 360 px every language (as before): in the narrow phones' pause block
+    const narrow = css.split('@media (max-width: 359px) {').slice(1).map((t) => t.slice(0, t.indexOf('\n}'))).find((t) => t.includes('.pause-grid .btn-state'));
+    expect(narrow).toBeDefined();
+    expect(prop(ruleBody('.pause-grid .kbd', narrow), 'display')).toBe('none');
   });
 });
 
@@ -308,33 +388,46 @@ describe('daily hub (findings 16, 17)', () => {
     // at rest the band sits where the row was: its padding is taken back by negative margins
     expect(prop(r, 'margin')).toBe('-10px 0 -12px');
     expect(prop(r, 'padding')).toBe('10px 0 12px');
+    // its bottom reaches the card's inner line (inset 7 px, 16 px padding): the line is drawn over the band
+    expect(px(prop(ruleBody('.sheet::before'), 'inset'))).toBeLessThan(px(prop(ruleBody('.daily-card'), 'padding')));
+    expect(Number(prop(ruleBody('.yp[data-short="1"] .daily-card::before'), 'z-index'))).toBeGreaterThan(Number(prop(r, 'z-index')));
   });
 
-  it('the narrow landscape top 10 drops the gap column and lets a name take two lines', () => {
+  it('the landscape top 10 lets a name take two lines up to 380 px (844x390), and drops the gap column up to 340 px', () => {
     expect(prop(ruleBody('.daily-card'), 'container')).toBe('daily / inline-size');
-    const b = block('@container daily (max-width: 340px)');
     const W = '.yp[data-layout="wide"] .daily-card .board';
+    const wrap = block('@container daily (max-width: 380px)');
+    expect(prop(ruleBody(`${W} .b-name`, wrap), 'white-space')).toBe('normal');
+    expect(ruleBody(`${W} .b-tag::before`, wrap)).toContain('content: "\\200B"');
+    expect(wrap).not.toContain('nth-child');
+    const b = block('@container daily (max-width: 340px)');
     expect(b).toContain(`${W} th:nth-child(4),\n  ${W} td:nth-child(4) {\n    display: none;`);
-    expect(prop(ruleBody(`${W} .b-name`, b), 'white-space')).toBe('normal');
     // the row's pill closes on the time cell
     expect(prop(ruleBody(`${W} td:nth-child(3)`, b), 'border-radius')).toBe('0 10px 10px 0');
     expect(prop(ruleBody(`${W} tr.is-me td:nth-child(3)`, b), 'border-right')).toBe('2px solid var(--ink)');
-    expect(ruleBody(`${W} .b-tag::before`, b)).toContain('content: "\\200B"');
   });
 
-  it('names keep their text; the "#1234" tag is its own span (the break point where names wrap)', () => {
+  it('names keep their text; in the daily hub the "#1234" tag is its own span (the break point where names wrap)', () => {
     const parts = nameWithTag('Jolly Crane#5974');
     expect(parts[0]).toBe('Jolly Crane');
     expect((parts[1] as HTMLElement).className).toBe('b-tag');
     expect((parts[1] as HTMLElement).textContent).toBe('#5974');
     expect(nameWithTag('NoTag')).toEqual(['NoTag']);
-    const table = boardTable([['p1', 7, 330, 6000, 0, 0], ['p2', 8, 340, 9000, 0, 0]], { parSub: 400 });
-    const names = [...table.querySelectorAll('.b-name-wrap > span:first-child')];
-    expect(names).toHaveLength(2);
-    for (const n of names) {
+    const top: BoardRow[] = [['p1', 7, 330, 6000, 0, 0], ['p2', 8, 340, 9000, 0, 0]];
+    const names = (wrapTag?: boolean): Element[] => [...boardTable(top, { parSub: 400, wrapTag }).querySelectorAll('.b-name-wrap > span:first-child')];
+    expect(names(true)).toHaveLength(2);
+    for (const n of names(true)) {
       expect(n.textContent).toMatch(/#\d{4}$/);
       expect(n.querySelector('.b-tag')!.textContent).toMatch(/^#\d{4}$/);
     }
+    // the ranking screen: one plain text, as before (not a glyph moves)
+    for (const n of names()) {
+      expect(n.textContent).toMatch(/#\d{4}$/);
+      expect(n.childNodes).toHaveLength(1);
+      expect(n.firstChild!.nodeType).toBe(3);
+    }
+    const src = readFileSync(resolve(process.cwd(), 'src/ui/screens/daily.ts'), 'utf8');
+    expect(src).toMatch(/boardTable\(v\.top\.slice\(0, 10\), \{[^}]*wrapTag: true/);
   });
 });
 

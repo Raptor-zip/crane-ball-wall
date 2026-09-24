@@ -1833,6 +1833,11 @@ input {
     row-gap: 4px;
     margin-top: 4px;
   }
+  /* The focus ring (再開 has it when the menu opens from a key) keeps clear of the title row and touches the next row
+     no more than with the usual margins: 2 px from its button instead of 4. */
+  .yp[data-short="1"][data-screen="pause"] .pause-grid .btn:focus-visible {
+    outline-offset: 2px;
+  }
 }
 .yp[data-short="1"] .share-prev {
   max-width: 300px;
@@ -2672,17 +2677,18 @@ input {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-/* With a mouse the toggles also show their key chips (G / H / ? / M): two columns cut 「AIのライン」「ミュート」 up to a
-   ~410 px card (390-430 px windows, 830-940 px desktops), so they take a full row each there too. */
-@container res (max-width: 416px) {
-  .yp:not([data-pointer="coarse"]) .res-keys {
-    grid-template-columns: minmax(0, 1fr);
+/* With a mouse the toggles also show their key chips (G / H / ? / M): in Japanese two columns of a 366-416 px card
+   (390-430 px windows, 830-940 px desktops) cut 「AIのライン」「ミュート」, so the chips go there, as on a touch screen (the
+   keys still work, the tooltips name them). English fits; one column (narrower cards, 125 % text) has room for them. */
+@container res (width > 365px) and (width <= 416px) {
+  :root:not(.yp-ts125) .yp:lang(ja) .res-keys .kbd {
+    display: none;
   }
 }
-/* A landscape card this narrow (568-600 px phones) is also short: the four medal slots (decoration, the big coin and
+/* A landscape phone's card this narrow (568-600 px) is also short: the four medal slots (decoration, the big coin and
    the line beside it say the same) give their width to 「王冠まで あと0.375秒」, which then stays on one line above the fold. */
 @container res (max-width: 340px) {
-  .yp[data-layout="wide"] .res-slots {
+  .yp[data-short="1"] .res-slots {
     display: none;
   }
 }
@@ -3182,7 +3188,8 @@ input {
 }
 /* Landscape phones: 「あそぶ」 and 「シェア」 stay on screen, stuck to the bottom edge (the offset counts inside
    .page-body's bottom padding) over the figure and the rack scrolling under them, like the results card's buttons.
-   At the end of the card they rest in their place; the band is the card's own colour, so it looks the same there. */
+   At the end of the card they rest in their place; the band is the card's own colour, and the card's inner line (which
+   the band's bottom reaches) is drawn over it, so it looks the same there. */
 .yp[data-short="1"] .daily-card .btnrow {
   position: sticky;
   bottom: -28px;
@@ -3191,10 +3198,25 @@ input {
   padding: 10px 0 12px;
   background: var(--card);
 }
-/* The top 10 in the landscape right column (~215-300 px wide at 568-740 px): the gap column gives way (the full
-   ranking still shows it) and a name takes two lines instead of ending at three letters (「Jol…」「ゆか…」). */
+.yp[data-short="1"] .daily-card::before {
+  z-index: 2;
+}
+/* The top 10 in the landscape right column (~215-350 px wide at 568-844 px): a name takes two lines instead of ending
+   at three letters (「Jol…」「ゆか…」), the "#1234" tag whole on the second one. Up to ~300 px the gap column also gives
+   way (the full ranking still shows it). A name that fits keeps its one line. */
 .daily-card {
   container: daily / inline-size;
+}
+@container daily (max-width: 380px) {
+  .yp[data-layout="wide"] .daily-card .board .b-name {
+    white-space: normal;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+  /* 「ゆかいなクレーン / #5974」: a break chance before the tag (keep-all leaves none inside the name) */
+  .yp[data-layout="wide"] .daily-card .board .b-tag::before {
+    content: "\200B";
+  }
 }
 @container daily (max-width: 340px) {
   .yp[data-layout="wide"] .daily-card .board th:nth-child(4),
@@ -3210,15 +3232,6 @@ input {
   }
   .yp[data-layout="wide"] .daily-card .board tr.is-ai td:nth-child(3) {
     border-right-color: var(--ai-lip);
-  }
-  .yp[data-layout="wide"] .daily-card .board .b-name {
-    white-space: normal;
-    word-break: keep-all;
-    overflow-wrap: anywhere;
-  }
-  /* 「ゆかいなクレーン / #5974」: a break chance before the tag (keep-all leaves none inside the name) */
-  .yp[data-layout="wide"] .daily-card .board .b-tag::before {
-    content: "\200B";
   }
 }
 .daily-mini {
@@ -3888,11 +3901,15 @@ input {
     font-size: 0.66rem;
     padding: 3px 5px;
   }
-}
-/* Windows this narrow (a phone, or a desktop window at phone width): the key hints only squeeze 「リトライ」「理科ノート」
-   onto two lines (「理科ノー／ト」 up to 411 px); the keys still work and the buttons' names still say them. */
-@media (max-width: 411px) {
+  /* Phones this narrow have no keyboard: the key hints only squeeze 「リトライ」「理科ノート」 onto two lines. */
   .pause-grid .kbd {
+    display: none;
+  }
+}
+/* In Japanese a mouse window up to 411 px wide breaks them inside the word (「理科ノー／ト」「リトラ／イ」): no key hints
+   there either (the keys still work, the buttons' names say them). English breaks between words and keeps its hints. */
+@media (max-width: 411px) {
+  .yp:lang(ja) .pause-grid .kbd {
     display: none;
   }
 }
@@ -3957,6 +3974,12 @@ input {
   flex-wrap: nowrap;
   column-gap: 14px;
   margin: 8px 0 8px 4px;
+}
+/* A wide card is as tall as its content: while the rank-in answer is on its way (results.ts rankRoom) the row already
+   takes the stamp's room, so もう一回 / 次へ stay put when the stamp lands (a landscape phone's card scrolls instead). */
+.yp[data-layout="wide"]:not([data-short="1"]) .res-rank--room:not(.res-rank--stamp) {
+  min-height: 62px;
+  margin-block: 8px;
 }
 .res-rank-side {
   display: flex;
