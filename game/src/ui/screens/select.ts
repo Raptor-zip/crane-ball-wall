@@ -60,6 +60,20 @@ export function noteUnlocked(levels: readonly LevelDef[], save: SaveV1 | null, w
   return list.length > 0 && list.every((l) => !!save?.levels[l.id]?.cleared);
 }
 
+/**
+ * Landscape phones: the header, the two top cards and the world tabs fill the screen, and the level tiles (the focused
+ * one too) start below the fold. When `tile` is cut, scrolls `body` so that the tab row is at the top (the cards are
+ * one swipe up). Rects are divided by the page's entry-animation scale.
+ */
+export function scrollToTiles(body: HTMLElement, tabRow: HTMLElement, tile: HTMLElement | null | undefined): void {
+  if (!tile) return;
+  const b = body.getBoundingClientRect();
+  const k = b.height / (body.offsetHeight || 1) || 1;
+  if (tile.getBoundingClientRect().bottom - b.bottom <= 0) return;
+  const dy = (tabRow.getBoundingClientRect().top - b.top) / k - 8;
+  if (dy > 0) body.scrollTop += dy;
+}
+
 export function renderSelectScreen(root: HTMLElement, screen: Extract<Screen, { id: 'select' }>, env: ScreenEnv): ScreenHandle {
   const levels = env.levels();
   const save = env.save();
@@ -255,14 +269,16 @@ export function renderSelectScreen(root: HTMLElement, screen: Extract<Screen, { 
   const body = h('div', { class: 'page-body' }, h('div', { class: 'page-inner' }, top, tabRow, pages));
   const page = h('div', { class: 'page screen-enter' }, head, body);
   root.appendChild(page);
-  // Initial page without animation; focus the first open level of it.
+  const firstTile = pageEls[cur]?.querySelector<HTMLElement>('.tile:not(.is-locked)');
+  firstTile?.setAttribute('data-autofocus', '');
+  // Initial page without animation; focus the first open level of it. A landscape phone opens at the world tabs when
+  // that tile would be below the fold (not while the crown counter pops: that is news on the card above).
   requestAnimationFrame(() => {
     const pg = pageEls[cur];
     if (pg) pages.scrollLeft = pg.offsetLeft - pages.offsetLeft;
     mark(cur);
+    if (!grew && root.closest('.yp')?.getAttribute('data-short') === '1') scrollToTiles(body, tabRow, firstTile);
   });
-  const firstTile = pageEls[cur]?.querySelector<HTMLElement>('.tile:not(.is-locked)');
-  firstTile?.setAttribute('data-autofocus', '');
 
   return {
     onKey(e) {

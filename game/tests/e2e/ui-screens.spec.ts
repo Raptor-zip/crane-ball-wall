@@ -296,7 +296,7 @@ test.describe('toasts vs cards', () => {
 
 test.describe('landscape phone 844x390 (wide, short)', () => {
   test.use({ viewport: { width: 844, height: 390 }, hasTouch: true });
-  for (const screen of ['title', 'hud-run', 'pause', 'results', 'results-fail', 'share', 'briefing', 'select', 'settings'] as const) {
+  for (const screen of ['title', 'hud-run', 'pause', 'results', 'results-fail', 'share', 'briefing', 'select', 'settings', 'daily'] as const) {
     test(`ja ${screen}`, async ({ page }) => {
       const errors = collectErrors(page);
       await open(page, `screen=${screen}&lang=ja&still=1`);
@@ -308,7 +308,7 @@ test.describe('landscape phone 844x390 (wide, short)', () => {
       // The main choices must be on screen without scrolling.
       const offscreen = await page.evaluate(() => {
         const H = window.innerHeight;
-        const sel = '.res-foot .btn, .pause-grid .btn, .title-play, .card-foot .btn';
+        const sel = '.res-foot .btn, .pause-grid .btn, .title-play, .card-foot .btn, .daily-card .btnrow .btn';
         return [...document.querySelectorAll<HTMLElement>(sel)].filter((b) => {
           const r = b.getBoundingClientRect();
           return r.height > 0 && (r.top < 0 || r.bottom > H + 1);
@@ -445,6 +445,8 @@ for (const vp of [{ width: 360, height: 740, touch: true, ts: '' }, { width: 360
             expect(pin.right).toBeLessThanOrEqual(W);
             expect(pin.bottom).toBeLessThanOrEqual(vp.height);
             expect(pin.top).toBeGreaterThan(0);
+            // stuck to the bottom edge over a long list (10 px above it), not floating over sliced rows (38 px)
+            if (!screen.endsWith('partial') && !screen.endsWith('instant')) expect(pin.bottom).toBeGreaterThanOrEqual(vp.height - 12);
             const rank = await page.locator('.board-pin-rank').textContent();
             expect(rank).toMatch(lang === 'ja' ? /^(約[\d,]+位|–)$/ : /^(~#[\d,]+|–)$/);
             if (screen === 'board&board=partial') await expect(page.locator('.board-partial')).toBeVisible();
@@ -489,7 +491,237 @@ test.describe('world rank: a short landscape card', () => {
       return document.querySelector('.res-time')!.getBoundingClientRect().bottom > s.top;
     });
     expect(time).toBe(true);          // the time is still on the card
+    // once the (smooth) scroll settles, the level name above it is on the card or scrolled out whole, never cut through
+    const headWhole = (): Promise<boolean> => page.evaluate(() => {
+      const s = document.querySelector('.res-scroll')!.getBoundingClientRect();
+      const h = document.querySelector('.res-head')!.getBoundingClientRect();
+      return h.top >= s.top - 0.5 || h.bottom <= s.top + 0.5;
+    });
+    await expect.poll(headWhole, { timeout: 3000 }).toBe(true);
+    await page.waitForTimeout(600);
+    expect(await headWhole()).toBe(true);
   });
+});
+
+// Small and short screens (the screen-fit audit, GAME_DESIGN.md §9.4): what the player sees, measured in the page.
+test.describe('small and short screens', () => {
+  /** Lines of the text of `el` (text nodes only, like __textLines in the release review). */
+  const lines = (page: Page, sel: string): Promise<number> => page.evaluate((s) => {
+    let n = 0;
+    const walk = (e: Element): void => {
+      for (const node of e.childNodes) {
+        if (node.nodeType === 3 && node.textContent?.trim()) {
+          const r = document.createRange();
+          r.selectNodeContents(node);
+          n = Math.max(n, new Set([...r.getClientRects()].map((x) => Math.round(x.top))).size);
+        } else if (node instanceof HTMLElement && getComputedStyle(node).display !== 'none') walk(node);
+      }
+    };
+    walk(document.querySelector(s)!);
+    return n;
+  }, sel);
+
+  for (const lang of LANGS) {
+    test(`${lang} 320x568 results: the four medal slots stay inside their row (finding 10)`, async ({ page }) => {
+      await page.setViewportSize({ width: 320, height: 568 });
+      for (const screen of ['results', 'results-firstcrown'] as const) {
+        await open(page, `screen=${screen}&lang=${lang}&still=1`);
+        const [row] = await rects(page, '.res-medal');
+        // the coins are <svg> (no offsetWidth): their boxes directly
+        const slots = await page.evaluate(() => [...document.querySelectorAll('.res-slots > *')].map((e) => e.getBoundingClientRect().right));
+        expect(slots.length, screen).toBe(4);
+        for (const right of slots) expect(right, screen).toBeLessThanOrEqual(row!.right + 0.5);
+      }
+    });
+
+    test(`${lang} 568x320: the fail card shows its cause; the success card's next-medal line is whole (findings 12, 27)`, async ({ page }) => {
+      await page.setViewportSize({ width: 568, height: 320 });
+      await open(page, `screen=results-fail&lang=${lang}&still=1`);
+      const [scroll] = await rects(page, '.res-scroll');
+      // the reason's first line is on the card above the buttons (a second one may need a scroll)
+      const first = await page.evaluate(() => {
+        const r = document.createRange();
+        r.selectNodeContents(document.querySelector('.res-fail-cause span')!);
+        const box = r.getClientRects()[0]!;
+        return { top: box.top, bottom: box.bottom };
+      });
+      expect(first.top).toBeGreaterThanOrEqual(scroll!.top - 0.5);
+      expect(first.bottom).toBeLessThanOrEqual(scroll!.bottom + 0.5);
+      await open(page, `screen=results&lang=${lang}&still=1`);
+      expect(await lines(page, '.res-medal-next')).toBe(1);
+      const [s2] = await rects(page, '.res-scroll');
+      // its text (the glyphs' box, not the line's leading) is above the fold at once
+      const next = await page.evaluate(() => {
+        const r = document.createRange();
+        r.selectNodeContents(document.querySelector('.res-medal-next')!);
+        return Math.max(...[...r.getClientRects()].map((x) => x.bottom));
+      });
+      expect(next).toBeLessThanOrEqual(s2!.bottom + 0.5);
+    });
+
+    for (const vp of [{ width: 568, height: 320 }, { width: 667, height: 375 }, { width: 844, height: 390 }] as const) {
+      test(`${lang} ${vp.width}x${vp.height} daily: every top-10 name is whole, none ends in … (finding 17)`, async ({ page }) => {
+        await page.setViewportSize(vp);
+        await open(page, `screen=daily&lang=${lang}&still=1`);
+        const cut = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('.daily-card .board .b-name')]
+          .filter((c) => [c, ...c.querySelectorAll<HTMLElement>('*')].some((e) => e.scrollWidth > e.clientWidth + 0.5 && getComputedStyle(e).overflow !== 'visible'))
+          .map((c) => c.textContent));
+        expect(cut).toEqual([]);
+        expect(await page.locator('.daily-card .board .b-name').count()).toBeGreaterThan(5);
+      });
+    }
+
+    test(`${lang} 568x320 pause with practice and the assist offer: the fifth row is whole, the focus ring clears the title (finding 20)`, async ({ page }) => {
+      await page.setViewportSize({ width: 568, height: 320 });
+      await open(page, `screen=pause-practice&lang=${lang}&still=1`);
+      const [body] = await rects(page, '.card-body');
+      const btns = await rects(page, '.pause-grid .btn');
+      expect(new Set(btns.map((b) => Math.round(b.top))).size).toBe(5);
+      for (const b of btns) expect(b.bottom).toBeLessThanOrEqual(body!.bottom + 0.5);
+      const ring = await page.evaluate(() => {
+        const b = document.querySelector<HTMLElement>('.pause-grid .btn--primary')!;
+        const cs = getComputedStyle(b);
+        return { focused: b.matches(':focus-visible'), top: b.getBoundingClientRect().top - parseFloat(cs.outlineOffset) - parseFloat(cs.outlineWidth) };
+      });
+      expect(ring.focused).toBe(true);
+      for (const t of await rects(page, '.card-body h2, .card-body .idchip')) expect(ring.top).toBeGreaterThanOrEqual(t.bottom - 0.5);
+    });
+
+    test(`${lang} 390x844 with a mouse: the results toggles keep two columns, the pause labels stay whole (findings 40, 41)`, async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await open(page, `screen=results&lang=${lang}&still=1`);
+      const keys = await page.evaluate(() => {
+        const k = document.querySelector('.res-keys')!;
+        return {
+          cols: getComputedStyle(k).gridTemplateColumns.split(' ').length,
+          chips: [...k.querySelectorAll('.kbd')].filter((c) => getComputedStyle(c).display !== 'none').length,
+          cut: [...k.querySelectorAll<HTMLElement>('.btn span')].filter((s) => s.offsetWidth && s.scrollWidth > s.clientWidth + 1).map((s) => s.textContent),
+        };
+      });
+      // English fits beside its G / H / ? / M chips; in Japanese the chips give way (as on a touch screen), not the labels
+      expect(keys).toEqual({ cols: 2, chips: lang === 'en' ? 4 : 0, cut: [] });
+      await open(page, `screen=pause&lang=${lang}&still=1`);
+      const pause = await page.evaluate(() => ({
+        chips: [...document.querySelectorAll('.pause-grid .kbd')].filter((c) => getComputedStyle(c).display !== 'none').length,
+        // a label with no space in it on two lines is a word broken in the middle (「理科ノー／ト」)
+        broken: [...document.querySelectorAll<HTMLElement>('.pause-grid .btn > span:not(.kbd):not(.btn-stack)')].filter((s) => {
+          if (/\s/.test(s.textContent ?? '') || !s.firstChild) return false;
+          const r = document.createRange();
+          r.selectNodeContents(s);
+          return new Set([...r.getClientRects()].map((x) => Math.round(x.top))).size > 1;
+        }).map((s) => s.textContent),
+      }));
+      expect(pause.chips).toBe(lang === 'en' ? 3 : 0);
+      expect(pause.broken).toEqual([]);
+    });
+  }
+
+  test('844x390 select: the first open tile is on screen when the page opens (finding 18)', async ({ page }) => {
+    await page.setViewportSize({ width: 844, height: 390 });
+    await open(page, 'screen=select&lang=ja&still=1');
+    await expect.poll(() => page.evaluate(() => document.querySelector('.tile[data-autofocus]')!.getBoundingClientRect().bottom <= window.innerHeight + 0.5)).toBe(true);
+  });
+
+  for (const vp of [{ width: 568, height: 320 }, { width: 320, height: 568 }] as const) {
+    test(`${vp.width}x${vp.height} select: a crowned tile's crown stays inside the tile (finding 29)`, async ({ page }) => {
+      await page.setViewportSize(vp);
+      await open(page, 'screen=select&lang=ja&still=1');
+      const out = await page.evaluate(() => [...document.querySelectorAll<SVGElement>('.tile .crown')].filter((c) => c.getBoundingClientRect().width > 0).map((c) => {
+        const t = c.closest('.tile')!.getBoundingClientRect();
+        const r = c.getBoundingClientRect();
+        return r.left >= t.left && r.right <= t.right + 0.5 && r.top >= t.top && r.bottom <= t.bottom + 0.5;
+      }));
+      expect(out.length).toBeGreaterThan(0);
+      expect(out.every(Boolean)).toBe(true);
+    });
+  }
+
+  test('683x740 (half a laptop screen): the medal slots stay on a card this narrow when it is tall enough (finding 27)', async ({ page }) => {
+    await page.setViewportSize({ width: 683, height: 740 });
+    await open(page, 'screen=results&lang=ja&still=1');
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector('.res-slots')!).display)).toBe('flex');
+  });
+
+  test('1920x1080: the success card ends at its content, and a late rank answer does not move its buttons (finding 31)', async ({ page }) => {
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await open(page, 'screen=results&lang=ja&still=1&rank=in');
+    const gap = await page.evaluate(() => {
+      const last = document.querySelector('.res-scroll')!.lastElementChild!.getBoundingClientRect();
+      return document.querySelector('.res-foot')!.getBoundingClientRect().top - last.bottom;
+    });
+    expect(gap).toBeLessThan(40);
+    const confirmed = (await rects(page, '.res-foot'))[0]!.top;
+    for (const q of ['rank=in&arrive=4000', 'rank=exact&arrive=4000']) {
+      await open(page, `screen=results&lang=ja&${q}`);
+      await page.waitForTimeout(500);                   // the card's entry animation
+      await expect(page.locator('.res-rank--wait')).toHaveCount(1);
+      const before = (await rects(page, '.res-foot'))[0]!.top;
+      await expect(page.locator('.res-rank--wait')).toHaveCount(0, { timeout: 8000 });
+      await page.waitForTimeout(300);
+      const after = (await rects(page, '.res-foot'))[0]!.top;
+      expect([q, Math.abs(before - confirmed) < 1, Math.abs(after - confirmed) < 1]).toEqual([q, true, true]);
+    }
+  });
+
+  test('390x844: scrolled, the ピタッ stamp never lies over the medal dots or the deltas (finding 42)', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await open(page, 'screen=results&lang=ja&still=1');
+    const max = await page.evaluate(() => { const s = document.querySelector('.res-scroll')!; return s.scrollHeight - s.clientHeight; });
+    expect(max).toBeGreaterThan(0);
+    for (let y = 0; y <= max; y += 20) {
+      await page.evaluate((v) => { document.querySelector('.res-scroll')!.scrollTop = v; }, y);
+      await page.waitForTimeout(50);
+      const [stamp] = await rects(page, '.res-stamp');
+      for (const r of await rects(page, '.res-slots > *, .res-deltas > *')) expect(hit(stamp!, r), `scrollTop ${y}`).toBe(false);
+    }
+  });
+
+  // At the end of the card the sticky あそぶ / シェア band is back in its place: the card's thin inner line under it shows.
+  for (const vp of [{ width: 568, height: 320 }, { width: 844, height: 390 }] as const) {
+    test(`${vp.width}x${vp.height} daily: at the end of the card its inner line under あそぶ / シェア is drawn (finding 16)`, async ({ page }) => {
+      await page.setViewportSize(vp);
+      await open(page, 'screen=daily&lang=ja&still=1');
+      const at = await page.evaluate((h) => {
+        const body = document.querySelector('.page-body')!;
+        const card = document.querySelector<HTMLElement>('.daily-card')!;
+        body.scrollTop += card.getBoundingClientRect().bottom - (h - 30);
+        const r = card.getBoundingClientRect();
+        const band = card.querySelector('.btnrow')!.getBoundingClientRect();
+        // ::before is inset 7 px inside the 2 px border and 1 px thick: its bottom line is 9-10 px above the card's
+        // edge. Sampled under シェア (あそぶ has the focus ring), 3 px under the button's shadow down to the line.
+        return { x: Math.round(r.right - 30), y: Math.floor(r.bottom - 13), bandBottom: band.bottom, line: r.bottom - 10 };
+      }, vp.height);
+      expect(at.bandBottom).toBeGreaterThan(at.line);   // the band reaches over the line: the case at stake
+      const png = await page.screenshot({ clip: { x: at.x, y: at.y, width: 1, height: 6 } });
+      const px = await page.evaluate(async (b64) => {
+        const img = new Image();
+        img.src = `data:image/png;base64,${b64}`;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = 1;
+        c.height = 6;
+        const g = c.getContext('2d')!;
+        g.drawImage(img, 0, 0);
+        return [...Array(6).keys()].map((i) => [...g.getImageData(0, i, 1, 1).data.slice(0, 3)].reduce((a, v) => a + v, 0));
+      }, png.toString('base64'));
+      // the line (var(--line)) is darker than the band (the card's colour) above it
+      expect(Math.min(...px.slice(2)) + 30, px.join(' ')).toBeLessThan(px[0]!);
+    });
+  }
+
+  // Toasts beside a card on the right of a landscape phone (it stands clear of ≡): they still show there.
+  for (const vp of [{ width: 640, height: 360 }, { width: 667, height: 375 }] as const) {
+    test(`${vp.width}x${vp.height} results on 2-3 (card on the right): the toasts show beside it, off the card (finding 28)`, async ({ page }) => {
+      await page.setViewportSize(vp);
+      await open(page, 'screen=results&level=2-3&lang=ja&still=1&toasts=3');
+      const [card] = await rects(page, '.res');
+      expect(card!.right).toBeLessThanOrEqual(vp.width - 60);
+      const [menu] = await rects(page, '.hud-btn--pause');
+      expect(hit(card!, menu!)).toBe(false);
+      await expect.poll(async () => (await rects(page, '.toast')).length, { timeout: 6_000 }).toBeGreaterThan(0);
+      for (const t of await rects(page, '.toast')) expect(hit(t, card!)).toBe(false);
+    });
+  }
 });
 
 test.describe('share card', () => {
@@ -758,7 +990,7 @@ test.describe('release review', () => {
   }
 
   // ui-3 / ui-9: results labels never break inside a word or collapse to 「AI…」; 「タイムアップ」 stays on one line.
-  for (const vp of [{ width: 320, height: 640 }, { width: 360, height: 640 }, { width: 375, height: 667 }, { width: 568, height: 320 }] as const) {
+  for (const vp of [{ width: 320, height: 640 }, { width: 360, height: 640 }, { width: 375, height: 667 }, { width: 568, height: 320 }, { width: 390, height: 844 }, { width: 900, height: 700 }] as const) {
     for (const lang of LANGS) {
       for (const screen of ['results', 'results-fail'] as const) {
         test(`ui-3 ${lang} ${vp.width}x${vp.height} ${screen}: no wrapped or cut labels`, async ({ page }) => {

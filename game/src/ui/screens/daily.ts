@@ -60,7 +60,7 @@ export function renderDailyScreen(root: HTMLElement, screen: Extract<Screen, { i
     stat(t('daily.streakLabel'), t('unit.days', { n: v.streak })));
   const boardBox = h('section', { class: 'sheet daily-card' }, h('div', { class: 'eyebrow', style: 'margin-bottom:8px' }, t('daily.top10')));
   if (v.top && v.top.length) {
-    boardBox.append(boardTable(v.top.slice(0, 10), { mePidh: env.save()?.id.pidh ?? null, parSub: v.parSub }));
+    boardBox.append(boardTable(v.top.slice(0, 10), { mePidh: env.save()?.id.pidh ?? null, parSub: v.parSub, wrapTag: true }));
   } else if (v.top) {
     boardBox.append(h('div', { class: 'empty' }, icon('trophy'), t('board.empty')));
   } else {

@@ -42,6 +42,13 @@ export function gapCell(gapUm: number | null | undefined): string {
 /** Shown in the gap column when the level has no walls (1-1): there is no clearance to measure. */
 export const NO_GAP = '—';
 
+/** A player name with its "#1234" tag in a span (boardTable `wrapTag`): where a name may wrap (the daily hub's narrow
+ *  top 10, styles.css) the tag goes to the second line whole ("Swift Pendulum / #5909"). The text is unchanged. */
+export function nameWithTag(name: string): (string | HTMLElement)[] {
+  const i = name.lastIndexOf('#');
+  return i > 0 ? [name.slice(0, i), h('span', { class: 'b-tag' }, name.slice(i))] : [name];
+}
+
 /** The ▶ of a ranking row (a real button: keyboard and screen readers reach every watchable row). Loading: a spinner, or
  *  with reduced motion a still hourglass (styles.css). */
 function playButton(rank: number, name: string, busy: boolean): HTMLElement {
@@ -61,11 +68,12 @@ const LOAD_TOAST = {
  * is not placed after the last row (it can be anywhere below). `replay` (the ranking screen only, not the daily hub's top
  * 10): a narrow last column with the ▶ of every row it says can be watched, when a row below #1 can be (#1 alone has
  * the header's button: offline / low quota the column would stand empty); a watchable row is tapped as a whole either
- * way. `busy`: the rank whose replay is loading.
+ * way. `busy`: the rank whose replay is loading. `wrapTag` (the daily hub): names get their "#1234" in a span
+ * (nameWithTag); the ranking screen keeps them one plain text.
  */
 export function boardTable(rows: BoardRow[], opts: {
   mePidh?: string | null; parSub?: number | null; startRank?: number; partial?: boolean;
-  replay?: (rank: number, row: BoardRow) => ReplayAvail; busy?: number | null;
+  replay?: (rank: number, row: BoardRow) => ReplayAvail; busy?: number | null; wrapTag?: boolean;
 }): HTMLElement {
   const tbody = h('tbody');
   const first = opts.startRank ?? 1;
@@ -99,7 +107,7 @@ export function boardTable(rows: BoardRow[], opts: {
     const cls = [me ? 'is-me' : '', avail ? 'is-watch' : ''].filter(Boolean).join(' ');
     tbody.appendChild(h('tr', { class: cls, 'data-rank': rank },
       h('td', null, String(rank)),
-      h('td', { class: 'b-name' }, h('div', { class: 'b-name-wrap' }, h('span', null, name), me ? h('span', { class: 'me-chip' }, t('common.you')) : null)),
+      h('td', { class: 'b-name' }, h('div', { class: 'b-name-wrap' }, h('span', null, ...(opts.wrapTag ? nameWithTag(name) : [name])), me ? h('span', { class: 'me-chip' }, t('common.you')) : null)),
       h('td', { class: 'b-num' }, fmtTime(t120)),
       h('td', { class: 'b-num' }, gapCell(gapUm)),
       playCell(avail ? playButton(rank, name, opts.busy === rank) : null)));
