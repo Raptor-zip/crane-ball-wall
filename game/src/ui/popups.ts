@@ -282,8 +282,12 @@ export function createPopups(root: HTMLElement): Popups {
  */
 export interface ToastArea { x0: number; x1: number; top?: number; bottom?: number; limit: number; max?: number }
 
-/** 'skin': a skin unlock, drawn like 'info' (a kind of its own so that it can be dropped with the run's badges). */
-export type ToastKind = 'info' | 'badge' | 'warn' | 'notice' | 'skin';
+/**
+ * 'skin': a skin unlock, drawn like 'info'; 'cardBadge': a badge of the run the results card lists (一発, 紙一重), drawn
+ * like 'badge'. Kinds of their own so that they can be dropped with the card (the tricks and rank news posted as 'badge'
+ * are on no card: they stay).
+ */
+export type ToastKind = 'info' | 'badge' | 'warn' | 'notice' | 'skin' | 'cardBadge';
 
 export interface Toasts {
   show(text: string, kind?: ToastKind): void;
@@ -366,8 +370,9 @@ export function createToasts(root: HTMLElement, area: () => ToastArea | null = (
 
   function make(it: Item): HTMLElement {
     // info: done (✓); warn: no connection; notice: something did not work, not the connection (ⓘ).
-    const ic: IconName = it.kind === 'badge' ? 'star' : it.kind === 'warn' ? 'offline' : it.kind === 'notice' ? 'info' : 'check';
-    return h('div', { class: `toast toast--${it.kind === 'skin' ? 'info' : it.kind}` }, icon(ic), h('span', null, it.text));
+    const kind = it.kind === 'skin' ? 'info' : it.kind === 'cardBadge' ? 'badge' : it.kind;
+    const ic: IconName = kind === 'badge' ? 'star' : kind === 'warn' ? 'offline' : kind === 'notice' ? 'info' : 'check';
+    return h('div', { class: `toast toast--${kind}` }, icon(ic), h('span', null, it.text));
   }
 
   function expire(it: Item): void {

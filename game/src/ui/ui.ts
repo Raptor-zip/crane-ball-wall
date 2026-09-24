@@ -50,6 +50,7 @@ export interface HudAnchors {
   reqDeg?: number | null;                 // required angle of the next wall within 1.2 m (RenderFrame.reqDeg)
   reqDir?: 1 | -1;                        // side of that wall relative to the trolley
   keepOut?: readonly Box[];               // scene labels the required-angle label keeps clear of (wall heights "0.80 m")
+  keepOutLines?: readonly Box[];          // their dashed lines: a label moved off keepOut keeps off these too
 }
 
 export interface HudState {
@@ -126,6 +127,8 @@ export interface ScreenHandle {
 const COMPACT_PANEL_H = 60;
 /** The floor's front edge (z = 0.32 m, seen from 6° above) lines up with this y (m) in the ball plane (render/scene.ts). */
 const FLOOR_FRONT_Y = -0.08;
+/** wide HUD: a toast corner beside the READY hint card narrower than this (px) waits for the card to go instead. */
+const TOAST_BESIDE_MIN = 180;
 
 type SubId = 'settings' | 'about' | 'notes' | 'board' | 'skins';
 const SUB_SCREENS: ReadonlySet<Screen['id']> = new Set<SubId>(['settings', 'about', 'notes', 'board', 'skins']);
@@ -179,6 +182,8 @@ export function createUI(ctx: UiContext = {}): UI {
   // READY pill / chips boxes for the ghost tags (tagKeepOut): re-read after the HUD, the screen or the layout changed.
   let keepOut: Box[] | null = null;
   let keepOutDirty = true;
+  // wide READY: the hint card is up (the HUD's toasts keep beside it, toastArea).
+  let lastHintUp = false;
   // How the last finished run was played (for the results card: practice / assist runs keep no PB or medal).
   let lastRun = { practice: false, assist: false, pb: null as boolean | null, firstCrown: false };
 
@@ -530,12 +535,16 @@ export function createUI(ctx: UiContext = {}): UI {
     // to the run and the results, so it does not follow the player to the level select, the ranking, the AI demo.
     if (sc.id === 'hud' || sc.id === 'results') pops.placeBanners();
     else pops.clearBanners();
-    // Trick / badge toasts are about the run (the results card lists them): they do not pile up on the level select.
-    if (PAGE_SCREENS.has(sc.id) || sc.id === 'title') toasts.drop('badge');
-    // Leaving the results card (retry, next, the AI demo): its badge, trick and skin toasts still showing or waiting for
-    // room (a small phone's card leaves none) belong to the finished run and the card lists them; never the next attempt.
-    if (prevId === 'results' && sc.id !== 'results') {
+    // Trick / badge / rank toasts are about the run: they do not pile up on the level select.
+    if (PAGE_SCREENS.has(sc.id) || sc.id === 'title') {
       toasts.drop('badge');
+      toasts.drop('cardBadge');
+    }
+    // Leaving the results card (retry, next, the AI demo): the toasts of what the card lists (its badges, the skins the
+    // run unlocked), still showing or waiting for room (a small phone's card leaves none), never come on the next
+    // attempt. Tricks and rank news are on no card: they still show, one at a time, in the HUD's place.
+    if (prevId === 'results' && sc.id !== 'results') {
+      toasts.drop('cardBadge');
       toasts.drop('skin');
     }
     // Toasts never cover the card that just opened (results buttons, pause menu): they move or wait (see toastArea).
@@ -645,7 +654,7 @@ export function createUI(ctx: UiContext = {}): UI {
     if (wideShow) {
       wideOnboard.replaceChildren(
         want === 'keys'
-          ? h('div', { class: 'keycaps', style: 'position:relative;left:auto;bottom:auto;transform:translateX(-70px)' }, h('span', { class: 'keycap' }, '←'), h('span', { class: 'keycap' }, '→'))
+          ? h('div', { class: 'keycaps', style: 'position:relative;left:auto;bottom:auto' }, h('span', { class: 'keycap' }, '←'), h('span', { class: 'keycap' }, '→'))
           : h('div', { class: 'deck-hand', style: 'position:relative;width:260px;height:80px;margin:0' }, h('span', { class: 'deck-hand-track' }), h('span', { class: 'deck-hand-finger' }, icon('hand'))),
       );
     }
@@ -663,6 +672,12 @@ export function createUI(ctx: UiContext = {}): UI {
     const prev = lastHud;
     lastHud = hs;
     hud.update(hs);
+    // wide: the HUD's toast keeps beside the READY hint card (toastArea); it moves when the card comes or goes.
+    const hintUp = layout.kind === 'wide' && !!hs.hint && !hs.running && hs.timeSub === 0;
+    if (hintUp !== lastHintUp) {
+      lastHintUp = hintUp;
+      if (current.id === 'hud') toasts.refresh();
+    }
     if (deck) {
       deck.force(hs.F, hs.Fmax, hs.aiF, hs.saturated);
       // tall: "move to start" is written on the drag surface itself (not squeezed into the HUD).
@@ -745,8 +760,18 @@ export function createUI(ctx: UiContext = {}): UI {
         const o = yp.getBoundingClientRect();
         const bar = hud.el.querySelector<HTMLElement>('.hud-force')?.getBoundingClientRect();
         const x1 = W - 10 - lastInsets.r;
-        const x0 = Math.max(bar && bar.width > 0 ? bar.right - o.left + 10 : W * 0.62, x1 - 280);
-        return { x0, x1, bottom: H - 6 - lastInsets.b, limit: layout.hudTop + 8, max: 1 };
+        let x0 = Math.max(bar && bar.width > 0 ? bar.right - o.left + 10 : W * 0.62, x1 - 280);
+        const bottom = H - 6 - lastInsets.b;
+        // The READY hint card (bottom centre, up to 640 px) reaches past the force bar on 4:3 / 3:2 screens: the toast
+        // keeps beside it, or waits for the run to start (the card goes) when the corner left is too narrow for one.
+        const hint = hud.el.querySelector<HTMLElement>('.hud-hint');
+        const hb = hint && hint.getClientRects().length ? hint.getBoundingClientRect() : null;
+        if (hb && hb.width > 0 && hb.right - o.left + 8 > x0) {
+          const hx = hb.right - o.left + 8;
+          if (x1 - hx < TOAST_BESIDE_MIN) return { x0, x1, bottom, limit: H, max: 1 };
+          x0 = hx;
+        }
+        return { x0, x1, bottom, limit: layout.hudTop + 8, max: 1 };
       }
       return null;
     }

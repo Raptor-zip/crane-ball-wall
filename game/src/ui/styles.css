@@ -230,6 +230,14 @@ input {
   0%, 100% { transform: translateY(0); box-shadow: 0 4px 0 var(--ink); background: var(--card); }
   40% { transform: translateY(3px); box-shadow: 0 1px 0 var(--ink); background: var(--gantry); }
 }
+/* wide 1-1 onboarding (ui.ts wideOnboard): on a desktop the pair sits 70 px left of centre, off the floor ruler's "1";
+   landscape phones keep it centred (to the left it would cover the resting ball). */
+.wide-onboard .keycaps {
+  transform: none;
+}
+.yp:not([data-short="1"]) .wide-onboard .keycaps {
+  transform: translateX(-70px);
+}
 
 /* ---------------------------------------------------------------- force bar */
 
@@ -571,12 +579,18 @@ input {
   gap: 6px;
   font-size: 0.76rem;
   line-height: 1.22;
-  word-break: keep-all;
-  overflow-wrap: anywhere;
 }
 .yp[data-short="1"][data-layout="wide"] .hud-hint-mark {
   width: 17px;
   height: 17px;
+}
+/* A long hint that would take three lines up into the resting ball (hud.ts fitHint): wider, to the left, its right end
+   still the force bar's. */
+.yp[data-short="1"][data-layout="wide"] .hud-hint.is-wide {
+  left: 10px;
+  right: calc(50% - min(21vw, 260px) - 2px);
+  margin: 0 0 0 auto;
+  max-width: none;
 }
 
 /* practice: "R長押しで5秒もどす" (wide: under the rewind chip; tall: the bottom line of the dock). */
@@ -752,9 +766,15 @@ input {
 .yp[data-layout="tall"] .hud-tension-row {
   margin-bottom: 3px;
 }
-/* 125 % English: "Tension 18.5 / 18 N" needs 143 px of the row's 130: a fixed wider box (it never jumps with the value). */
+/* 125 % English: "Tension 18.5 / 18 N" needs 143 px of the row's 130: a fixed wider box (it never jumps with the value).
+   A status row without room for it (320 px with the offline chip, hud.ts fitDock is-close) gets the old box back with
+   a smaller type before the chips give up their labels. */
 .yp-ts125 .yp[lang="en"][data-layout="tall"] .hud-tension {
   width: 164px;
+}
+.yp-ts125 .yp[lang="en"][data-layout="tall"] .hud-status.is-close .hud-tension {
+  width: 150px;
+  font-size: 0.6rem;
 }
 
 /* the panel: scoreboard, or the READY hint (which may run over the top of the resting scene, never over the deck) */
@@ -1291,9 +1311,9 @@ input {
 .toast > span {
   text-wrap: balance;
 }
-/* ja breaks between phrases, not inside 「追いかけ減衰」; a stack too narrow for a whole phrase (landscape phones'
-   corner, data-narrow: popups.ts) keeps the normal breaks, which never start a line with 「」」. */
-.yp-toasts:not([data-narrow]) .toast > span {
+/* The run's trick / badge / rank toasts (ja) break between phrases, not inside 「追いかけ減衰」; the other toasts, and a
+   stack too narrow for a whole phrase (landscape phones' corner, data-narrow: popups.ts), keep the normal breaks. */
+.yp-toasts:not([data-narrow]) .toast--badge > span {
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
@@ -1784,14 +1804,19 @@ input {
   font-size: 2.3rem;
 }
 /* Narrow landscape phones (568-644 px): between the corner buttons the English tagline wrapped to two lines and hid
-   the gantry beam and the trolley; a smaller pill keeps it to one line. */
+   the gantry beam and the trolley; a smaller pill keeps it to one line. At 125 % text only where that line then fits
+   (637 px and wider); narrower, the 125 % tagline stays as it was (two lines). */
 @media (max-width: 644px) {
-  .yp[lang="en"][data-short="1"] .tagline {
+  html:not(.yp-ts125) .yp[lang="en"][data-short="1"] .tagline {
     padding: 6px 12px;
     font-size: 0.8rem;
-  }
-  html:not(.yp-ts125) .yp[lang="en"][data-short="1"] .tagline {
     white-space: nowrap;
+  }
+}
+@media (min-width: 637px) and (max-width: 644px) {
+  html.yp-ts125 .yp[lang="en"][data-short="1"] .tagline {
+    padding: 6px 12px;
+    font-size: 0.8rem;
   }
 }
 .yp[data-short="1"] .title-foot {

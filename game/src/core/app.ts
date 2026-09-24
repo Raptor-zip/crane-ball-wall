@@ -2818,10 +2818,11 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     const w = rf.nextWall !== null ? session.level.physics.walls[rf.nextWall] : undefined;
     // the wall-height labels in the scene: the required-angle label keeps clear of them
     const keepOut = rf.reqDeg !== null ? safe('renderer.heightLabelBoxes', () => (renderer as Partial<RendererExtras>).heightLabelBoxes?.(), undefined) : undefined;
+    const keepOutLines = keepOut?.length ? safe('renderer.heightLineBoxes', () => (renderer as Partial<RendererExtras>).heightLineBoxes?.(), undefined) : undefined;
     return {
       pivot: { x: pivot.x, y: pivot.y }, ball: { x: ball.x, y: ball.y }, pxPerM,
       slack: rf.cur.mode === Mode.Slack, holdFrac: rf.holdFrac, reqDeg: rf.reqDeg,
-      reqDir: w && (w.x0 + w.x1) / 2 < x ? -1 : 1, ...(keepOut ? { keepOut } : {}),
+      reqDir: w && (w.x0 + w.x1) / 2 < x ? -1 : 1, ...(keepOut ? { keepOut } : {}), ...(keepOutLines?.length ? { keepOutLines } : {}),
     };
   }
 

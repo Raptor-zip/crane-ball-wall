@@ -100,6 +100,8 @@ export interface RendererExtras {
    * required-angle label keeps clear of them (§9.3).
    */
   heightLabelBoxes(): ScreenBox[];
+  /** Their dashed lines, as 4 px tall screen boxes: a label moved off a height label keeps off its line too. */
+  heightLineBoxes(): ScreenBox[];
 }
 
 /** A rectangle in viewport CSS px. */
@@ -1402,6 +1404,16 @@ export function createRenderer(): Renderer & RendererDebug & RendererExtras {
         const y = r.projectY(l.h, Z_BACKINK);
         const p0 = project(l.xa, y + l.th * 1.05, Z_BACKINK), p1 = project(l.xa + l.w, y + l.th * 0.35, Z_BACKINK);
         return { x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y };
+      });
+    },
+
+    heightLineBoxes() {
+      if (!rig || !level) return [];
+      const r = rig;
+      return heightLabels(level.physics.walls, r.pxPerM(), r.kind === 'tall').map((l) => {
+        const y = r.projectY(l.h, Z_BACKINK);
+        const p0 = project(l.xa, y, Z_BACKINK), p1 = project(l.xb, y, Z_BACKINK);
+        return { x0: p0.x, y0: p0.y - 2, x1: p1.x, y1: p1.y + 2 };
       });
     },
 

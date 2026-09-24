@@ -862,24 +862,38 @@ describe('play polish (audit)', () => {
     expect(ruleOf('.yp[data-layout="tall"].yp--banner .hud-dock')).toMatch(/opacity: 0/);
   });
 
-  it('#6 leaving the results card for the next attempt drops its badge / trick / skin toasts, shown or waiting', () => {
+  it('#6 leaving the results card for the next attempt drops the toasts of what the card lists (badges, skins), not tricks', () => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     ui.mount(root);
-    ui.fx({ t: 'levelLoaded', level: lv('4-3') });
-    ui.show({ id: 'results', data: results(true) });
-    ui.toast('バッジ「一発」', 'badge');
+    ui.fx({ t: 'levelLoaded', level: lv('2-2') });
+    ui.toast('技「追いかけ減衰」を見つけた!', 'badge');   // posted by the core during the run
+    ui.show({ id: 'results', data: { ...results(true), badges: ['ippatsu', 'pashi'] } });
     ui.toast('スキンが開いた!', 'skin');
-    ui.toast('ワールド 3 が開いた!', 'info');
-    ui.toast('技「パシッ」を見つけた!', 'badge');   // waiting: three are on screen
-    expect(texts()).toEqual(['バッジ「一発」', 'スキンが開いた!', 'ワールド 3 が開いた!']);
-    // a skin toast looks like 'info'
-    expect(root.querySelectorAll('.toast--info')).toHaveLength(2);
+    vi.advanceTimersByTime(700);   // the card announces its first badge (results.ts)
+    expect(texts()).toEqual(['技「追いかけ減衰」を見つけた!', 'スキンが開いた!', 'バッジ「一発」']);
+    // the card's badge looks like a badge, a skin toast like 'info'
+    expect([...root.querySelectorAll('.yp-toasts .toast')].map((e) => e.className)).toEqual(['toast toast--badge', 'toast toast--info', 'toast toast--badge']);
+    ui.toast('技「逆振りの溜め」を見つけた!', 'badge');   // waiting: three are on screen
+    ui.toast('2-2 ランクイン！ 4位', 'badge');           // rank news of another run (flushRankNews): on no card
+    vi.advanceTimersByTime(450);   // the card's second badge waits too
     ui.show({ id: 'hud' });   // retry
-    expect(texts()).toEqual(['ワールド 3 が開いた!']);
+    // the card's badges and skin go (shown or waiting); the tricks and the rank news are on no card: they come
+    expect(texts()).toEqual(['技「追いかけ減衰」を見つけた!', '技「逆振りの溜め」を見つけた!', '2-2 ランクイン！ 4位']);
+    vi.advanceTimersByTime(10000);
+    expect(texts()).toEqual([]);
     // A trick found in a crashed run (no card in between) still shows after the crash.
     ui.toast('技「ブレーキ振り出し」を見つけた!', 'badge');
     ui.fx({ t: 'crash', kind: 1, wall: 0, x: 1, y: 0.5, overlapMm: 4 });
     ui.fx({ t: 'ready' });
     expect(texts()).toContain('技「ブレーキ振り出し」を見つけた!');
+    // the level select still drops the run's toasts, the card's badges with them
+    ui.show({ id: 'results', data: { ...results(true), badges: ['ippatsu'] } });
+    vi.advanceTimersByTime(700);
+    ui.show({ id: 'select', world: 2 });
+    expect(texts()).toEqual([]);
   });
 
   it('#34 wide HUD: toasts one at a time in the bottom-right corner (never under the clock, on the gantry)', () => {
@@ -897,6 +911,75 @@ describe('play polish (audit)', () => {
     expect(box.style.top).toBe('auto');
     expect(parseFloat(box.style.bottom)).toBeLessThanOrEqual(10);
     expect(ruleOf('.yp[data-short="1"][data-screen="hud"] .yp-toasts,\n.yp[data-layout="wide"][data-screen="hud"] .yp-toasts,\n.yp[data-layout="wide"][data-screen="demo"] .yp-toasts')).toMatch(/align-items: flex-end/);
+  });
+
+  it('#34 wide HUD: the toast keeps beside a READY hint card that reaches past the force bar, or waits for it to go', () => {
+    resize(1024, 768);
+    let hintW = 554;
+    const shown = (el: HTMLElement): boolean => el.style.display !== 'none';
+    const restore = stubLayout(
+      (el) => (el.classList.contains('hud-hint') && shown(el) ? { w: hintW, h: 46 } : el.classList.contains('hud-force') ? { w: 430, h: 12 } : el.classList.contains('yp-toasts') ? { w: 200, h: 50 } : null),
+      (el) => (el.classList.contains('hud-hint') ? { x: 512 - hintW / 2, y: 670 } : el.classList.contains('hud-force') ? { x: 297, y: 738 } : el.classList.contains('yp-toasts') ? { x: 800, y: 700 } : null));
+    onTestFinished(restore);
+    ui.mount(root);
+    ui.fx({ t: 'levelLoaded', level: lv('2-1') });
+    ui.show({ id: 'hud' });
+    const box = root.querySelector<HTMLElement>('.yp-toasts')!;
+    ui.hud(hudState({ hint: 'You need 64°. Build up until the angle arc turns green' }));
+    ui.toast('You can skip this level (pause menu)');
+    expect(texts()).toEqual(['You can skip this level (pause menu)']);
+    expect(parseFloat(box.style.left)).toBe(512 + 554 / 2 + 8);
+    // the run starts, the card goes: back to the corner beside the force bar
+    ui.hud(hudState({ hint: 'You need 64°. Build up until the angle arc turns green', running: true, timeSub: 5 }));
+    expect(parseFloat(box.style.left)).toBe(297 + 430 + 10);
+    // a card that leaves under 180 px beside it: the toast waits for the run to start, then comes
+    ui.fx({ t: 'retry' });
+    hintW = 700;
+    ui.hud(hudState({ hint: 'Hit the end just as the ball passes under the trolley backwards' }));
+    ui.toast('AIのライン：非表示');
+    expect(texts()).toEqual([]);
+    ui.hud(hudState({ hint: 'Hit the end just as the ball passes under the trolley backwards', running: true, timeSub: 5 }));
+    expect(texts()).toHaveLength(1);
+    expect(parseFloat(box.style.left)).toBe(297 + 430 + 10);
+  });
+
+  it('#13 landscape phones: a READY hint that would grow up into the resting ball widens to the left (is-wide)', () => {
+    resize(568, 320);
+    ui.mount(root);
+    ui.fx({ t: 'levelLoaded', level: lv('1-1') });
+    ui.show({ id: 'hud' });
+    const hint = root.querySelector<HTMLElement>('.hud-hint')!;
+    // the card's layout box (three lines above the force bar: top 232); the ball rests at (172, 230), 8 px
+    const card = { left: 163, top: 232, w: 242, h: 54 };
+    const props: [string, () => unknown][] = [['offsetParent', () => root], ['offsetLeft', () => card.left], ['offsetTop', () => card.top], ['offsetWidth', () => card.w], ['offsetHeight', () => card.h]];
+    for (const [k, get] of props) Object.defineProperty(hint, k, { configurable: true, get });
+    const anchors = { pivot: { x: 172, y: 110 }, ball: { x: 172, y: 230 }, pxPerM: 133, slack: false, holdFrac: 0, reqDeg: null };
+    ui.hud(hudState({ hint: 'ボールが振れていく方へ、台車を少しだけ追いかけると揺れが消える', anchors }));
+    expect(hint.classList.contains('is-wide')).toBe(true);
+    // two lines (top 246) clear the ball: the card stays centred over the force bar
+    card.top = 246;
+    card.h = 40;
+    ui.hud(hudState({ hint: '指を離すと台車はその場で止まる。ボールは止まらない', anchors }));
+    expect(hint.classList.contains('is-wide')).toBe(false);
+    // the ball clear of the card sideways: no change either
+    card.top = 232;
+    ui.hud(hudState({ hint: 'ボールが振れていく方へ、台車を少しだけ追いかけると揺れが消える', anchors: { ...anchors, ball: { x: 135, y: 230 } } }));
+    expect(hint.classList.contains('is-wide')).toBe(false);
+    // is-wide: right end at the force bar's, growing left (styles.css)
+    expect(ruleOf('.yp[data-short="1"][data-layout="wide"] .hud-hint.is-wide')).toMatch(/left: 10px;\s*right: calc\(50% - min\(21vw, 260px\) - 2px\);\s*margin: 0 0 0 auto;\s*max-width: none;/);
+  });
+
+  it('#9 a tall status row without room for the 125 % English egg meter: it gives the room back before the chips lose their labels', () => {
+    resize(320, 568);
+    ui.mount(root);
+    ui.fx({ t: 'levelLoaded', level: lv('4-3') });
+    ui.show({ id: 'hud' });
+    const st = root.querySelector<HTMLElement>('.hud-status')!;
+    // 320 px, offline: 8 px too wide with the 164 px meter, fits with the 150 px one (is-close)
+    Object.defineProperty(st, 'clientWidth', { configurable: true, get: () => 304 });
+    Object.defineProperty(st, 'scrollWidth', { configurable: true, get: () => (st.classList.contains('is-close') ? 302 : 312) });
+    ui.hud(hudState({ Tmax: 18, offline: true }));
+    expect([...st.classList]).toEqual(['hud-status', 'is-snug', 'is-close']);
   });
 
   it('#14 results on a landscape phone: one toast at a time beside the card (a burst never stacks over the scene)', () => {
@@ -920,8 +1003,10 @@ describe('play polish (audit)', () => {
     } finally {
       restore();
     }
-    // ja breaks between phrases in a stack wide enough for one (data-narrow: popups.ts)
-    expect(ruleOf('.yp-toasts:not([data-narrow]) .toast > span')).toMatch(/word-break: keep-all;\s*overflow-wrap: anywhere/);
+    // ja trick / badge / rank toasts break between phrases in a stack wide enough for one (data-narrow: popups.ts);
+    // the other toasts keep the normal breaks
+    expect(ruleOf('.yp-toasts:not([data-narrow]) .toast--badge > span')).toMatch(/word-break: keep-all;\s*overflow-wrap: anywhere/);
+    expect(cssText).not.toMatch(/\.yp-toasts:not\(\[data-narrow\]\) \.toast > span/);
   });
 
   it('#44 wide 1-1 onboarding: the ←/→ keycaps sit left of centre, off the ruler\'s 1 m label', () => {
@@ -933,7 +1018,10 @@ describe('play polish (audit)', () => {
     ui.hud(hudState());
     const caps = root.querySelector<HTMLElement>('.wide-onboard .keycaps')!;
     expect(caps).not.toBeNull();
-    expect(caps.style.transform).toBe('translateX(-70px)');
+    expect(caps.style.transform).toBe('');
+    // desktops only: landscape phones keep the pair centred (to the left it would cover the resting ball)
+    expect(ruleOf('.wide-onboard .keycaps')).toMatch(/transform: none/);
+    expect(ruleOf('.yp:not([data-short="1"]) .wide-onboard .keycaps')).toMatch(/transform: translateX\(-70px\)/);
   });
 
   it('#43 wide title: the top-left スキン comes first in the Tab order, あそぶ last', () => {
@@ -965,6 +1053,15 @@ describe('play polish (audit)', () => {
     expect(100 + y1 + 5 - 12).toBeGreaterThanOrEqual(label.y1);
     // a label elsewhere changes nothing
     ui.hud(hudState({ anchors: { ...a, keepOut: [{ x0: 0, y0: 0, x1: 20, y1: 20 }] } }));
+    expect(at()).toEqual([x0, y0]);
+    // moved off the text, it keeps off the text's dashed line too (goes on to below it, never struck through)
+    const line = { x0: 100 + x0 - 60, y0: label.y1 + 3, x1: 100 + x0 + 200, y1: label.y1 + 7 };
+    ui.hud(hudState({ anchors: { ...a, keepOut: [label], keepOutLines: [line] } }));
+    const [x2, y2] = at();
+    expect(x2).toBeGreaterThan(x1);
+    expect(100 + y2 - 12).toBeGreaterThanOrEqual(line.y1);
+    // on a line but clear of every text: where it always was
+    ui.hud(hudState({ anchors: { ...a, keepOut: [{ x0: 0, y0: 0, x1: 20, y1: 20 }], keepOutLines: [{ x0: 0, y0: 100 + y0 - 6, x1: 400, y1: 100 + y0 - 2 }] } }));
     expect(at()).toEqual([x0, y0]);
   });
 
@@ -1004,13 +1101,17 @@ describe('play polish (audit)', () => {
     expect(cssText).toMatch(/\.tagline \{\s*white-space: normal;[^}]*word-break: keep-all;\s*overflow-wrap: anywhere;/);
     // #0: 125 % logo capped to the width
     expect(ruleOf('.yp-ts125 .logo-a,\n.yp-ts125 .logo-b')).toMatch(/font-size: min\(1em, calc\(\(100vw - 32px\) \/ 7\.2\)\)/);
-    // #21: English tagline on 568-644 px landscape phones: one smaller line
-    expect(cssText).toMatch(/@media \(max-width: 644px\) \{\s*\.yp\[lang="en"\]\[data-short="1"\] \.tagline \{\s*padding: 6px 12px;\s*font-size: 0\.8rem;/);
+    // #21: English tagline on 568-644 px landscape phones: one smaller line; at 125 % only where it then fits (637 px+)
+    expect(cssText).toMatch(/@media \(max-width: 644px\) \{\s*html:not\(\.yp-ts125\) \.yp\[lang="en"\]\[data-short="1"\] \.tagline \{\s*padding: 6px 12px;\s*font-size: 0\.8rem;\s*white-space: nowrap;/);
+    expect(cssText).toMatch(/@media \(min-width: 637px\) and \(max-width: 644px\) \{\s*html\.yp-ts125 \.yp\[lang="en"\]\[data-short="1"\] \.tagline \{\s*padding: 6px 12px;\s*font-size: 0\.8rem;\s*\}/);
     // #22: the title hint's paper pill on landscape phones (over the ruler)
     expect(ruleOf('.yp[data-short="1"] .title-hint')).toMatch(/background: rgba\(251, 248, 241, 0\.86\)/);
-    // #9: 125 % English egg meter
+    // #9: 125 % English egg meter; a status row without room for it gets the old box in a smaller type (is-close)
     expect(ruleOf('.yp-ts125 .yp[lang="en"][data-layout="tall"] .hud-tension')).toMatch(/width: 164px/);
+    expect(ruleOf('.yp-ts125 .yp[lang="en"][data-layout="tall"] .hud-status.is-close .hud-tension')).toMatch(/width: 150px;\s*font-size: 0\.6rem;/);
     // #13: landscape phones' READY hint: compact, just above the force bar, no wider than it
     expect(ruleOf('.yp[data-short="1"][data-layout="wide"] .hud-hint')).toMatch(/bottom: calc\(34px \+ var\(--safe-b\)\);\s*max-width: calc\(42vw \+ 4px\);/);
+    // #13 / review: the hint keeps the normal line breaks (keep-all pushed hints to three lines, up into the ball)
+    expect(ruleOf('.yp[data-short="1"][data-layout="wide"] .hud-hint')).not.toMatch(/keep-all|anywhere/);
   });
 });

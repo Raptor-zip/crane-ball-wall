@@ -107,6 +107,17 @@ describe('toasts', () => {
     expect(texts()).toEqual(['World 3']);
   });
 
+  it("'cardBadge' toasts (the results card's badges) look like 'badge'; drop('cardBadge') keeps the tricks ('badge')", () => {
+    const t = createToasts(root, () => ({ ...area, max: 3 }));
+    t.show('技「パシッ」を見つけた!', 'badge');
+    t.show('バッジ「一発」', 'cardBadge');
+    const els = [...root.querySelectorAll('.toast')];
+    expect(els.map((e) => e.className)).toEqual(['toast toast--badge', 'toast toast--badge']);
+    expect(els[0]!.querySelector('svg')!.outerHTML).toBe(els[1]!.querySelector('svg')!.outerHTML);
+    t.drop('cardBadge');
+    expect(texts()).toEqual(['技「パシッ」を見つけた!']);
+  });
+
   it('a stack narrower than a whole ja phrase is marked data-narrow (no phrase-keeping breaks there)', () => {
     const t = createToasts(root, () => area);
     const box = root.querySelector('.yp-toasts')!;
