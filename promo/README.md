@@ -5,7 +5,7 @@
 | もの | 場所 | 作り方 |
 |---|---|---|
 | 宣伝動画（縦 1080×1920、27.6 秒、ずんだもんのナレーション付き） | GitHub Release [`promo-v1`](https://github.com/Raptor-zip/crane-ball-wall/releases/tag/promo-v1) | `./promo/build.sh` |
-| プレイ人口のありがとうカード（3200×1800、16:9） | [thanks/thanks1000.png](thanks/thanks1000.png)、[thanks/thanks2000.png](thanks/thanks2000.png) | `node promo/thanks/render.mjs 3000` |
+| プレイ人口のありがとうカード（3200×1800、16:9） | [thanks/thanks1000.png](thanks/thanks1000.png)、[thanks/thanks2000.png](thanks/thanks2000.png)、[thanks/thanks4000.png](thanks/thanks4000.png) | `node promo/thanks/render.mjs 3000` |
 
 ## 宣伝動画（`build.sh`）
 

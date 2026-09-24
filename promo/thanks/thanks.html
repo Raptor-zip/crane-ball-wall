@@ -50,7 +50,8 @@
 
   /* N,000 : leading digit(s) + three hanging balls as "000". The leading digit comes from ?k= (render.mjs) */
   .num { position: absolute; top: 196px; left: 0; right: 0; height: 520px; }
-  .one { position: absolute; left: 300px; top: 150px; font: 800 380px/1 "M PLUS Rounded 1c"; color: var(--ink); letter-spacing: -.02em; }
+  /* Right-aligned 22px before the first ball (.p1 at 520px), so wide digits (4, 8…) never touch it. */
+  .one { position: absolute; right: 1102px; top: 150px; font: 800 380px/1 "M PLUS Rounded 1c"; color: var(--ink); letter-spacing: -.02em; text-align: right; }
   .pend { position: absolute; top: 0; width: 220px; }
   .pend .trolley { position: absolute; top: -4px; left: 60px; width: 100px; height: 30px; border-radius: 4px; background: #5b6272; box-shadow: inset 0 -6px 0 #474d5b; }
   .pend .trolley::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: 7px; height: 3px; background: var(--ball); }
