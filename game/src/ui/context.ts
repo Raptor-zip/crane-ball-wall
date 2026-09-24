@@ -143,6 +143,8 @@ export interface ScreenEnv {
   layoutKind(): 'wide' | 'tall';
   /** env(safe-area-inset-top) in CSS px (tall: the HUD band starts under it). */
   safeTop(): number;
+  /** tall: the bottom of the play area (root px), the floor's front edge; a skins sheet above it moves the attract up. */
+  playBottom(): number;
   toast(text: string, kind?: 'info' | 'badge' | 'warn' | 'notice'): void;
   /** Re-renders the current screen (e.g. after a language change). */
   refresh(): void;

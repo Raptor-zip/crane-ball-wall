@@ -185,7 +185,8 @@ export const ja = {
   'pause.select': '面選択',
   'pause.skip': 'この面をスキップ',
   'pause.assist': 'アンチスウェイ\u200b補助', // U+200B: where the label may wrap (keep-all on stacked labels)
-  'pause.assistNote': 'ランキング対象外・メダルはクリアだけ',
+  // U+2060 joins 対象外, メダル and クリアだけ: the sub line wraps between words (not 「メダ / ル」「クリアだ / け」).
+  'pause.assistNote': 'ランキング対\u2060象\u2060外・メ\u2060ダ\u2060ルはク\u2060リ\u2060ア\u2060だ\u2060け',
   'pause.reverse': '逆再生ゴースト',
   'pause.keys': 'キー操作',
   'pause.rewind': '5秒もどす',

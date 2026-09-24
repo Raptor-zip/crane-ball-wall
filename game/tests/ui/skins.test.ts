@@ -415,17 +415,59 @@ describe('the sheet', () => {
   });
 
   it('tall: the sheet hands core its top edge and the top of the attract\'s frame, under the try-on tag', () => {
+    vi.useFakeTimers();
+    // A notch: ui.ts reads env(safe-area-inset-top) from a probe's padding; 24 px here.
+    const cs = window.getComputedStyle.bind(window);
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((e: Element, p?: string | null) =>
+      (e.getAttribute('style') ?? '').includes('safe-area-inset-top')
+        ? ({ paddingTop: '24px', paddingRight: '0px', paddingBottom: '0px' } as CSSStyleDeclaration)
+        : cs(e, p));
     vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(360);
+    // The try-on tag 10 px under the inset, 56 px tall (its heading and the skin's name) unless a test says otherwise.
+    let tagH = 56;
+    const rect = (top: number, h: number): DOMRect => ({ top, bottom: top + h, height: h, left: 0, right: 300, width: 300, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('skins-try') ? rect(24 + 10, tagH) : rect(0, 0);
+    });
+    mount();
+    ui.show({ id: 'title' });
+    ui.show({ id: 'skins', part: 'crane' });
+    // A sheet above the floor (its top at 0 here): the frame starts 80 px under the inset, the tag names the skin only.
+    expect(TRY_BAND).toBe(80);
+    expect(shownArgs[0]).toEqual([true, 0, 24 + 80]);
+    expect(q('.skins')!.dataset.high).toBe('1');
+    // A try-on: the two-line tag fits the band (the attract does not move) ...
+    q('[data-skin="crane.lineart"]')!.click();
+    expect(q<HTMLElement>('.skins-try')!.hidden).toBe(false);
+    expect(shownArgs.at(-1)).toEqual([true, 0, 24 + 80]);
+    // ... a taller one (its heading on two lines: 320 px at 125 % text) moves the frame down under itself, 14 px clear.
+    q('.skins-try-stop')!.click();
+    tagH = 71;
+    q('[data-skin="crane.lineart"]')!.click();
+    expect(shownArgs.at(-1)).toEqual([true, 0, 24 + 10 + 71 + 14]);
+    // The try-on ends: the frame goes back to the band.
+    q('.skins-try-stop')!.click();
+    expect(q<HTMLElement>('.skins-try')!.hidden).toBe(true);
+    expect(shownArgs.at(-1)).toEqual([true, 0, 24 + 80]);
+    // A sheet at the floor's front edge (390x844 at 100 %): not high; the tag keeps its condition there (styles.css).
+    const l = computeLayout(390, 844, window.devicePixelRatio || 1, 24);
+    const floor = l.scene.y + l.scene.h - l.bench!;
+    vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('skins-sheet') ? floor : 0;
+    });
     mount();
     ui.show({ id: 'title' });
     ui.show({ id: 'skins' });
-    expect(TRY_BAND).toBeGreaterThanOrEqual(10 + 56);   // the tag: 10 px down, 56 px tall
-    expect(shownArgs[0]).toEqual([true, 0, TRY_BAND]);
+    expect(shownArgs.at(-1)).toEqual([true, floor, 24 + 80]);
+    expect(q('.skins')!.dataset.high).toBe('0');
+    const css = readFileSync(resolve(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    expect(css).toMatch(/\.yp\[data-layout="tall"\] \.skins\[data-high="1"\] \.skins-try-cond \{\s*display: none;/);
     // wide: core frames nothing around the side panel.
     mount({}, true, [1280, 720]);
     ui.show({ id: 'title' });
     ui.show({ id: 'skins' });
     expect(shownArgs.at(-1)).toEqual([true, undefined, undefined]);
+    expect(q('.skins')!.dataset.high).toBe('0');
   });
 
   it('tall: the sheet keeps room for two cards and more on short phones, and 390x844 keeps its sheet (styles.css)', () => {
@@ -440,6 +482,26 @@ describe('the sheet', () => {
       const l = computeLayout(w, h, 3);
       expect(l.deck!.h + (l.bench ?? 0) - 8, `${w}x${h}`).toBeGreaterThanOrEqual(floor);
     }
+  });
+
+  it('the try-on heading wraps only before its bracket: 「試着中 / （まだ開いていません）」 (styles.css)', () => {
+    vi.useFakeTimers();
+    mount();
+    ui.show({ id: 'title' });
+    ui.show({ id: 'skins', part: 'crane' });
+    q('[data-skin="crane.lineart"]')!.click();
+    const halves = (): string[] => [...q('.skins-try-long')!.childNodes].map((n) => (n.nodeName === 'WBR' ? '|' : n.textContent!));
+    expect(halves()).toEqual(['試着中', '|', '（まだ開いていません）']);
+    expect(q('.skins-try-long')!.textContent).toBe(t('skins.try'));
+    save.settings.lang = 'en';
+    mount();
+    ui.show({ id: 'title' });
+    ui.show({ id: 'skins', part: 'crane' });
+    q('[data-skin="crane.lineart"]')!.click();
+    expect(halves()).toEqual(['Trying on', ' ', '(not unlocked yet)']);
+    setLang('ja');
+    const css = readFileSync(resolve(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    expect(css).toMatch(/\.skins-try-long > span \{\s*white-space: nowrap;\s*\}/);
   });
 
   it('landscape phones: the try-on tag names the skin only; its condition is a part the short layout hides', () => {

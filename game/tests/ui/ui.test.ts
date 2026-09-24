@@ -271,8 +271,19 @@ describe('createUI', () => {
       expect(root.querySelector<HTMLElement>('.yp')!.dataset.screen).toBe('title');
       expect(document.activeElement).toBe(byText('.title-links button', label));   // a new button: the title was rebuilt
     }
-    // A tap (the button has no keyboard focus): back on the title, the title itself has the focus (Enter starts, as its
-    // hint says).
+    // A tap or a click: the browser focuses the button without :focus-visible. Back on the title, the title itself has
+    // the focus (Enter starts, as its hint says).
+    const matches = Element.prototype.matches;
+    const pointer = vi.spyOn(Element.prototype, 'matches').mockImplementation(function (this: Element, sel: string) {
+      return sel === ':focus-visible' ? false : matches.call(this, sel);
+    });
+    byText('.title-links button', '設定').focus();
+    byText('.title-links button', '設定').click();
+    expect(root.querySelector<HTMLElement>('.yp')!.dataset.screen).toBe('settings');
+    esc();
+    expect(document.activeElement).toBe(root.querySelector('.title'));
+    pointer.mockRestore();
+    // (a button that lost the focus before the press, too)
     (document.activeElement as HTMLElement).blur();
     byText('.title-links button', '設定').click();
     esc();
@@ -810,17 +821,26 @@ describe('release review fixes', () => {
     const notes = [...root.querySelectorAll<HTMLButtonElement>('.pause-grid .btn')].find((b) => b.textContent!.includes('理科ノート'))!;
     expect(notes.querySelector('wbr')).not.toBeNull();
     expect(notes.getAttribute('aria-label')).toBe('理科ノート (?)');
-    // The label is keep-all (the <wbr> is its only break), and at 125 % on phones the tabs and the two-column pause
-    // buttons get the rules that keep a name on one line (measured in a browser: 「げんて / ん」「AIのライ / ン」 are gone).
-    expect(cssText).toMatch(/\.pause-grid \.btn > span:not\(\[class\]\) \{\s*word-break: keep-all;/);
+    // At 125 % on phones the tabs and the two-column pause buttons get the rules that keep a name on one line, and a
+    // label there is keep-all (the <wbr> is its only break). Only there: at 100 % and with a mouse the labels wrap as
+    // before, and no emergency break (overflow-wrap: anywhere) cuts an English word ("Scienc / e", "Setting / s").
+    // The lines themselves are measured in a browser (ui-screens.spec.ts "label wrapping").
     expect(cssText).toMatch(/@media \(max-width: 429px\) \{\s*\.yp-ts125 \.yp\[data-layout="tall"\] \.wtab \{/);
-    expect(cssText).toMatch(/@media \(max-width: 429px\) \{\s*\.yp-ts125 \.pause-grid \.btn:not\(\.btn--wide\) \{/);
+    const narrow = /@media \(max-width: 429px\) \{\s*\.yp-ts125 \.pause-grid \.btn:not\(\.btn--wide\) \{[\s\S]*?\n\}/.exec(cssText)?.[0] ?? '';
+    expect(narrow).toMatch(/\.yp-ts125 \.pause-grid \.btn:not\(\.btn--wide\) > span:not\(\[class\]\) \{\s*word-break: keep-all;\s*\}/);
+    expect(cssText.replace(narrow, '')).not.toMatch(/\.pause-grid \.btn(:not\(\.btn--wide\))? > span:not\(\[class\]\)/);
   });
 
-  it('Japanese paragraphs: no small kana first on a line; a button sub line wraps at its joints (styles.css)', () => {
+  it('Japanese paragraphs: no small kana first on a line; a button sub line wraps between words (styles.css, ja.ts)', () => {
     const rule = (sel: string): string => new RegExp(`(?:^|\\n)${sel.replace(/[.[\]()>:*]/g, '\\$&')} \\{([^}]*)\\}`).exec(cssText)?.[1] ?? '';
     expect(rule('.note,\n.rules li,\n.res-fail-cause > span')).toContain('line-break: strict;');
-    expect(rule('.btn-stack > .btn-sub')).toMatch(/line-break: strict;[\s\S]*word-break: keep-all;/);
+    // A button's sub line: strict only (keep-all left it one emergency break: 「・」 and 「け」 alone at 320 px, 125 %);
+    // ja.ts joins the words it must not split instead (U+2060), and the line breaks between them.
+    expect(rule('.btn-stack > .btn-sub').trim()).toBe('line-break: strict;');
+    const note = ja['pause.assistNote'];
+    expect(note.replace(/\u2060/g, '')).toBe('ランキング対象外・メダルはクリアだけ');
+    for (const w of ['対象外', 'メダル', 'クリアだけ']) expect(note).toContain([...w].join('\u2060'));
+    for (const j of ['グ対', '・メ', 'はク']) expect(note).toContain(j);   // (free to break between the words)
     expect(cssText).toMatch(/@supports \(word-break: auto-phrase\) \{\s*\.note:lang\(ja\),[\s\S]*?text-wrap: pretty;/);
   });
 

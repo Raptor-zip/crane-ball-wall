@@ -660,6 +660,91 @@ test.describe('inside the real game', () => {
   });
 });
 
+// The skins sheet on short phones and at 125 % text (§7.14): the attract is framed up into the empty HUD band, under
+// the try-on tag, which then names the skin only. The tag (and its 3 px shadow) ends at least a ghost tag's height
+// (17 px) above the beam: the beam, the trolley being tried on and the AI tag over them stay in view.
+test.describe('skins: the try-on tag over a sheet above the floor', () => {
+  for (const [w, h, ts] of [[320, 568, 100], [320, 568, 125], [360, 740, 125]] as const) {
+    for (const lang of ['ja', 'en'] as const) {
+      test(`${w}x${h} ${ts} % ${lang}`, async ({ browser, baseURL }) => {
+        test.setTimeout(60_000);
+        const ctx = await browser.newContext({ baseURL, viewport: { width: w, height: h }, hasTouch: true });
+        const page = await ctx.newPage();
+        await page.addInitScript(([l, scale]) => {
+          if (!localStorage.getItem('yurapita:v1')) localStorage.setItem('yurapita:v1', JSON.stringify({ v: 1, settings: { lang: l, langPicked: true, textScale: scale } }));
+        }, [lang, ts] as const);
+        await page.goto('/?yptest=1');
+        await page.waitForSelector('.yp[data-screen="title"]', { timeout: 30_000 });
+        await page.locator('.title-skins').tap();
+        await page.waitForSelector('.skins-sheet');
+        for (const id of ['crane.lineart', 'trail.wire']) {
+          await page.locator(`#skins-tab-${id.split('.')[0]}`).tap();
+          await page.locator(`[data-skin="${id}"]`).tap();
+          await page.waitForTimeout(400);
+          await expect(page.locator('.skins-try-cond')).toBeHidden();
+          const m = await page.evaluate(() => {
+            const ys: number[] = [];
+            for (let x = -1.5; x <= 4.5; x += 0.25) {
+              const q = window.__YP_TEST__!.toScreen!(x, 1.4);
+              if (q && q.x >= 0 && q.x <= window.innerWidth) ys.push(q.y);
+            }
+            return { tag: document.querySelector('.skins-try')!.getBoundingClientRect().bottom, beam: Math.min(...ys) };
+          });
+          expect(m.tag + 3 + 17, id).toBeLessThanOrEqual(m.beam);
+          await page.locator(`[data-skin="${id}"]`).tap();   // the try-on ends
+        }
+        await ctx.close();
+      });
+    }
+  }
+});
+
+// Fixed-width labels (§3.5, §9 日本語の折り返し): a line break never cuts a word ("Scienc / e", 「AIのライ / ン」,
+// 「クリ / アだけ」) and never leaves one character alone (「け」「・」), at 125 % text on phones and with a mouse.
+test.describe('label wrapping', () => {
+  /** The lines of each visible element matching `sel` (without U+200B / U+2060). */
+  const lines = (page: Page, sel: string): Promise<string[][]> => page.evaluate((s) => [...document.querySelectorAll<HTMLElement>(s)]
+    .filter((e) => e.offsetParent !== null)
+    .map((e) => {
+      const out: string[] = [];
+      let top: number | null = null;
+      const walk = document.createTreeWalker(e, NodeFilter.SHOW_TEXT);
+      for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+        const text = n.textContent ?? '';
+        for (let i = 0; i < text.length; i++) {
+          const r = document.createRange();
+          r.setStart(n, i);
+          r.setEnd(n, i + 1);
+          const q = [...r.getClientRects()].find((x) => x.width > 0);
+          if (!out.length || (q && top !== null && q.top > top + 4)) out.push('');
+          if (q && (top === null || q.top > top + 4)) top = q.top;
+          out[out.length - 1] += text[i];
+        }
+      }
+      return out.map((l) => l.replace(/[​⁠]/g, ''));
+    }), sel);
+  // (Japanese with a mouse on 360-411 px wide windows is another matter: the key hints squeeze 「リトライ」 there.)
+  for (const [w, h, ts, touch, langs] of [
+    [320, 568, 125, true, ['ja', 'en']], [390, 844, 125, true, ['ja', 'en']], [360, 740, 100, false, ['en']], [1280, 720, 100, false, ['ja', 'en']],
+  ] as const) {
+    test(`${w}x${h} ${ts} % ${touch ? 'touch' : 'mouse'}: pause buttons and the fail card's assist button`, async ({ browser, baseURL }) => {
+      const ctx = await browser.newContext({ baseURL, viewport: { width: w, height: h }, hasTouch: touch });
+      const page = await ctx.newPage();
+      for (const lang of langs) {
+        for (const screen of ['pause', 'results-fail'] as const) {
+          await open(page, `screen=${screen}&lang=${lang}&still=1${ts === 125 ? '&ts=125' : ''}`);
+          for (const ls of await lines(page, '.pause-grid .btn > span:not([class]), .btn-stack > span')) {
+            const joined = ls.join('|');
+            expect(joined, `${lang} ${screen}`).not.toMatch(/[A-Za-z]\|[A-Za-z]|[ァ-ヺー]\|[ァ-ヺー]/);
+            if (ls.length > 1) for (const l of ls) expect(l.trim().length, `${lang} ${screen}: ${joined}`).toBeGreaterThan(1);
+          }
+        }
+      }
+      await ctx.close();
+    });
+  }
+});
+
 
 // Release review (ui-1 .. ui-12): what a player on a small phone or in an in-app browser would see first.
 declare global {

@@ -10,6 +10,7 @@ import type { BadgeId } from '../../core/bus';
 import type { I18nKey } from '../i18n/format';
 import { markSkinsSeen } from '../../store/cosmetic';
 import { h } from '../dom';
+import type { Child } from '../dom';
 import { icon } from '../icons';
 import { getLang, levelName, t } from '../i18n/format';
 import { skinThumb } from '../skinthumb';
@@ -27,12 +28,15 @@ const ATTRACT_LEVEL = '2-2';
 const CONTROLS = 'button, a, input, select, textarea, [role="tab"], [role="radio"]';
 /** px kept between a card picked with the keys and the list's edge: its focus ring (3 px out, 2.5 px wide) and shadow. */
 const REVEAL_PAD = 8;
+/** px between the try-on tag and the attract framed under it: the tag's 3 px shadow, and air over the ghost tags. */
+const TRY_CLEAR = 14;
 /**
- * tall: px under the top safe inset kept for the try-on tag (styles.css .skins-try: 10 px down, 56-58 px tall with its
- * × button and two or three lines) and the ghost tags that the attract draws just above its beam: the attract framed
- * over a high sheet starts under it.
+ * tall, a sheet above the floor: the attract is framed up into the empty HUD band, from TRY_BAND px under the top safe
+ * inset: under the try-on tag (styles.css .skins-try: 10 px down, then the heading and the skin's name, 56 px with its
+ * × button; the condition is on the card then) and TRY_CLEAR. A taller tag (its heading wraps at 125 % text on a 320 px
+ * phone) moves the frame down under itself.
  */
-export const TRY_BAND = 80;
+export const TRY_BAND = 10 + 56 + TRY_CLEAR;
 /**
  * What the sheet keeps when it is rebuilt in place (a rotation re-renders the screen): the try-on and the list's scroll;
  * the tab is the screen's own `part`. Opening the sheet again starts afresh (a new screen object).
@@ -42,6 +46,14 @@ const kept = new WeakMap<object, { trying: string | null; scroll: number }>();
 const nameOf = (id: string): string => t(`skin.${id}.name` as I18nKey);
 /** A level id that never breaks at its hyphen (「2-」 / 「2」 on two lines): word joiners around it. */
 const levelId = (id: string): string => id.replace(/-/g, '\u2060-\u2060');
+/**
+ * The try-on heading in two halves that do not break, 「試着中｜（まだ開いていません）」 / "Trying on｜(not unlocked yet)":
+ * where it wraps (a 320 px phone at 125 % text) it wraps before the bracket (styles.css .skins-try-long > span).
+ */
+const tryHeading = (s: string): Child[] => {
+  const m = /^(.+?)(\s*)([（(].*)$/u.exec(s);
+  return m ? [h('span', null, m[1]!), m[2] ? ' ' : h('wbr', null), h('span', null, m[3]!)] : [s];
+};
 
 /** The unlock condition of a locked card (§7.14 table), with {have}/{need} filled in. */
 export function conditionText(rule: UnlockRule, have: number, need: number, env: Pick<ScreenEnv, 'levels'>): string {
@@ -122,19 +134,28 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
   let previewed = false;
 
   // tall: core frames the attract above the sheet (the sheet can be taller than the control deck on a small phone or at
-  // 125 % text); its top edge goes along now and whenever the sheet changes size. A sheet that rises above the floor also
-  // gets the empty HUD band for the attract, down from under the try-on tag's band (TRY_BAND).
-  const sheetTop = (): number | undefined => {
-    if (env.layoutKind() !== 'tall') return undefined;
-    const yp = el.closest('.yp');
-    if (!yp || !el.isConnected) return undefined;
+  // 125 % text); its top edge goes along now and whenever the sheet or the try-on tag changes size. A sheet that rises
+  // above the floor also gets the empty HUD band for the attract, down from under the try-on tag (TRY_BAND); the tag
+  // then names the skin only (data-high, styles.css).
+  const sheetTop = (yp: Element): number | undefined => {
     const top = el.getBoundingClientRect().top - yp.getBoundingClientRect().top + sheet.offsetTop;
     return sheet.offsetHeight > 0 && Number.isFinite(top) ? top : undefined;
   };
+  const frameTop = (yp: Element): number => {
+    const band = env.safeTop() + TRY_BAND;
+    const r = tryBanner.hidden ? null : tryBanner.getBoundingClientRect();
+    return r && r.height > 0 ? Math.max(band, r.bottom - yp.getBoundingClientRect().top + TRY_CLEAR) : band;
+  };
+  let sent: string | null = null;
   const shown = (): void => {
     try {
-      const top = sheetTop();
-      env.ctx.skinsShown?.(true, top, top === undefined ? undefined : env.safeTop() + TRY_BAND);
+      const yp = env.layoutKind() === 'tall' && el.isConnected ? el.closest('.yp') : null;
+      const top = yp ? sheetTop(yp) : undefined;
+      el.dataset.high = top !== undefined && Math.round(top) < env.playBottom() ? '1' : '0';
+      const frame = top === undefined ? undefined : frameTop(yp!);
+      if (sent === `${top}|${frame}`) return;   // nothing moved
+      sent = `${top}|${frame}`;
+      env.ctx.skinsShown?.(true, top, frame);
     } catch {
       /* core's business */
     }
@@ -146,6 +167,7 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
       if (!disposed) shown();
     });
     resize.observe(sheet);
+    resize.observe(tryBanner);
   } catch {
     resize = null;   // no ResizeObserver: the top edge of the first layout stays
   }
@@ -256,12 +278,14 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
 
   function paintTry(): void {
     tryBanner.hidden = !trying;
-    if (!trying) return;
-    tryText.replaceChildren(
-      // Landscape phones: the short heading (「試着中」) and the name only (the card's lock and condition say the rest),
-      // see styles.css.
-      h('b', null, h('span', { class: 'skins-try-long' }, t('skins.try')), h('span', { class: 'skins-try-short' }, t('skins.trying'))),
-      h('span', null, nameOf(trying.id), h('span', { class: 'skins-try-cond' }, ` — ${conditionText(trying.rule, trying.have, trying.need, env)}`)));
+    if (trying) {
+      tryText.replaceChildren(
+        // Landscape phones: the short heading (「試着中」) and the name only; tall over a sheet above the floor, the name
+        // only (the card's lock and condition say the rest), see styles.css.
+        h('b', null, h('span', { class: 'skins-try-long' }, tryHeading(t('skins.try'))), h('span', { class: 'skins-try-short' }, t('skins.trying'))),
+        h('span', null, nameOf(trying.id), h('span', { class: 'skins-try-cond' }, ` — ${conditionText(trying.rule, trying.have, trying.need, env)}`)));
+    }
+    shown();   // the frame under the tag (a ResizeObserver follows it too, but not in every engine)
   }
 
   /** Stores a waiting equip (settings.skin; core applies it) and hands the try-on state to core. */

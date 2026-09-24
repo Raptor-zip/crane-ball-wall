@@ -1524,11 +1524,9 @@ input {
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
-/* Its sub line too: 「ランキング対象外・ / メダルはクリアだけ」, not 「…クリアだ / け」 (no small kana first either). */
+/* Its sub line: no small kana first on a line (ja.ts joins the words it must not split: not 「クリアだ / け」). */
 .btn-stack > .btn-sub {
   line-break: strict;
-  word-break: keep-all;
-  overflow-wrap: anywhere;
 }
 .kbd {
   display: inline-grid;
@@ -3845,10 +3843,9 @@ input {
   .yp-ts125 .pause-grid .btn:not(.btn--wide) .kbd {
     display: none;
   }
-}
-.pause-grid .btn > span:not([class]) {
-  word-break: keep-all;
-  overflow-wrap: anywhere;
+  .yp-ts125 .pause-grid .btn:not(.btn--wide) > span:not([class]) {
+    word-break: keep-all;
+  }
 }
 /* Daily names are "ひとっとび × 短い紐 × 高い壁": wrap at the " × " joints, never inside a word (「高い / 壁」). */
 .daily-name {
@@ -4716,6 +4713,10 @@ input {
 .skins-try-text b {
   color: var(--stamp);
 }
+/* Where the heading wraps (a 320 px phone at 125 % text): 「試着中 / （まだ開いていません）」, not 「…いませ / ん）」. */
+.skins-try-long > span {
+  white-space: nowrap;
+}
 .skins-try-text > span {
   color: var(--ink-2);
   font-size: 0.72rem;
@@ -4744,12 +4745,16 @@ input {
   border-color: transparent;
   background: transparent;
 }
-/* tall: the band down to 80 px under the safe inset (skins.ts TRY_BAND) is the tag's; an attract framed over a high
-   sheet starts under it. */
+/* tall: over a sheet above the floor (short phones, 125 % text) the attract is framed up into the HUD band, under the
+   tag (skins.ts TRY_BAND); the tag then names the skin only, as on landscape phones, so it stays two lines tall over
+   the beam and the ghost tags (its condition, 2-3 lines more, is on the card under it). */
 .yp[data-layout="tall"] .skins-try {
   top: calc(var(--safe-t) + 10px);
   left: 12px;
   right: 12px;
+}
+.yp[data-layout="tall"] .skins[data-high="1"] .skins-try-cond {
+  display: none;
 }
 .yp[data-layout="wide"] .skins-try {
   top: calc(var(--safe-t) + 12px);

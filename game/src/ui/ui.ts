@@ -425,6 +425,7 @@ export function createUI(ctx: UiContext = {}): UI {
     lastRun: () => ({ ...lastRun }),
     layoutKind: () => layout.kind,
     safeTop: () => lastSafe,
+    playBottom: () => layout.scene.y + layout.scene.h - (layout.bench ?? 0),
     toast: (text, kind) => toasts.show(text, kind),
     refresh: () => render(),
   };
