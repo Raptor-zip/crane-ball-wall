@@ -29,7 +29,7 @@
 | `npm run test:browser` | ブラウザテスト（chromium / firefox / webkit） |
 | `npm run test:e2e` | `dist-test/` と単一 HTML をビルドして Playwright で E2E（下の「E2E」） |
 | `npm run typecheck` / `npm run lint` | 型検査 / ESLint（`src/sim` の決定性の禁止規則を含む） |
-| `npm run build` | 本番ビルド → `dist/` |
+| `npm run build` | 本番ビルド → `dist/`。OGP の `og:image` / `og:url` とシェアのリンクは `VITE_PUBLIC_ORIGIN`（既定は本番の https://yurapita.raptor-s.workers.dev、環境変数で上書き可）で作る |
 | `npm run build:single` | 単一 HTML → `dist-single/index.html`（ネットワークなし）と、その検査 |
 | `npm run worker:dev` | ビルドしてから Worker をローカルで起動（ローカル D1、http://localhost:8787） |
 | `npm run db:migrate:local` | ローカル D1 にマイグレーションを適用 |

@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "VITE_PUBLIC_ORIGIN=${VITE_PUBLIC_ORIGIN-https://yurapita.raptor-s.workers.dev} vite build",
     "build:single": "vite build --mode single && node tools/check-single.mjs",
     "stats": "node tools/stats.mjs",
     "build:test": "VITE_TEST=1 vite build",
