@@ -1579,6 +1579,10 @@ input {
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
+/* Its sub line: no small kana first on a line (ja.ts joins the words it must not split: not 「クリアだ / け」). */
+.btn-stack > .btn-sub {
+  line-break: strict;
+}
 .kbd {
   display: inline-grid;
   place-items: center;
@@ -3376,6 +3380,21 @@ input {
   color: var(--ink-2);
   line-height: 1.5;
 }
+/* Japanese paragraphs: a small kana never starts a line (「ピタ / ッ」). Where the engine also breaks Japanese by phrase
+   (word-break: auto-phrase, Chromium), the last line is never a lone character (「今日の記 / 録。」); elsewhere
+   text-wrap: pretty rebalances the whole paragraph and, with no phrases to go by, cuts words (「手 / 前」). */
+.note,
+.rules li,
+.res-fail-cause > span {
+  line-break: strict;
+}
+@supports (word-break: auto-phrase) {
+  .note:lang(ja),
+  .rules li:lang(ja),
+  .res-fail-cause > span:lang(ja) {
+    text-wrap: pretty;
+  }
+}
 
 /* ---------------------------------------------------------------- settings */
 
@@ -3800,6 +3819,19 @@ input {
   text-align: center;
   white-space: normal;
 }
+/* 125 % text on phones: a name stays on one line in its tab (not 「げんて / ん」「クレー / ン」, no "Tricksters" over the
+   border): thinner sides and a size still larger than at 100 % (0.64rem of 16 px). The skins and notes tabs too. */
+@media (max-width: 429px) {
+  .yp-ts125 .yp[data-layout="tall"] .wtab {
+    padding-inline: 2px;
+    font-size: 0.6rem;
+  }
+}
+@media (max-width: 359px) {
+  .yp-ts125 .yp[data-layout="tall"] .wtab {
+    font-size: 0.55rem;
+  }
+}
 .btnrow .btn {
   white-space: nowrap;
   padding: 0 10px;
@@ -3999,6 +4031,26 @@ input {
 @media (max-width: 411px) {
   .yp:lang(ja) .pause-grid .kbd {
     display: none;
+  }
+}
+/* 125 % text on phones: the two-column buttons take the narrow-phone rules above, so that 「AIのライン」「理科ノート」
+   stay on one line (18 px, still larger than at 100 %). Where even that is too wide (320 px) a label wraps only where a
+   word starts (「AIの / ライン」: pause.ts puts the break there), never inside it. */
+@media (max-width: 429px) {
+  .yp-ts125 .pause-grid .btn:not(.btn--wide) {
+    gap: 6px;
+    padding: 8px;
+    font-size: 0.9rem;
+  }
+  .yp-ts125 .pause-grid .btn:not(.btn--wide) > .ico {
+    width: 18px;
+    height: 18px;
+  }
+  .yp-ts125 .pause-grid .btn:not(.btn--wide) .kbd {
+    display: none;
+  }
+  .yp-ts125 .pause-grid .btn:not(.btn--wide) > span:not([class]) {
+    word-break: keep-all;
   }
 }
 /* Daily names are "ひとっとび × 短い紐 × 高い壁": wrap at the " × " joints, never inside a word (「高い / 壁」). */
@@ -4565,13 +4617,14 @@ input {
   overflow: hidden;
 }
 /* tall: the sheet takes the control deck and the bench band, so its top edge is the floor's front edge and the whole
-   play area of the attract stays in view (the preview); on short phones it keeps room for the tabs and a card or two,
-   and core frames the attract above its top edge instead (app.ts sceneLayout). */
+   play area of the attract stays in view (the preview). Short phones keep at least 22.5rem for the tabs and two cards
+   and more (390x844's 365 px sheet is already taller); core then frames the attract between the try-on tag's band at
+   the top and the sheet's top edge (skinState.ts skinsSheetLayout, skins.ts TRY_BAND). */
 .yp[data-layout="tall"] .skins-sheet {
   left: calc(var(--safe-l) + 8px);
   right: calc(var(--safe-r) + 8px);
   bottom: calc(var(--safe-b) + 8px);
-  height: min(62%, max(calc(var(--deck-h) + var(--bench-h) - 8px - var(--safe-b)), 18rem));
+  height: min(62%, max(calc(var(--deck-h) + var(--bench-h) - 8px - var(--safe-b)), 22.5rem));
 }
 .yp[data-layout="wide"] .skins-sheet {
   top: calc(var(--safe-t) + 12px);
@@ -4873,6 +4926,10 @@ input {
 .skins-try-text b {
   color: var(--stamp);
 }
+/* Where the heading wraps (a 320 px phone at 125 % text): 「試着中 / （まだ開いていません）」, not 「…いませ / ん）」. */
+.skins-try-long > span {
+  white-space: nowrap;
+}
 .skins-try-text > span {
   color: var(--ink-2);
   font-size: 0.72rem;
@@ -4887,6 +4944,11 @@ input {
 .yp[data-short="1"] .skins-try-short {
   display: inline;
 }
+/* ... and names the skin only: its condition (3-4 lines beside the panel, over the gantry being tried on) is on the
+   card, next to the lock. */
+.yp[data-short="1"] .skins-try-cond {
+  display: none;
+}
 .skins-try-stop {
   flex: 0 0 auto;
   width: 44px;
@@ -4896,10 +4958,16 @@ input {
   border-color: transparent;
   background: transparent;
 }
+/* tall: over a sheet above the floor (short phones, 125 % text) the attract is framed up into the HUD band, under the
+   tag (skins.ts TRY_BAND); the tag then names the skin only, as on landscape phones, so it stays two lines tall over
+   the beam and the ghost tags (its condition, 2-3 lines more, is on the card under it). */
 .yp[data-layout="tall"] .skins-try {
   top: calc(var(--safe-t) + 10px);
   left: 12px;
   right: 12px;
+}
+.yp[data-layout="tall"] .skins[data-high="1"] .skins-try-cond {
+  display: none;
 }
 .yp[data-layout="wide"] .skins-try {
   top: calc(var(--safe-t) + 12px);

@@ -13,7 +13,10 @@ import { setLang, t } from '../../src/ui/i18n/format';
 import { SKINS, type SkinPart } from '../../src/core/skins';
 import { buildSkinsView } from '../../src/core/skinState';
 import { partLook, type SkinLook } from '../../src/render/skinLooks';
-import { conditionText } from '../../src/ui/screens/skins';
+import { TRY_BAND, conditionText } from '../../src/ui/screens/skins';
+import { computeLayout } from '../../src/ui/layout';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { skinThumb } from '../../src/ui/skinthumb';
 import { drawShareCard } from '../../src/ui/sharecard';
 import { installRecorder, parseColour, recorderOf } from '../render/recorder';
@@ -78,20 +81,21 @@ let ui: UI;
 let save: SaveV1;
 let previews: (Partial<Record<SkinPart, string>> | null)[];
 let shown: boolean[];
+/** Every skinsShown call: open, the sheet's top edge, the top of the attract's frame. */
+let shownArgs: [boolean, number | undefined, number | undefined][];
 const got: { a: UiAction; p: unknown }[] = [];
 
-function mount(ctxExtra: Partial<UiContext> = {}, withSkins = true): void {
+function mount(ctxExtra: Partial<UiContext> = {}, withSkins = true, size: [number, number] = [390, 844]): void {
   document.body.innerHTML = '<div id="app"></div>';
   root = document.getElementById('app')!;
-  Object.defineProperty(root, 'clientWidth', { configurable: true, value: 390 });
-  Object.defineProperty(root, 'clientHeight', { configurable: true, value: 844 });
+  resize(size[0], size[1]);
   const store: Store = { persistent: true, data: () => save, update: (fn) => fn(save), flush: () => undefined };
   const ctx: UiContext = {
     store,
     ...(withSkins ? {
       skins: (): SkinsView => buildSkinsView(save, BUNDLED_LEVELS),
       skinPreview: (ids) => { previews.push(ids); },
-      skinsShown: (open) => { shown.push(open); },
+      skinsShown: (open, top, frame) => { shown.push(open); shownArgs.push([open, top, frame]); },
     } : {}),
     ...ctxExtra,
   };
@@ -108,8 +112,18 @@ beforeEach(() => {
   save.skins = { owned: ['trail.pencil', 'ball.steel'], seen: ['trail.pencil'], bestStreak: 0 };
   previews = [];
   shown = [];
+  shownArgs = [];
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+/** The UI root's size (a rotation when the layout kind changes: the UI listens to window resize). */
+function resize(w: number, h: number): void {
+  Object.defineProperty(root, 'clientWidth', { configurable: true, value: w });
+  Object.defineProperty(root, 'clientHeight', { configurable: true, value: h });
+}
 
 const q = <T extends HTMLElement = HTMLElement>(sel: string): T | null => root.querySelector<T>(sel);
 const screenId = (): string | undefined => q('.yp')!.dataset.screen;
@@ -306,6 +320,203 @@ describe('the sheet', () => {
     } finally {
       window.removeEventListener('keydown', spy);
     }
+  });
+
+  it('keyboard: a card picked with ↑ ↓ is scrolled into view (the list only); a tap leaves the list where it is', () => {
+    vi.useFakeTimers();
+    mount();
+    ui.show({ id: 'title' });
+    ui.show({ id: 'skins', part: 'ball' });
+    const panel = q('.skins-panel')!;
+    let scrolled = 0;   // a browser keeps scrollTop >= 0
+    Object.defineProperty(panel, 'scrollTop', { configurable: true, get: () => scrolled, set: (v: number) => { scrolled = Math.max(0, v); } });
+    // A laid-out list: 200 px tall at y 600, cards 84 px tall 92 px apart, moving with the list's scroll.
+    const rect = (top: number, h: number): DOMRect => ({ top, bottom: top + h, height: h, left: 0, right: 300, width: 300, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('skins-panel')) return rect(600, 200);
+      if (this.classList.contains('skin-card')) return rect(602 + [...this.parentElement!.children].indexOf(this) * 92 - panel.scrollTop, 84);
+      return rect(0, 0);
+    });
+    const inView = (el: Element): boolean => {
+      const r = el.getBoundingClientRect();
+      return r.top >= 600 + 8 && r.bottom <= 800 - 8;
+    };
+    q('[data-skin="ball.red"]')!.focus();
+    for (let i = 0; i < 3; i++) key(document.activeElement!, 'ArrowDown');
+    expect((document.activeElement as HTMLElement).dataset.skin).toBe('ball.point');
+    expect(inView(document.activeElement!)).toBe(true);
+    expect(panel.scrollTop).toBe(170);
+    // ↑ from the first card wraps to the last one, which comes into view too.
+    key(document.activeElement!, 'Home');
+    expect(panel.scrollTop).toBe(0);
+    key(document.activeElement!, 'ArrowUp');
+    expect((document.activeElement as HTMLElement).dataset.skin).toBe('ball.lapis');
+    expect(inView(document.activeElement!)).toBe(true);
+    // A tap on a half-hidden card picks it without moving the list.
+    panel.scrollTop = 0;
+    q<HTMLElement>('[data-skin="ball.wrecker"]')!.click();
+    expect(panel.scrollTop).toBe(0);
+  });
+
+  it('Tab stays in the sheet: the roving cards and tabs are one stop each, the last one wraps to the first stop', () => {
+    mount();
+    ui.show({ id: 'title' });
+    ui.show({ id: 'skins', part: 'ball' });
+    const red = q('[data-skin="ball.red"]')!;
+    red.focus();
+    const tab = key(red, 'Tab');
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(q('.skins-close'));
+    const back = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+    q('.skins-close')!.dispatchEvent(back);
+    expect(back.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(red);   // the equipped card (the group's stop), not the last card
+    // A locked card on trial (not a Tab stop) is after every stop: Tab wraps (to the try-on tag's ×, now the first
+    // stop); Shift+Tab goes back natively.
+    const point = q('[data-skin="ball.point"]')!;
+    point.focus();
+    point.click();
+    const onTrial = q('[data-skin="ball.point"]')!;
+    expect(document.activeElement).toBe(onTrial);
+    expect(key(onTrial, 'Tab').defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(q('.skins-try-stop'));
+    onTrial.focus();
+    const up = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+    onTrial.dispatchEvent(up);
+    expect(up.defaultPrevented).toBe(false);
+  });
+
+  it('a rotation (tall ↔ wide) rebuilds the sheet with the same tab, the try-on and the list where it was', () => {
+    vi.useFakeTimers();
+    mount();
+    ui.show({ id: 'title' });
+    q('.title-skins')!.click();
+    q('#skins-tab-stage')!.click();
+    q('[data-skin="stage.textbook"]')!.click();
+    vi.advanceTimersByTime(160);
+    expect(previews.at(-1)).toEqual({ stage: 'stage.textbook' });
+    q('.skins-panel')!.scrollTop = 120;
+    resize(844, 390);
+    window.dispatchEvent(new Event('resize'));
+    expect(q('.yp')!.dataset.layout).toBe('wide');
+    expect(q('[role="tab"][aria-selected="true"]')!.dataset.part).toBe('stage');
+    expect(q<HTMLElement>('.skins-try')!.hidden).toBe(false);
+    expect(q('[data-skin="stage.textbook"]')!.classList.contains('is-trying')).toBe(true);
+    expect(q('.skins-panel')!.scrollTop).toBe(120);
+    // The old sheet ended the try-on and the new one sends it again at once (no 150 ms without it).
+    expect(previews.slice(-2)).toEqual([null, { stage: 'stage.textbook' }]);
+    expect(shown).toEqual([true, false, true]);
+    // Closing ends it; opening the sheet again starts afresh.
+    q('.skins-close')!.click();
+    expect(previews.at(-1)).toBeNull();
+    q('.title-skins')!.click();
+    expect(q('[role="tab"][aria-selected="true"]')!.dataset.part).toBe('ball');
+    expect(q<HTMLElement>('.skins-try')!.hidden).toBe(true);
+  });
+
+  it('tall: the sheet hands core its top edge and the top of the attract\'s frame, under the try-on tag', () => {
+    vi.useFakeTimers();
+    // A notch: ui.ts reads env(safe-area-inset-top) from a probe's padding; 24 px here.
+    const cs = window.getComputedStyle.bind(window);
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((e: Element, p?: string | null) =>
+      (e.getAttribute('style') ?? '').includes('safe-area-inset-top')
+        ? ({ paddingTop: '24px', paddingRight: '0px', paddingBottom: '0px' } as CSSStyleDeclaration)
+        : cs(e, p));
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(360);
+    // The try-on tag 10 px under the inset, 56 px tall (its heading and the skin's name) unless a test says otherwise.
+    let tagH = 56;
+    const rect = (top: number, h: number): DOMRect => ({ top, bottom: top + h, height: h, left: 0, right: 300, width: 300, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('skins-try') ? rect(24 + 10, tagH) : rect(0, 0);
+    });
+    mount();
+    ui.show({ id: 'title' });
+    ui.show({ id: 'skins', part: 'crane' });
+    // A sheet above the floor (its top at 0 here): the frame starts 80 px under the inset, the tag names the skin only.
+    expect(TRY_BAND).toBe(80);
+    expect(shownArgs[0]).toEqual([true, 0, 24 + 80]);
+    expect(q('.skins')!.dataset.high).toBe('1');
+    // A try-on: the two-line tag fits the band (the attract does not move) ...
+    q('[data-skin="crane.lineart"]')!.click();
+    expect(q<HTMLElement>('.skins-try')!.hidden).toBe(false);
+    expect(shownArgs.at(-1)).toEqual([true, 0, 24 + 80]);
+    // ... a taller one (its heading on two lines: 320 px at 125 % text) moves the frame down under itself, 14 px clear.
+    q('.skins-try-stop')!.click();
+    tagH = 71;
+    q('[data-skin="crane.lineart"]')!.click();
+    expect(shownArgs.at(-1)).toEqual([true, 0, 24 + 10 + 71 + 14]);
+    // The try-on ends: the frame goes back to the band.
+    q('.skins-try-stop')!.click();
+    expect(q<HTMLElement>('.skins-try')!.hidden).toBe(true);
+    expect(shownArgs.at(-1)).toEqual([true, 0, 24 + 80]);
+    // A sheet at the floor's front edge (390x844 at 100 %): not high; the tag keeps its condition there (styles.css).
+    const l = computeLayout(390, 844, window.devicePixelRatio || 1, 24);
+    const floor = l.scene.y + l.scene.h - l.bench!;
+    vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains('skins-sheet') ? floor : 0;
+    });
+    mount();
+    ui.show({ id: 'title' });
+    ui.show({ id: 'skins' });
+    expect(shownArgs.at(-1)).toEqual([true, floor, 24 + 80]);
+    expect(q('.skins')!.dataset.high).toBe('0');
+    const css = readFileSync(resolve(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    expect(css).toMatch(/\.yp\[data-layout="tall"\] \.skins\[data-high="1"\] \.skins-try-cond \{\s*display: none;/);
+    // wide: core frames nothing around the side panel.
+    mount({}, true, [1280, 720]);
+    ui.show({ id: 'title' });
+    ui.show({ id: 'skins' });
+    expect(shownArgs.at(-1)).toEqual([true, undefined, undefined]);
+    expect(q('.skins')!.dataset.high).toBe('0');
+  });
+
+  it('tall: the sheet keeps room for two cards and more on short phones, and 390x844 keeps its sheet (styles.css)', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    const m = /\.yp\[data-layout="tall"\] \.skins-sheet \{[^}]*height: min\(62%, max\(calc\(var\(--deck-h\) \+ var\(--bench-h\) - 8px - var\(--safe-b\)\), ([\d.]+)rem\)\);/.exec(css);
+    expect(m).not.toBeNull();
+    const floor = Number(m![1]) * 16;
+    // Heading, note and tabs take 156 px; two 84 px cards with their gap under them.
+    expect(floor - 156).toBeGreaterThanOrEqual(2 * 84 + 8);
+    // 390x844 and taller phones: the sheet is the deck and bench band (its top edge on the floor's front edge) as before.
+    for (const [w, h] of [[390, 844], [393, 852], [412, 915], [430, 932]] as const) {
+      const l = computeLayout(w, h, 3);
+      expect(l.deck!.h + (l.bench ?? 0) - 8, `${w}x${h}`).toBeGreaterThanOrEqual(floor);
+    }
+  });
+
+  it('the try-on heading wraps only before its bracket: 「試着中 / （まだ開いていません）」 (styles.css)', () => {
+    vi.useFakeTimers();
+    mount();
+    ui.show({ id: 'title' });
+    ui.show({ id: 'skins', part: 'crane' });
+    q('[data-skin="crane.lineart"]')!.click();
+    const halves = (): string[] => [...q('.skins-try-long')!.childNodes].map((n) => (n.nodeName === 'WBR' ? '|' : n.textContent!));
+    expect(halves()).toEqual(['試着中', '|', '（まだ開いていません）']);
+    expect(q('.skins-try-long')!.textContent).toBe(t('skins.try'));
+    save.settings.lang = 'en';
+    mount();
+    ui.show({ id: 'title' });
+    ui.show({ id: 'skins', part: 'crane' });
+    q('[data-skin="crane.lineart"]')!.click();
+    expect(halves()).toEqual(['Trying on', ' ', '(not unlocked yet)']);
+    setLang('ja');
+    const css = readFileSync(resolve(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    expect(css).toMatch(/\.skins-try-long > span \{\s*white-space: nowrap;\s*\}/);
+  });
+
+  it('landscape phones: the try-on tag names the skin only; its condition is a part the short layout hides', () => {
+    vi.useFakeTimers();
+    mount({}, true, [568, 320]);
+    ui.show({ id: 'title' });
+    ui.show({ id: 'skins', part: 'crane' });
+    expect(q('.yp')!.dataset.short).toBe('1');
+    q('[data-skin="crane.lineart"]')!.click();
+    const body = q('.skins-try-text > span')!;
+    const cond = conditionText({ k: 'badge', id: 'yasashisa' }, 0, 1, env);
+    expect(body.textContent).toBe(`${t('skin.crane.lineart.name' as never)} — ${cond}`);
+    expect(body.querySelector('.skins-try-cond')!.textContent).toBe(` — ${cond}`);
+    const css = readFileSync(resolve(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    expect(css).toMatch(/\.yp\[data-short="1"\] \.skins-try-cond \{\s*display: none;/);
   });
 
   it('a finished set gets the そろった stamp; the tab shows owned / total', () => {

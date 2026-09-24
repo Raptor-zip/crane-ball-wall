@@ -9,6 +9,7 @@ import { ja } from '../../src/ui/i18n/ja';
 import { en } from '../../src/ui/i18n/en';
 import { KEY_RAMP, KEY_TAP } from '../../src/input/keyboard';
 import { FRAGILE } from '../../src/input/servo';
+import { labelParts } from '../../src/ui/screens/pause';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -250,6 +251,63 @@ describe('createUI', () => {
     expect(root.querySelector('.yp')!.getAttribute('data-screen')).toBe('notes');
     click('.page-head .btn');
     expect(root.querySelector('.yp')!.getAttribute('data-screen')).toBe('pause');
+  });
+
+  it('a sub-screen opened from the keyboard gives the focus back to its button when it closes (not from a tap)', () => {
+    ui.mount(root);
+    const esc = (): void => {
+      (document.activeElement as HTMLElement).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    };
+    const byText = (sel: string, s: string): HTMLElement => [...root.querySelectorAll<HTMLElement>(sel)].find((b) => b.textContent!.includes(s))!;
+    // Title: 設定 / このゲームについて with the keyboard (focused, then Enter's click), Esc: the focus is on it again,
+    // so the next Enter opens it again instead of starting the game behind the title.
+    ui.show({ id: 'title' });
+    for (const label of ['設定', 'このゲームについて']) {
+      const b = byText('.title-links button', label);
+      b.focus();
+      b.click();
+      expect(root.querySelector<HTMLElement>('.yp')!.dataset.screen).not.toBe('title');
+      esc();
+      expect(root.querySelector<HTMLElement>('.yp')!.dataset.screen).toBe('title');
+      expect(document.activeElement).toBe(byText('.title-links button', label));   // a new button: the title was rebuilt
+    }
+    // A tap or a click: the browser focuses the button without :focus-visible. Back on the title, the title itself has
+    // the focus (Enter starts, as its hint says).
+    const matches = Element.prototype.matches;
+    const pointer = vi.spyOn(Element.prototype, 'matches').mockImplementation(function (this: Element, sel: string) {
+      return sel === ':focus-visible' ? false : matches.call(this, sel);
+    });
+    byText('.title-links button', '設定').focus();
+    byText('.title-links button', '設定').click();
+    expect(root.querySelector<HTMLElement>('.yp')!.dataset.screen).toBe('settings');
+    esc();
+    expect(document.activeElement).toBe(root.querySelector('.title'));
+    pointer.mockRestore();
+    // (a button that lost the focus before the press, too)
+    (document.activeElement as HTMLElement).blur();
+    byText('.title-links button', '設定').click();
+    esc();
+    expect(document.activeElement).toBe(root.querySelector('.title'));
+    // Nested: title → 設定 → back → the title's 設定 (through ui.back(), core's Esc from outside the layer too).
+    byText('.title-links button', '設定').focus();
+    byText('.title-links button', '設定').click();
+    expect(ui.back!()).toBe(true);
+    expect(document.activeElement).toBe(byText('.title-links button', '設定'));
+    // Pause → 設定 → back: 設定, not 再開.
+    ui.show({ id: 'pause' });
+    byText('.pause-grid .btn', '設定').focus();
+    byText('.pause-grid .btn', '設定').click();
+    esc();
+    expect(root.querySelector<HTMLElement>('.yp')!.dataset.screen).toBe('pause');
+    expect(document.activeElement).toBe(byText('.pause-grid .btn', '設定'));
+    // Results → ランキング (core opens the board) → back: ランキング, not もう一回.
+    ui.show({ id: 'results', data: results(true) });
+    const board = byText('.res-row .btn, .btn', 'ランキング');
+    board.focus();
+    ui.show({ id: 'board', key: 'L:2-2' });
+    esc();
+    expect(root.querySelector<HTMLElement>('.yp')!.dataset.screen).toBe('results');
+    expect(document.activeElement).toBe(byText('.res-row .btn, .btn', 'ランキング'));
   });
 
   it('shows at most 6 popups and at most 3 onomatopoeia', () => {
@@ -755,6 +813,41 @@ describe('release review fixes', () => {
     expect(root.querySelector('.yp-layer')!.textContent).toContain(`たまごの面では台車は ${FRAGILE.vCap.toFixed(1)}\u00a0m/s まで`);
     ui.show({ id: 'briefing', level: lv('2-2'), ai: { parSub: 324, planT: 2.7, peakF: 40, minGapMm: 20, pumps: 1, calmPath: new Float32Array([0, 0.25, 1, 1]) } });
     expect(root.querySelector('.yp-layer')!.textContent).not.toContain('m/s まで');
+  });
+
+  it('125 % text: a pause label wraps only where a katakana word starts, its text and name stay whole', () => {
+    const parts = (s: string): string => labelParts(s).map((p) => (typeof p === 'string' ? p : '|')).join('');
+    expect(parts('AIのライン')).toBe('AIの|ライン');
+    expect(parts('理科ノート')).toBe('理科|ノート');
+    expect(parts('練習モード')).toBe('練習|モード');
+    for (const s of ['リトライ', 'ミュート', 'AIの手本', '面選択', 'アンチスウェイ\u200b補助', 'AI line', 'Science notes']) expect(parts(s)).toBe(s);
+    ui.mount(root);
+    ui.fx({ t: 'levelLoaded', level: lv('2-2') });
+    ui.show({ id: 'pause' });
+    const notes = [...root.querySelectorAll<HTMLButtonElement>('.pause-grid .btn')].find((b) => b.textContent!.includes('理科ノート'))!;
+    expect(notes.querySelector('wbr')).not.toBeNull();
+    expect(notes.getAttribute('aria-label')).toBe('理科ノート (?)');
+    // At 125 % on phones the tabs and the two-column pause buttons get the rules that keep a name on one line, and a
+    // label there is keep-all (the <wbr> is its only break). Only there: at 100 % and with a mouse the labels wrap as
+    // before, and no emergency break (overflow-wrap: anywhere) cuts an English word ("Scienc / e", "Setting / s").
+    // The lines themselves are measured in a browser (ui-screens.spec.ts "label wrapping").
+    expect(cssText).toMatch(/@media \(max-width: 429px\) \{\s*\.yp-ts125 \.yp\[data-layout="tall"\] \.wtab \{/);
+    const narrow = /@media \(max-width: 429px\) \{\s*\.yp-ts125 \.pause-grid \.btn:not\(\.btn--wide\) \{[\s\S]*?\n\}/.exec(cssText)?.[0] ?? '';
+    expect(narrow).toMatch(/\.yp-ts125 \.pause-grid \.btn:not\(\.btn--wide\) > span:not\(\[class\]\) \{\s*word-break: keep-all;\s*\}/);
+    expect(cssText.replace(narrow, '')).not.toMatch(/\.pause-grid \.btn(:not\(\.btn--wide\))? > span:not\(\[class\]\)/);
+  });
+
+  it('Japanese paragraphs: no small kana first on a line; a button sub line wraps between words (styles.css, ja.ts)', () => {
+    const rule = (sel: string): string => new RegExp(`(?:^|\\n)${sel.replace(/[.[\]()>:*]/g, '\\$&')} \\{([^}]*)\\}`).exec(cssText)?.[1] ?? '';
+    expect(rule('.note,\n.rules li,\n.res-fail-cause > span')).toContain('line-break: strict;');
+    // A button's sub line: strict only (keep-all left it one emergency break: 「・」 and 「け」 alone at 320 px, 125 %);
+    // ja.ts joins the words it must not split instead (U+2060), and the line breaks between them.
+    expect(rule('.btn-stack > .btn-sub').trim()).toBe('line-break: strict;');
+    const note = ja['pause.assistNote'];
+    expect(note.replace(/\u2060/g, '')).toBe('ランキング対象外・メダルはクリアだけ');
+    for (const w of ['対象外', 'メダル', 'クリアだけ']) expect(note).toContain([...w].join('\u2060'));
+    for (const j of ['グ対', '・メ', 'はク']) expect(note).toContain(j);   // (free to break between the words)
+    expect(cssText).toMatch(/@supports \(word-break: auto-phrase\) \{\s*\.note:lang\(ja\),[\s\S]*?text-wrap: pretty;/);
   });
 
   it('ui-7: short tall phones mark the HUD panel compact (the scoreboard fits it, styles.css)', () => {

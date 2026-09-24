@@ -231,4 +231,20 @@ describe('skinsSheetLayout: tall, the attract is framed above a sheet that cover
     const wide: Layout = { ...tall, kind: 'wide', bench: undefined };
     expect(skinsSheetLayout(wide, 100)).toBe(wide);
   });
+  it('a sheet above the floor also frees the empty HUD band: the frame starts at frameTop (under the try-on tag)', () => {
+    // 360x740: hudTop 176 (band + status row + panel, all empty while the sheet is open), the sheet top at 372.
+    const l: Layout = { kind: 'tall', w: 360, h: 740, dpr: 2, scene: { x: 0, y: 0, w: 360, h: 504 }, deck: { x: 0, y: 504, w: 360, h: 236 }, hudTop: 176, bench: 56 };
+    const f = skinsSheetLayout(l, 372, 80);
+    expect(f.hudTop).toBe(80);
+    expect(f.bench).toBe(504 - 372 + SKINS_SHEET_GAP);
+    // The attract gets more height than above a sheet at its old 288 px floor (sheet top 444): the preview never shrinks.
+    const old = skinsSheetLayout(l, 444);
+    expect(f.scene.h - f.bench! - f.hudTop).toBeGreaterThan(old.scene.h - old.bench! - old.hudTop);
+    // Never lower than the layout's own band; garbage is ignored; a sheet at the floor (390x844) changes nothing.
+    expect(skinsSheetLayout(l, 372, 300).hudTop).toBe(176);
+    expect(skinsSheetLayout(l, 372, -20).hudTop).toBe(0);
+    expect(skinsSheetLayout(l, 372, Number.NaN).hudTop).toBe(176);
+    expect(skinsSheetLayout(l, 372).hudTop).toBe(176);
+    expect(skinsSheetLayout(l, 504 - 56, 80)).toBe(l);
+  });
 });

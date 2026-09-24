@@ -10,6 +10,7 @@ import type { BadgeId } from '../../core/bus';
 import type { I18nKey } from '../i18n/format';
 import { markSkinsSeen } from '../../store/cosmetic';
 import { h } from '../dom';
+import type { Child } from '../dom';
 import { icon } from '../icons';
 import { getLang, levelName, t } from '../i18n/format';
 import { skinThumb } from '../skinthumb';
@@ -25,10 +26,34 @@ export const TRY_ON_DEBOUNCE_MS = 150;
 const ATTRACT_LEVEL = '2-2';
 /** Enter / Space on these activate them; anywhere else on the sheet (or the scene around it) they do nothing. */
 const CONTROLS = 'button, a, input, select, textarea, [role="tab"], [role="radio"]';
+/** px kept between a card picked with the keys and the list's edge: its focus ring (3 px out, 2.5 px wide) and shadow. */
+const REVEAL_PAD = 8;
+/** px between the try-on tag and the attract framed under it: the tag's 3 px shadow, and air over the ghost tags. */
+const TRY_CLEAR = 14;
+/**
+ * tall, a sheet above the floor: the attract is framed up into the empty HUD band, from TRY_BAND px under the top safe
+ * inset: under the try-on tag (styles.css .skins-try: 10 px down, then the heading and the skin's name, 56 px with its
+ * × button; the condition is on the card then) and TRY_CLEAR. A taller tag (its heading wraps at 125 % text on a 320 px
+ * phone) moves the frame down under itself.
+ */
+export const TRY_BAND = 10 + 56 + TRY_CLEAR;
+/**
+ * What the sheet keeps when it is rebuilt in place (a rotation re-renders the screen): the try-on and the list's scroll;
+ * the tab is the screen's own `part`. Opening the sheet again starts afresh (a new screen object).
+ */
+const kept = new WeakMap<object, { trying: string | null; scroll: number }>();
 
 const nameOf = (id: string): string => t(`skin.${id}.name` as I18nKey);
 /** A level id that never breaks at its hyphen (「2-」 / 「2」 on two lines): word joiners around it. */
 const levelId = (id: string): string => id.replace(/-/g, '\u2060-\u2060');
+/**
+ * The try-on heading in two halves that do not break, 「試着中｜（まだ開いていません）」 / "Trying on｜(not unlocked yet)":
+ * where it wraps (a 320 px phone at 125 % text) it wraps before the bracket (styles.css .skins-try-long > span).
+ */
+const tryHeading = (s: string): Child[] => {
+  const m = /^(.+?)(\s*)([（(].*)$/u.exec(s);
+  return m ? [h('span', null, m[1]!), m[2] ? ' ' : h('wbr', null), h('span', null, m[3]!)] : [s];
+};
 
 /** The unlock condition of a locked card (§7.14 table), with {have}/{need} filled in. */
 export function conditionText(rule: UnlockRule, have: number, need: number, env: Pick<ScreenEnv, 'levels'>): string {
@@ -109,17 +134,28 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
   let previewed = false;
 
   // tall: core frames the attract above the sheet (the sheet can be taller than the control deck on a small phone or at
-  // 125 % text); its top edge goes along now and whenever the sheet changes size.
-  const sheetTop = (): number | undefined => {
-    if (env.layoutKind() !== 'tall') return undefined;
-    const yp = el.closest('.yp');
-    if (!yp || !el.isConnected) return undefined;
+  // 125 % text); its top edge goes along now and whenever the sheet or the try-on tag changes size. A sheet that rises
+  // above the floor also gets the empty HUD band for the attract, down from under the try-on tag (TRY_BAND); the tag
+  // then names the skin only (data-high, styles.css).
+  const sheetTop = (yp: Element): number | undefined => {
     const top = el.getBoundingClientRect().top - yp.getBoundingClientRect().top + sheet.offsetTop;
     return sheet.offsetHeight > 0 && Number.isFinite(top) ? top : undefined;
   };
+  const frameTop = (yp: Element): number => {
+    const band = env.safeTop() + TRY_BAND;
+    const r = tryBanner.hidden ? null : tryBanner.getBoundingClientRect();
+    return r && r.height > 0 ? Math.max(band, r.bottom - yp.getBoundingClientRect().top + TRY_CLEAR) : band;
+  };
+  let sent: string | null = null;
   const shown = (): void => {
     try {
-      env.ctx.skinsShown?.(true, sheetTop());
+      const yp = env.layoutKind() === 'tall' && el.isConnected ? el.closest('.yp') : null;
+      const top = yp ? sheetTop(yp) : undefined;
+      el.dataset.high = top !== undefined && Math.round(top) < env.playBottom() ? '1' : '0';
+      const frame = top === undefined ? undefined : frameTop(yp!);
+      if (sent === `${top}|${frame}`) return;   // nothing moved
+      sent = `${top}|${frame}`;
+      env.ctx.skinsShown?.(true, top, frame);
     } catch {
       /* core's business */
     }
@@ -131,6 +167,7 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
       if (!disposed) shown();
     });
     resize.observe(sheet);
+    resize.observe(tryBanner);
   } catch {
     resize = null;   // no ResizeObserver: the top edge of the first layout stays
   }
@@ -182,6 +219,7 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
 
   function selectTab(p: SkinPart, focus: boolean): void {
     part = p;
+    screen.part = p;   // a rebuild (rotation) opens the same tab
     visited.add(p);
     markSeen(p);
     panel.setAttribute('aria-labelledby', `skins-tab-${p}`);
@@ -240,11 +278,14 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
 
   function paintTry(): void {
     tryBanner.hidden = !trying;
-    if (!trying) return;
-    tryText.replaceChildren(
-      // Landscape phones: the short heading (「試着中」; the lock and the condition say the rest), see styles.css.
-      h('b', null, h('span', { class: 'skins-try-long' }, t('skins.try')), h('span', { class: 'skins-try-short' }, t('skins.trying'))),
-      h('span', null, `${nameOf(trying.id)} — ${conditionText(trying.rule, trying.have, trying.need, env)}`));
+    if (trying) {
+      tryText.replaceChildren(
+        // Landscape phones: the short heading (「試着中」) and the name only; tall over a sheet above the floor, the name
+        // only (the card's lock and condition say the rest), see styles.css.
+        h('b', null, h('span', { class: 'skins-try-long' }, tryHeading(t('skins.try'))), h('span', { class: 'skins-try-short' }, t('skins.trying'))),
+        h('span', null, nameOf(trying.id), h('span', { class: 'skins-try-cond' }, ` — ${conditionText(trying.rule, trying.have, trying.need, env)}`)));
+    }
+    shown();   // the frame under the tag (a ResizeObserver follows it too, but not in every engine)
   }
 
   /** Stores a waiting equip (settings.skin; core applies it) and hands the try-on state to core. */
@@ -279,8 +320,20 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
     }, TRY_ON_DEBOUNCE_MS);
   }
 
-  function refocus(id: string): void {
-    panel.querySelector<HTMLElement>(`[data-skin="${id}"]`)?.focus({ preventScroll: true });
+  /** Scrolls the list (only the list, never the sheet or the page) so that a card is in view, focus ring included. */
+  function reveal(c: HTMLElement): void {
+    const p = panel.getBoundingClientRect();
+    const r = c.getBoundingClientRect();
+    if (!p.height || !r.height) return;   // not laid out
+    if (r.top < p.top + REVEAL_PAD) panel.scrollTop -= p.top + REVEAL_PAD - r.top;
+    else if (r.bottom > p.bottom - REVEAL_PAD) panel.scrollTop += r.bottom - p.bottom + REVEAL_PAD;
+  }
+
+  /** Focus back on a card after a repaint; `show`: the keys picked it, so it is scrolled into view (a tap leaves the list). */
+  function refocus(id: string, show = false): void {
+    const c = panel.querySelector<HTMLElement>(`[data-skin="${id}"]`);
+    c?.focus({ preventScroll: true });
+    if (c && show) reveal(c);
   }
 
   function pick(it: SkinItem, byKey = false): void {
@@ -297,7 +350,7 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
     }
     paintTry();
     paintPanel();
-    if (hadFocus) refocus(it.id);
+    if (hadFocus) refocus(it.id, byKey);
   }
 
   tryStop.addEventListener('click', () => {
@@ -310,7 +363,20 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
     refocus(id);
   });
 
+  // Rebuilt in place (a rotation): the try-on comes back (core got its end from the old sheet), and the list where it was.
+  const keep = kept.get(screen);
+  const again = keep?.trying ? view.items.find((i) => i.id === keep.trying && !i.owned) ?? null : null;
+  trying = again;
   selectTab(part, false);
+  if (keep) {
+    panel.scrollTop = keep.scroll;
+    if (again) {
+      paintTry();
+      schedule(true);
+      const c = panel.querySelector<HTMLElement>(`[data-skin="${again.id}"]`);
+      if (c) reveal(c);
+    }
+  }
 
   return {
     onKey(e) {
@@ -335,7 +401,7 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
         const it = partItems(part).find((x) => x.id === cards[n]?.dataset.skin);
         // The arrows check the next card; they never uncheck the one that is on (a locked card on trial stays on trial).
         if (it && !(trying?.id === it.id)) pick(it, true);
-        else if (it) refocus(it.id);
+        else if (it) refocus(it.id, true);
         return true;
       }
       if (e.key === 'Enter' || e.key === ' ') {
@@ -359,6 +425,7 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
     dispose() {
       disposed = true;
       resize?.disconnect();
+      kept.set(screen, { trying: trying?.id ?? null, scroll: panel.scrollTop });
       // An arrow-key pick still waiting is stored; a try-on ends (closing goes back to the equipped look).
       trying = null;
       try {
