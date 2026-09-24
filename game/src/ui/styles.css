@@ -1524,6 +1524,12 @@ input {
   word-break: keep-all;
   overflow-wrap: anywhere;
 }
+/* Its sub line too: 「ランキング対象外・ / メダルはクリアだけ」, not 「…クリアだ / け」 (no small kana first either). */
+.btn-stack > .btn-sub {
+  line-break: strict;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
 .kbd {
   display: inline-grid;
   place-items: center;
@@ -3179,6 +3185,21 @@ input {
   color: var(--ink-2);
   line-height: 1.5;
 }
+/* Japanese paragraphs: a small kana never starts a line (「ピタ / ッ」). Where the engine also breaks Japanese by phrase
+   (word-break: auto-phrase, Chromium), the last line is never a lone character (「今日の記 / 録。」); elsewhere
+   text-wrap: pretty rebalances the whole paragraph and, with no phrases to go by, cuts words (「手 / 前」). */
+.note,
+.rules li,
+.res-fail-cause > span {
+  line-break: strict;
+}
+@supports (word-break: auto-phrase) {
+  .note:lang(ja),
+  .rules li:lang(ja),
+  .res-fail-cause > span:lang(ja) {
+    text-wrap: pretty;
+  }
+}
 
 /* ---------------------------------------------------------------- settings */
 
@@ -3600,6 +3621,19 @@ input {
   text-align: center;
   white-space: normal;
 }
+/* 125 % text on phones: a name stays on one line in its tab (not 「げんて / ん」「クレー / ン」, no "Tricksters" over the
+   border): thinner sides and a size still larger than at 100 % (0.64rem of 16 px). The skins and notes tabs too. */
+@media (max-width: 429px) {
+  .yp-ts125 .yp[data-layout="tall"] .wtab {
+    padding-inline: 2px;
+    font-size: 0.6rem;
+  }
+}
+@media (max-width: 359px) {
+  .yp-ts125 .yp[data-layout="tall"] .wtab {
+    font-size: 0.55rem;
+  }
+}
 .btnrow .btn {
   white-space: nowrap;
   padding: 0 10px;
@@ -3794,6 +3828,27 @@ input {
   .pause-grid .kbd {
     display: none;
   }
+}
+/* 125 % text on phones: the two-column buttons take the narrow-phone rules above, so that 「AIのライン」「理科ノート」
+   stay on one line (18 px, still larger than at 100 %). Where even that is too wide (320 px) a label wraps only where a
+   word starts (「AIの / ライン」: pause.ts puts the break there), never inside it. */
+@media (max-width: 429px) {
+  .yp-ts125 .pause-grid .btn:not(.btn--wide) {
+    gap: 6px;
+    padding: 8px;
+    font-size: 0.9rem;
+  }
+  .yp-ts125 .pause-grid .btn:not(.btn--wide) > .ico {
+    width: 18px;
+    height: 18px;
+  }
+  .yp-ts125 .pause-grid .btn:not(.btn--wide) .kbd {
+    display: none;
+  }
+}
+.pause-grid .btn > span:not([class]) {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 /* Daily names are "ひとっとび × 短い紐 × 高い壁": wrap at the " × " joints, never inside a word (「高い / 壁」). */
 .daily-name {

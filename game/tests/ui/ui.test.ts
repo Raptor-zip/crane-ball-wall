@@ -9,6 +9,7 @@ import { ja } from '../../src/ui/i18n/ja';
 import { en } from '../../src/ui/i18n/en';
 import { KEY_RAMP, KEY_TAP } from '../../src/input/keyboard';
 import { FRAGILE } from '../../src/input/servo';
+import { labelParts } from '../../src/ui/screens/pause';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -795,6 +796,32 @@ describe('release review fixes', () => {
     expect(root.querySelector('.yp-layer')!.textContent).toContain(`たまごの面では台車は ${FRAGILE.vCap.toFixed(1)}\u00a0m/s まで`);
     ui.show({ id: 'briefing', level: lv('2-2'), ai: { parSub: 324, planT: 2.7, peakF: 40, minGapMm: 20, pumps: 1, calmPath: new Float32Array([0, 0.25, 1, 1]) } });
     expect(root.querySelector('.yp-layer')!.textContent).not.toContain('m/s まで');
+  });
+
+  it('125 % text: a pause label wraps only where a katakana word starts, its text and name stay whole', () => {
+    const parts = (s: string): string => labelParts(s).map((p) => (typeof p === 'string' ? p : '|')).join('');
+    expect(parts('AIのライン')).toBe('AIの|ライン');
+    expect(parts('理科ノート')).toBe('理科|ノート');
+    expect(parts('練習モード')).toBe('練習|モード');
+    for (const s of ['リトライ', 'ミュート', 'AIの手本', '面選択', 'アンチスウェイ\u200b補助', 'AI line', 'Science notes']) expect(parts(s)).toBe(s);
+    ui.mount(root);
+    ui.fx({ t: 'levelLoaded', level: lv('2-2') });
+    ui.show({ id: 'pause' });
+    const notes = [...root.querySelectorAll<HTMLButtonElement>('.pause-grid .btn')].find((b) => b.textContent!.includes('理科ノート'))!;
+    expect(notes.querySelector('wbr')).not.toBeNull();
+    expect(notes.getAttribute('aria-label')).toBe('理科ノート (?)');
+    // The label is keep-all (the <wbr> is its only break), and at 125 % on phones the tabs and the two-column pause
+    // buttons get the rules that keep a name on one line (measured in a browser: 「げんて / ん」「AIのライ / ン」 are gone).
+    expect(cssText).toMatch(/\.pause-grid \.btn > span:not\(\[class\]\) \{\s*word-break: keep-all;/);
+    expect(cssText).toMatch(/@media \(max-width: 429px\) \{\s*\.yp-ts125 \.yp\[data-layout="tall"\] \.wtab \{/);
+    expect(cssText).toMatch(/@media \(max-width: 429px\) \{\s*\.yp-ts125 \.pause-grid \.btn:not\(\.btn--wide\) \{/);
+  });
+
+  it('Japanese paragraphs: no small kana first on a line; a button sub line wraps at its joints (styles.css)', () => {
+    const rule = (sel: string): string => new RegExp(`(?:^|\\n)${sel.replace(/[.[\]()>:*]/g, '\\$&')} \\{([^}]*)\\}`).exec(cssText)?.[1] ?? '';
+    expect(rule('.note,\n.rules li,\n.res-fail-cause > span')).toContain('line-break: strict;');
+    expect(rule('.btn-stack > .btn-sub')).toMatch(/line-break: strict;[\s\S]*word-break: keep-all;/);
+    expect(cssText).toMatch(/@supports \(word-break: auto-phrase\) \{\s*\.note:lang\(ja\),[\s\S]*?text-wrap: pretty;/);
   });
 
   it('ui-7: short tall phones mark the HUD panel compact (the scoreboard fits it, styles.css)', () => {

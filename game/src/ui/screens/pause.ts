@@ -5,19 +5,28 @@ import type { LevelDef } from '../../sim/level';
 import type { Screen, ScreenHandle } from '../ui';
 import type { PauseInfo, ScreenEnv } from '../context';
 import { h } from '../dom';
+import type { Child } from '../dom';
 import { icon } from '../icons';
 import type { IconName } from '../icons';
 import { levelName, t } from '../i18n/format';
+
+/**
+ * A label with a break opportunity (<wbr>, not in its text or name) where a katakana word starts: 「AIの｜ライン」
+ * 「理科｜ノート」. At 125 % text on a 320 px phone the label wraps there, never inside the word (keep-all, styles.css).
+ */
+export function labelParts(label: string): Child[] {
+  return label.split(/(?<=[^\u30A0-\u30FF\s])(?=[\u30A1-\u30FA])/u).flatMap((p, i) => (i ? [h('wbr', null), p] : [p]));
+}
 
 export function renderPauseScreen(root: HTMLElement, _screen: Extract<Screen, { id: 'pause' }>, env: ScreenEnv, pi: PauseInfo, level: LevelDef | null): ScreenHandle {
   const btn = (ic: IconName, label: string, opts: { kbd?: string; cls?: string; state?: string; stateOn?: boolean; sub?: string; disabled?: boolean } = {}): HTMLButtonElement => {
     const b = h('button', { class: `btn ${opts.cls ?? ''}`, type: 'button', disabled: !!opts.disabled },
       icon(ic),
       opts.sub || opts.state !== undefined
-        ? h('span', { class: 'btn-stack' }, h('span', null, label),
+        ? h('span', { class: 'btn-stack' }, h('span', null, labelParts(label)),
           opts.sub ? h('span', { class: 'btn-sub' }, opts.sub) : null,
           opts.state !== undefined ? h('span', { class: `btn-state ${opts.stateOn ? 'is-on' : ''}` }, opts.state) : null)
-        : h('span', null, label),
+        : h('span', null, labelParts(label)),
       opts.kbd && opts.state === undefined ? h('span', { class: 'kbd' }, opts.kbd) : null);
     b.setAttribute('aria-label', [label, opts.state, opts.sub, opts.kbd ? `(${opts.kbd})` : ''].filter(Boolean).join(' '));
     return b;
