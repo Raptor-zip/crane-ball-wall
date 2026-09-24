@@ -5,7 +5,8 @@ import type { I18nKey } from './ja';
 export const en: Record<I18nKey, string> = {
   'app.title': 'Swing & Stick',
   'app.titleAlt': 'ゆらしてピタッ',
-  'app.tagline': 'Beat the optimal-control AI with one finger.',
+  // U+2011 (non-breaking hyphen): the title's tagline pill never breaks after 'optimal-' (a lopsided first line)
+  'app.tagline': 'Beat the optimal\u2011control AI with one finger.',
   'app.hashtag': '#ゆらピタ',
 
   'unit.s': '{v} s',
@@ -485,7 +486,7 @@ export const en: Record<I18nKey, string> = {
   'trick.resonancePump': 'Resonance Pump',
   'trick.chaseDamp': 'Chase Damping',
   'trick.endSlam': 'End Slam',
-  'trick.snap': 'Snap!',
+  'trick.snap': 'Snap', // in 'Trick found: {name}!' (the in-scene pop 'pop.snap' keeps its '!')
 
   // ---- skins (GAME_DESIGN.md §7.14): the screen, entry points, toasts, unlock conditions, the catalog
   'title.skins': 'Skins',

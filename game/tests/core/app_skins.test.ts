@@ -96,7 +96,8 @@ describe('boot', () => {
     const r = rig(store);
     expect(r.app.state()).toBe('TITLE');
     expect(store.d.skins!.owned).toEqual(['ball.steel', 'trail.pencil']);
-    expect(r.ui!.toasts).toContainEqual({ text: t('skin.toastMany', { n: 2 }), kind: 'info' });
+    // kind 'skin' (drawn like 'info'): the UI drops it with the run's badges when a results card closes
+    expect(r.ui!.toasts).toContainEqual({ text: t('skin.toastMany', { n: 2 }), kind: 'skin' });
   });
 });
 

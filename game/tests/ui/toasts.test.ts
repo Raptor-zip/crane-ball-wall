@@ -1,6 +1,6 @@
 // Toast queue across screen changes (popups.ts): read toasts are not replayed, stale ones are dropped. Owner: O7.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createToasts, type ToastArea } from '../../src/ui/popups';
+import { TOAST_NARROW, createToasts, type ToastArea } from '../../src/ui/popups';
 
 let root: HTMLElement;
 let area: ToastArea;
@@ -94,5 +94,27 @@ describe('toasts', () => {
     t.drop('badge');
     expect(texts()).toEqual(['world 3']);
     expect(t.pending()).toBe(0);
+  });
+
+  it("'skin' toasts look like 'info' and drop('skin') takes only them (a finished run's unlocks)", () => {
+    const t = createToasts(root, () => ({ ...area, max: 3 }));
+    t.show('Skin unlocked', 'skin');
+    t.show('World 3', 'info');
+    const els = [...root.querySelectorAll('.toast')];
+    expect(els.map((e) => e.className)).toEqual(['toast toast--info', 'toast toast--info']);
+    expect(els[0]!.querySelector('svg')!.outerHTML).toBe(els[1]!.querySelector('svg')!.outerHTML);
+    t.drop('skin');
+    expect(texts()).toEqual(['World 3']);
+  });
+
+  it('a stack narrower than a whole ja phrase is marked data-narrow (no phrase-keeping breaks there)', () => {
+    const t = createToasts(root, () => area);
+    const box = root.querySelector('.yp-toasts')!;
+    area = { ...area, x0: 413, x1: 413 + TOAST_NARROW - 55 };   // 568x320: the corner beside the force bar
+    t.show('A');
+    expect(box.hasAttribute('data-narrow')).toBe(true);
+    area = { ...area, x0: 400, x1: 657 };   // 667x375: beside the results card
+    t.refresh();
+    expect(box.hasAttribute('data-narrow')).toBe(false);
   });
 });

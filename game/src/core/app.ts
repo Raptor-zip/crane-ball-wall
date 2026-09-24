@@ -402,7 +402,8 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
 
   // ---- skins (GAME_DESIGN.md §7.14, cosmetic only): look, unlocks and toasts live in skinState.ts ----
   const skins = createSkinState({
-    store, levels: data.levels, renderer, toast: (text, kind) => ui.toast(text, kind), now: () => now(),
+    // 'skin' toasts look like 'info'; the UI drops them with the run's badges when the results card closes
+    store, levels: data.levels, renderer, toast: (text) => ui.toast(text, 'skin'), now: () => now(),
     canApply: () => state !== 'RUNNING' && state !== 'CRASH_BEAT' && state !== 'SUCCESS_BEAT' && !(state === 'PAUSED' && underState === 'RUNNING'),
   });
   /** The skins sheet opened from a menu page: that page's state while the title attract runs behind the sheet. */
@@ -1103,12 +1104,18 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
 
   /**
    * 1-1 only (§2.2 0:10, §7.4): over the pad but still swinging above A_rest for 1.5 s -> hint ② as a toast,
-   * once ever (recorded as hintsSeen >= 2; it is the text of hint ②).
+   * once ever (recorded as hintsSeen >= 2; it is the text of hint ②). With the steady assist the hint says "let go
+   * over the pad": it only counts while the player still drives the trolley (the assist holds it once they let go,
+   * steadyX, and is already damping the swing: a hint then would come after the fact and linger on the results).
    */
   function contextHint(): void {
     if (!play || !session || contextHintShown || play.level.id !== '1-1') return;
     if (progressOf(play.level).hintsSeen >= 2) {
       contextHintShown = true;
+      return;
+    }
+    if (steadyX !== null) {
+      play.contextHintTicks = 0;
       return;
     }
     const s = session.run.s;
@@ -2734,6 +2741,8 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
       rf.reqDeg = null;
       rf.nextWall = null;
     }
+    // READY: the HUD's pill and chips over the row above the beam; the ghost tags there keep out of them (§8.4).
+    safe('renderer.setTagKeepOut', () => (renderer as Partial<RendererExtras>).setTagKeepOut?.(state === 'READY' ? ui.tagKeepOut?.() ?? null : null));
     safe('renderer.draw', () => renderer.draw(rf, dtReal));
 
     // HUD
@@ -2807,10 +2816,12 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     const pxPerM = Math.hypot(low.x - pivot.x, low.y - pivot.y) / L;
     if (!(pxPerM > 0) || !Number.isFinite(pxPerM + pivot.x + pivot.y + ball.x + ball.y)) return null;
     const w = rf.nextWall !== null ? session.level.physics.walls[rf.nextWall] : undefined;
+    // the wall-height labels in the scene: the required-angle label keeps clear of them
+    const keepOut = rf.reqDeg !== null ? safe('renderer.heightLabelBoxes', () => (renderer as Partial<RendererExtras>).heightLabelBoxes?.(), undefined) : undefined;
     return {
       pivot: { x: pivot.x, y: pivot.y }, ball: { x: ball.x, y: ball.y }, pxPerM,
       slack: rf.cur.mode === Mode.Slack, holdFrac: rf.holdFrac, reqDeg: rf.reqDeg,
-      reqDir: w && (w.x0 + w.x1) / 2 < x ? -1 : 1,
+      reqDir: w && (w.x0 + w.x1) / 2 < x ? -1 : 1, ...(keepOut ? { keepOut } : {}),
     };
   }
 

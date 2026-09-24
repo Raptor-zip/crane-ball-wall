@@ -470,11 +470,13 @@ export function createHud(root: HTMLElement, deps?: HudDeps): Hud {
       const ex = Math.sin(dir * r * RAD);
       const ey = Math.cos(r * RAD);
       setAttr(rLine, 'd', `M0 0L${(ex * (Rr + 10)).toFixed(1)} ${(ey * (Rr + 10)).toFixed(1)}`);
-      setAttr(rLabel, 'x', (ex * (Rr + 26)).toFixed(1));
-      setAttr(rLabel, 'y', (ey * (Rr + 26) + 5).toFixed(1));
+      const text = `${Math.round(r)}°`;
+      const d = reqLabelDist(a, ex, ey, Rr + 26, text.length);
+      setAttr(rLabel, 'x', (ex * d).toFixed(1));
+      setAttr(rLabel, 'y', (ey * d + 5).toFixed(1));
       setAttr(rSpark, 'cx', (ex * Rr).toFixed(1));
       setAttr(rSpark, 'cy', (ey * Rr).toFixed(1));
-      setText(rLabel, `${Math.round(r)}°`);
+      setText(rLabel, text);
       const now = amp >= r && !slack;
       if (now !== reached) {
         reached = now;
@@ -484,10 +486,11 @@ export function createHud(root: HTMLElement, deps?: HudDeps): Hud {
       show(req, false);
     }
 
-    // Gap gauge next to the ball.
+    // Gap gauge next to the ball; not during the hold (inside a pocket the ball is always within 25 cm of a wall: the
+    // gauge would sit on the wall beside the hold ring, unchanging, while the player watches the ball settle).
     const g = hs.nearGapMm;
     const ballR = 0.06 * scale;
-    if (g !== null && g <= 250 && hs.running) {
+    if (g !== null && g <= 250 && hs.running && !((a.holdFrac ?? 0) > 0)) {
       show(gap, true);
       const label = fmtGap(Math.max(0, g));
       setText(gText, label);
@@ -512,6 +515,24 @@ export function createHud(root: HTMLElement, deps?: HudDeps): Hud {
     }
 
     updateHold(a, hs, scale);
+  }
+
+  /**
+   * How far along its ray (from the pivot) the required-angle label goes: `d0`, or further out in 8 px steps (up to
+   * 48 px) while it would sit on a label written in the scene (a.keepOut: the wall height "0.80 m", which a short
+   * string on a landscape phone puts right there, reading "0.849°").
+   */
+  function reqLabelDist(a: HudAnchors, ex: number, ey: number, d0: number, chars: number): number {
+    const ko = a.keepOut;
+    if (!ko || !ko.length) return d0;
+    // 15 px text: about 9 px per glyph and 12 px above its baseline (5 px under the anchor), plus the paper halo.
+    const hw = chars * 4.5 + 2;
+    for (let d = d0; d <= d0 + 48; d += 8) {
+      const x = a.pivot.x + ex * d;
+      const y = a.pivot.y + ey * d + 5;
+      if (!ko.some((b) => x - hw < b.x1 && x + hw > b.x0 && y - 12 < b.y1 && y + 2 > b.y0)) return d;
+    }
+    return d0;
   }
 
   /** Hold ring around the ball: fills in 0.5 s while holding (§9.3). */

@@ -312,6 +312,30 @@ export interface BackInkOpts {
 }
 
 export const Z_BACKINK = -0.27;
+
+/** A wall height's dashed line from xa to xb [m] at height h, and its "0.75 m" label (th tall, w wide) at its left end. */
+export interface HeightLabel { text: string; h: number; xa: number; xb: number; th: number; w: number; wallX: number }
+
+/**
+ * The wall-height lines and labels, one per distinct height. The label sits at the line's outer (left) end, clear of
+ * the wall top where near-miss dimensions are drawn: 0.85 m before the first wall in wide; tall (`follow`: the
+ * camera follows in a window about 2 m wide) 0.6 m, so that it is on screen whenever that wall's top is (the title
+ * attract and the demo rest on the goal with the first wall near the left edge: 0.85 m read "5 m").
+ */
+export function heightLabels(walls: readonly WallDef[], pxPerM: number, follow: boolean): HeightLabel[] {
+  const px = 1 / pxPerM;
+  const out: HeightLabel[] = [];
+  for (const w of walls) {
+    if (out.some((l) => Math.abs(l.h - w.h) < 0.005)) continue;
+    const ws = walls.filter((v) => Math.abs(v.h - w.h) < 0.005);
+    const x0 = Math.min(...ws.map((v) => v.x0));
+    const th = Math.max(13 * px, 0.045);
+    const text = fmtM(w.h);
+    out.push({ text, h: w.h, xa: x0 - (follow ? 0.6 : 0.85), xb: Math.max(...ws.map((v) => v.x1)) + 0.55, th, w: th * 0.6 * text.length, wallX: (ws[0] as WallDef).x0 });
+  }
+  return out;
+}
+
 /** The heading is written on the paper itself. */
 const Z_HEADING = Z_BOARD + 0.01;
 /** Its baseline sits this high above the beam top (at the ball plane) and it is this tall [m / CSS px]. */
@@ -326,21 +350,14 @@ export function drawBackInk(b: QuadBatch, o: BackInkOpts): void {
   const walls = o.level.physics.walls;
   const px = 1 / o.pxPerM;
   const z = Z_BACKINK;
-  const heights: number[] = [];
-  for (const w of walls) if (!heights.some((h) => Math.abs(h - w.h) < 0.005)) heights.push(w.h);
   const lw = Math.max(1.3 * px, 0.004);
-  for (const h of heights) {
-    const y = o.projY(h, z);
-    const ws = walls.filter((w) => Math.abs(w.h - h) < 0.005);
-    const xa = Math.min(...ws.map((w) => w.x0)) - 0.85, xb = Math.max(...ws.map((w) => w.x1)) + 0.55;
-    b.dashed(xa, y, xb, y, z, lw, 0.035, 0.025, C_INK, 0.42);
-    const th = Math.max(13 * px, 0.045);
-    const first = ws[0] as WallDef;
-    // Label at the outer (left) end of the dashed line, clear of the wall top where near-miss
-    // dimensions are drawn.
-    b.text(fmtM(h), xa, y + th * 0.62, z, th, C_INK, 0.8, -1);
+  for (const l of heightLabels(walls, o.pxPerM, o.rulerLabelX === null)) {
+    const y = o.projY(l.h, z);
+    b.dashed(l.xa, y, l.xb, y, z, lw, 0.035, 0.025, C_INK, 0.42);
+    // Label at the outer (left) end of the dashed line (heightLabels).
+    b.text(l.text, l.xa, y + l.th * 0.62, z, l.th, C_INK, 0.8, -1);
     // Small arrow tick at the wall: a short solid stub.
-    b.line(first.x0 - 0.03, y, first.x0 - 0.002, y, z, lw * 1.6, C_INK, 0.7);
+    b.line(l.wallX - 0.03, y, l.wallX - 0.002, y, z, lw * 1.6, C_INK, 0.7);
   }
 
   // Ruler on the floor's front face (finger band, §9.2): ticks every 10 cm, numbers every metre.
