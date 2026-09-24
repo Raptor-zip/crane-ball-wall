@@ -6,6 +6,7 @@
 |---|---|---|
 | 宣伝動画（縦 1080×1920、27.6 秒、ずんだもんのナレーション付き） | GitHub Release [`promo-v1`](https://github.com/Raptor-zip/crane-ball-wall/releases/tag/promo-v1) | `./promo/build.sh` |
 | プレイ人口のありがとうカード（3200×1800、16:9） | [thanks/thanks1000.png](thanks/thanks1000.png)、[thanks/thanks2000.png](thanks/thanks2000.png)、[thanks/thanks4000.png](thanks/thanks4000.png) | `node promo/thanks/render.mjs 3000` |
+| ありがとうカード・写真版（3200×1800、16:9。実際のゲーム画面 4 枚＋判子） | [thanks/thanks4000-photos.png](thanks/thanks4000-photos.png) | 開発サーバーを立てて `node promo/thanks/capture-scenes.mjs`、次に `node promo/thanks/render-photos.mjs 4000 --clear 2`（`--clear` は付箋の全クリア人数。`npm run stats` で確認） |
 
 ## 宣伝動画（`build.sh`）
 
