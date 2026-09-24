@@ -296,7 +296,7 @@ test.describe('toasts vs cards', () => {
 
 test.describe('landscape phone 844x390 (wide, short)', () => {
   test.use({ viewport: { width: 844, height: 390 }, hasTouch: true });
-  for (const screen of ['title', 'hud-run', 'pause', 'results', 'results-fail', 'share', 'briefing', 'select', 'settings'] as const) {
+  for (const screen of ['title', 'hud-run', 'pause', 'results', 'results-fail', 'share', 'briefing', 'select', 'settings', 'daily'] as const) {
     test(`ja ${screen}`, async ({ page }) => {
       const errors = collectErrors(page);
       await open(page, `screen=${screen}&lang=ja&still=1`);
@@ -308,7 +308,7 @@ test.describe('landscape phone 844x390 (wide, short)', () => {
       // The main choices must be on screen without scrolling.
       const offscreen = await page.evaluate(() => {
         const H = window.innerHeight;
-        const sel = '.res-foot .btn, .pause-grid .btn, .title-play, .card-foot .btn';
+        const sel = '.res-foot .btn, .pause-grid .btn, .title-play, .card-foot .btn, .daily-card .btnrow .btn';
         return [...document.querySelectorAll<HTMLElement>(sel)].filter((b) => {
           const r = b.getBoundingClientRect();
           return r.height > 0 && (r.top < 0 || r.bottom > H + 1);
@@ -445,6 +445,8 @@ for (const vp of [{ width: 360, height: 740, touch: true, ts: '' }, { width: 360
             expect(pin.right).toBeLessThanOrEqual(W);
             expect(pin.bottom).toBeLessThanOrEqual(vp.height);
             expect(pin.top).toBeGreaterThan(0);
+            // stuck to the bottom edge over a long list (10 px above it), not floating over sliced rows (38 px)
+            if (!screen.endsWith('partial') && !screen.endsWith('instant')) expect(pin.bottom).toBeGreaterThanOrEqual(vp.height - 12);
             const rank = await page.locator('.board-pin-rank').textContent();
             expect(rank).toMatch(lang === 'ja' ? /^(約[\d,]+位|–)$/ : /^(~#[\d,]+|–)$/);
             if (screen === 'board&board=partial') await expect(page.locator('.board-partial')).toBeVisible();
@@ -489,6 +491,15 @@ test.describe('world rank: a short landscape card', () => {
       return document.querySelector('.res-time')!.getBoundingClientRect().bottom > s.top;
     });
     expect(time).toBe(true);          // the time is still on the card
+    // once the (smooth) scroll settles, the level name above it is on the card or scrolled out whole, never cut through
+    const headWhole = (): Promise<boolean> => page.evaluate(() => {
+      const s = document.querySelector('.res-scroll')!.getBoundingClientRect();
+      const h = document.querySelector('.res-head')!.getBoundingClientRect();
+      return h.top >= s.top - 0.5 || h.bottom <= s.top + 0.5;
+    });
+    await expect.poll(headWhole, { timeout: 3000 }).toBe(true);
+    await page.waitForTimeout(600);
+    expect(await headWhole()).toBe(true);
   });
 });
 
@@ -758,7 +769,7 @@ test.describe('release review', () => {
   }
 
   // ui-3 / ui-9: results labels never break inside a word or collapse to 「AI…」; 「タイムアップ」 stays on one line.
-  for (const vp of [{ width: 320, height: 640 }, { width: 360, height: 640 }, { width: 375, height: 667 }, { width: 568, height: 320 }] as const) {
+  for (const vp of [{ width: 320, height: 640 }, { width: 360, height: 640 }, { width: 375, height: 667 }, { width: 568, height: 320 }, { width: 390, height: 844 }, { width: 900, height: 700 }] as const) {
     for (const lang of LANGS) {
       for (const screen of ['results', 'results-fail'] as const) {
         test(`ui-3 ${lang} ${vp.width}x${vp.height} ${screen}: no wrapped or cut labels`, async ({ page }) => {
