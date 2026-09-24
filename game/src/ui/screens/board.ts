@@ -42,6 +42,13 @@ export function gapCell(gapUm: number | null | undefined): string {
 /** Shown in the gap column when the level has no walls (1-1): there is no clearance to measure. */
 export const NO_GAP = '—';
 
+/** A player name with its "#1234" tag in a span: where a name may wrap (the daily hub's narrow top 10, styles.css) the
+ *  tag goes to the second line whole ("Swift Pendulum / #5909"). Elsewhere it is plain text; the text is unchanged. */
+export function nameWithTag(name: string): (string | HTMLElement)[] {
+  const i = name.lastIndexOf('#');
+  return i > 0 ? [name.slice(0, i), h('span', { class: 'b-tag' }, name.slice(i))] : [name];
+}
+
 /** The ▶ of a ranking row (a real button: keyboard and screen readers reach every watchable row). Loading: a spinner, or
  *  with reduced motion a still hourglass (styles.css). */
 function playButton(rank: number, name: string, busy: boolean): HTMLElement {
@@ -99,7 +106,7 @@ export function boardTable(rows: BoardRow[], opts: {
     const cls = [me ? 'is-me' : '', avail ? 'is-watch' : ''].filter(Boolean).join(' ');
     tbody.appendChild(h('tr', { class: cls, 'data-rank': rank },
       h('td', null, String(rank)),
-      h('td', { class: 'b-name' }, h('div', { class: 'b-name-wrap' }, h('span', null, name), me ? h('span', { class: 'me-chip' }, t('common.you')) : null)),
+      h('td', { class: 'b-name' }, h('div', { class: 'b-name-wrap' }, h('span', null, ...nameWithTag(name)), me ? h('span', { class: 'me-chip' }, t('common.you')) : null)),
       h('td', { class: 'b-num' }, fmtTime(t120)),
       h('td', { class: 'b-num' }, gapCell(gapUm)),
       playCell(avail ? playButton(rank, name, opts.busy === rank) : null)));

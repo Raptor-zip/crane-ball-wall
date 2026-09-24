@@ -775,8 +775,10 @@ export function createUI(ctx: UiContext = {}): UI {
     if (c) {
       [x0, x1] = c.x0 >= W - c.x1 ? [0, c.x0] : [c.x1, W];
     } else {
-      const cardW = cssWidth('var(--res-w)') + 16;
-      [x0, x1] = (level ? resultsSide(level) : 'right') === 'right' ? [0, W - cardW] : [cardW, W];
+      const side = level ? resultsSide(level) : 'right';
+      // + its margin: 16 px, or 64 px for a card on the right of a landscape phone (clear of ≡, styles.css)
+      const cardW = cssWidth('var(--res-w)') + (side === 'right' && yp.dataset.short === '1' ? 64 : 16);
+      [x0, x1] = side === 'right' ? [0, W - cardW] : [cardW, W];
     }
     return { x: (x0 + x1) / 2, y: Math.max(H * 0.26, layout.hudTop + 40), maxW: Math.max(120, x1 - x0 - 24), minTop: layout.hudTop + 4 };
   }

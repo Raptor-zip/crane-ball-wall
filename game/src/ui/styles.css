@@ -1742,7 +1742,20 @@ input {
 }
 .yp[data-short="1"][data-layout="wide"] .res {
   top: calc(var(--safe-t) + 8px);
-  bottom: calc(var(--safe-b) + 8px);
+  max-height: calc(100% - var(--safe-t) - var(--safe-b) - 16px);   /* down to 8 px above the bottom, fail card too */
+}
+/* The card starts inside the HUD band here. The band's level name and clock (the card shows both) and the offline
+   chip do not peek out around it; a card on the left covers ↺ (it has もう一回), one on the right keeps clear of ≡
+   (面選択: a success card has no other way to the level select). Under the pause menu (再開, リトライ, 面選択 and the
+   level name) the band is hidden. */
+.yp[data-short="1"][data-layout="wide"][data-screen="results"] .hud-center,
+.yp[data-short="1"][data-layout="wide"][data-screen="results"] .hud-right .chip--offline,
+.yp[data-short="1"][data-layout="wide"][data-screen="results"]:has(.res[data-side="left"]) .hud-band > .hud-btn:first-child,
+.yp[data-short="1"][data-layout="wide"][data-screen="pause"] .hud-band {
+  visibility: hidden;
+}
+.yp[data-short="1"][data-layout="wide"] .res[data-side="right"] {
+  right: calc(var(--safe-r) + 64px);
 }
 .yp[data-short="1"] .res-scroll {
   padding: 12px 14px 6px;
@@ -1804,6 +1817,22 @@ input {
 .yp[data-short="1"] .pause-grid .btn-stack .btn-state {
   margin: 0;
   align-self: flex-start;
+}
+/* 320-340 px tall (568x320, a 667x375 phone under the browser's bars): with the practice rewind or the assist offer
+   the menu has a fifth row; tighter margins keep it whole instead of a sliver of 「設定」 at the bottom edge. */
+@media (max-height: 340px) {
+  .yp[data-short="1"][data-screen="pause"] .center-wrap {
+    padding-top: calc(var(--safe-t) + 4px);
+    padding-bottom: calc(var(--safe-b) + 4px);
+  }
+  .yp[data-short="1"][data-screen="pause"] .card-body {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .yp[data-short="1"][data-screen="pause"] .pause-grid {
+    row-gap: 4px;
+    margin-top: 4px;
+  }
 }
 .yp[data-short="1"] .share-prev {
   max-width: 300px;
@@ -2149,6 +2178,21 @@ input {
   width: 32px;
   height: 32px;
 }
+/* A narrow tile (568-640 px landscape phones, 320 px portrait) has no room for the times, the coin and the crown in
+   its foot row: the crown sat across the tile's border. It moves to the empty top-right corner (where 「スキップ」
+   goes on a skipped level), beside the level chip. */
+.tile {
+  container: tile / inline-size;
+}
+@container tile (max-width: 120px) {
+  .tile-medals .crown {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 28px;
+    height: 28px;
+  }
+}
 .tile.is-crown {
   background: linear-gradient(180deg, #fff6d6, var(--card) 60%);
 }
@@ -2255,9 +2299,11 @@ input {
 .yp[data-short="1"] {
   --res-w: min(460px, 56vw);
 }
+/* As tall as its content, up to 16 px above the bottom (then .res-scroll scrolls): on a big screen no empty band
+   between the last line and the buttons. */
 .yp[data-layout="wide"] .res {
   top: calc(var(--safe-t) + 70px);
-  bottom: calc(var(--safe-b) + 16px);
+  max-height: calc(100% - var(--safe-t) - var(--safe-b) - 86px);
   width: var(--res-w);
 }
 .yp[data-layout="wide"] .res[data-side="right"] {
@@ -2359,6 +2405,7 @@ input {
 }
 .res-slots {
   display: flex;
+  flex-shrink: 0;             /* `.res-medal > div` lets the text column shrink, not the row of fixed-size coins */
   gap: 4px;
   margin-left: auto;
 }
@@ -2623,6 +2670,20 @@ input {
   }
   .res-keys {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* With a mouse the toggles also show their key chips (G / H / ? / M): two columns cut 「AIのライン」「ミュート」 up to a
+   ~410 px card (390-430 px windows, 830-940 px desktops), so they take a full row each there too. */
+@container res (max-width: 416px) {
+  .yp:not([data-pointer="coarse"]) .res-keys {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* A landscape card this narrow (568-600 px phones) is also short: the four medal slots (decoration, the big coin and
+   the line beside it say the same) give their width to 「王冠まで あと0.375秒」, which then stays on one line above the fold. */
+@container res (max-width: 340px) {
+  .yp[data-layout="wide"] .res-slots {
+    display: none;
   }
 }
 /* 125 % text: the same full-width toggles on any phone-sized card (their labels are ~25 % longer). */
@@ -3117,6 +3178,47 @@ input {
   }
   .daily-card .board td:first-child {
     width: 2em;
+  }
+}
+/* Landscape phones: 「あそぶ」 and 「シェア」 stay on screen, stuck to the bottom edge (the offset counts inside
+   .page-body's bottom padding) over the figure and the rack scrolling under them, like the results card's buttons.
+   At the end of the card they rest in their place; the band is the card's own colour, so it looks the same there. */
+.yp[data-short="1"] .daily-card .btnrow {
+  position: sticky;
+  bottom: -28px;
+  z-index: 1;
+  margin: -10px 0 -12px;
+  padding: 10px 0 12px;
+  background: var(--card);
+}
+/* The top 10 in the landscape right column (~215-300 px wide at 568-740 px): the gap column gives way (the full
+   ranking still shows it) and a name takes two lines instead of ending at three letters (「Jol…」「ゆか…」). */
+.daily-card {
+  container: daily / inline-size;
+}
+@container daily (max-width: 340px) {
+  .yp[data-layout="wide"] .daily-card .board th:nth-child(4),
+  .yp[data-layout="wide"] .daily-card .board td:nth-child(4) {
+    display: none;
+  }
+  .yp[data-layout="wide"] .daily-card .board td:nth-child(3) {
+    border-right: 1.5px solid var(--line);
+    border-radius: 0 10px 10px 0;
+  }
+  .yp[data-layout="wide"] .daily-card .board tr.is-me td:nth-child(3) {
+    border-right: 2px solid var(--ink);
+  }
+  .yp[data-layout="wide"] .daily-card .board tr.is-ai td:nth-child(3) {
+    border-right-color: var(--ai-lip);
+  }
+  .yp[data-layout="wide"] .daily-card .board .b-name {
+    white-space: normal;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+  /* 「ゆかいなクレーン / #5974」: a break chance before the tag (keep-all leaves none inside the name) */
+  .yp[data-layout="wide"] .daily-card .board .b-tag::before {
+    content: "\200B";
   }
 }
 .daily-mini {
@@ -3633,10 +3735,6 @@ input {
 .yp-ts125 .res-row .btn .ico {
   display: none;
 }
-.yp[data-layout="wide"] .res[data-fail] {
-  bottom: auto;
-  max-height: calc(100% - var(--safe-t) - var(--safe-b) - 86px);
-}
 /* "脈打つ「あそぶ」": the halo pulses, the button itself stays put (stable to tap and to automate). */
 .title-play {
   animation: none;
@@ -3790,7 +3888,10 @@ input {
     font-size: 0.66rem;
     padding: 3px 5px;
   }
-  /* Phones this narrow have no keyboard: the key hints only squeeze 「リトライ」「理科ノート」 onto two lines. */
+}
+/* Windows this narrow (a phone, or a desktop window at phone width): the key hints only squeeze 「リトライ」「理科ノート」
+   onto two lines (「理科ノー／ト」 up to 411 px); the keys still work and the buttons' names still say them. */
+@media (max-width: 411px) {
   .pause-grid .kbd {
     display: none;
   }
@@ -3974,10 +4075,11 @@ input {
   font: 800 1rem/1 var(--font-num);
   text-align: center;
 }
-/* My row when it is not in the list: pinned to the bottom of the page while the list scrolls. */
+/* My row when it is not in the list: pinned to the bottom of the page while the list scrolls. A sticky offset counts
+   from inside .page-body's bottom padding (safe-b + 28 px), so -18 px rests it 10 px above the safe area. */
 .board-pin {
   position: sticky;
-  bottom: calc(10px + var(--safe-b));
+  bottom: -18px;
   z-index: 2;
   display: flex;
   align-items: center;

@@ -71,7 +71,8 @@ export function renderBriefingScreen(root: HTMLElement, screen: Extract<Screen, 
   const pumps = ai.pumps > 0 ? t('briefing.pumps', { n: ai.pumps }) : t('briefing.pumps0');
   const th = medalThresholds(ai.parSub);
   const f = factsOf(level);
-  const reqTxt = f.reqDeg.length ? f.reqDeg.map((d) => `${Math.round(d)}°`).join(' / ') : '–';
+  // " /\u00a0": a narrow tile breaks before a slash, never after one (「64° / 64°」 → 「64°」「/ 64°」, not 「64° /」「64°」).
+  const reqTxt = f.reqDeg.length ? f.reqDeg.map((d) => `${Math.round(d)}°`).join(' /\u00a0') : '–';
   const gapMm = Number.isFinite(ai.minGapMm) ? ai.minGapMm : sum?.minGapMm ?? null;
 
   const facts = h('div', { class: 'facts' },

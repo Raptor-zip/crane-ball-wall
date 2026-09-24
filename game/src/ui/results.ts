@@ -27,16 +27,38 @@ const STAMP_AT_MS = 900;
 /** How long the first-crown 「AIが負けた理由」 card waits for a rank-in answer that is still on its way. */
 const AI_LOST_WAIT_MS = 3500;
 
-/** Scrolls the card just enough that `row` is fully inside it (nothing when it already is). */
-function revealRow(scroll: HTMLElement, row: HTMLElement, smooth: boolean): void {
+/**
+ * Scrolls the card just enough that `row` is fully inside it (nothing when it already is). When that would leave the
+ * header line (「2-2 原典：いれる」) sliced at the top edge, it scrolls the header fully out instead (568x320).
+ */
+export function revealRow(scroll: HTMLElement, row: HTMLElement, smooth: boolean): void {
   const s = scroll.getBoundingClientRect();
   const r = row.getBoundingClientRect();
   const pad = 8;
-  let dy = Math.max(0, r.bottom - (s.bottom - pad));
-  dy = Math.min(dy, Math.max(0, r.top - (s.top + pad)));   // never push the row's top out
+  const most = Math.max(0, r.top - (s.top + pad));   // never push the row's top out
+  let dy = Math.min(Math.max(0, r.bottom - (s.bottom - pad)), most);
   if (dy < 1) return;
+  const head = scroll.querySelector('.res-head')?.getBoundingClientRect();
+  if (head && head.top - dy < s.top && head.bottom - dy > s.top) dy = Math.min(most, head.bottom - s.top);
   if (typeof scroll.scrollBy === 'function') scroll.scrollBy({ top: dy, behavior: smooth ? 'smooth' : 'auto' });
   else scroll.scrollTop += dy;
+}
+
+/**
+ * The ピタッ / × stamp sits in the card's top corner, beside the header and time rows (they leave room for it). When the
+ * card scrolls, the row under them (rank, medals, the fail reason) pushes it up and out with it, so it never lies over
+ * the medal dots or the AI差 box. Returns the scroll handler.
+ */
+export function stampFollower(scroll: HTMLElement, stamp: HTMLElement, below: () => Element | null): () => void {
+  let lift = 0;
+  return () => {
+    const next = below();
+    const over = next ? stamp.getBoundingClientRect().bottom + lift - next.getBoundingClientRect().top : 0;
+    const want = Math.max(0, Math.min(scroll.scrollTop, over));   // never faster than the content
+    if (Math.abs(want - lift) < 0.5) return;
+    lift = want;
+    stamp.style.transform = lift ? `translateY(${-lift}px)` : '';
+  };
 }
 
 /** What the rank row shows; the row is re-rendered only when this changes (checked on HUD frames). */
@@ -558,6 +580,9 @@ export function renderResults(root: HTMLElement, data: ResultsData, env: ScreenE
 
   card.append(scroll, foot);
   root.appendChild(card);
+  const stampEl = card.querySelector<HTMLElement>('.res-stamp');
+  const timeEl = scroll.querySelector('.res-time');
+  if (stampEl && timeEl) scroll.addEventListener('scroll', stampFollower(scroll, stampEl, () => timeEl.nextElementSibling), { passive: true });
   let frames = 0;
   return {
     onHud() {
