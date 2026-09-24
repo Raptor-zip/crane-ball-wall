@@ -424,16 +424,56 @@ export function createUI(ctx: UiContext = {}): UI {
     pauseInfo: () => pauseInfo(),
     lastRun: () => ({ ...lastRun }),
     layoutKind: () => layout.kind,
+    safeTop: () => lastSafe,
     toast: (text, kind) => toasts.show(text, kind),
     refresh: () => render(),
   };
 
+  /**
+   * The button that opened a sub-screen from the keyboard, focused again when the sub-screen closes (the screen under it
+   * is rebuilt: the button is found again by its icon and its place among the buttons with that icon). A button pressed
+   * with the mouse or a finger is not followed: back on the title, Enter starts the game as its hint says.
+   */
+  const openers = new WeakMap<Screen, { sig: string; nth: number }>();
+  const openerSig = (el: Element): string => `${el.tagName}|${el.querySelector('svg')?.innerHTML ?? el.textContent ?? ''}`;
+  const openerCands = (sig: string): HTMLElement[] =>
+    [...layer.querySelectorAll<HTMLElement>('button, a[href], [tabindex]')].filter((x) => openerSig(x) === sig);
+
+  function noteOpener(under: Screen): void {
+    openers.delete(under);
+    const a = mounted ? (document.activeElement as HTMLElement | null) : null;
+    if (!a || a === layer || !layer.contains(a)) return;
+    let keyboard = false;
+    try {
+      keyboard = a.matches(':focus-visible');
+    } catch {
+      keyboard = false;
+    }
+    if (!keyboard) return;
+    const sig = openerSig(a);
+    openers.set(under, { sig, nth: openerCands(sig).indexOf(a) });
+  }
+
+  function refocusOpener(o: { sig: string; nth: number }): void {
+    const c = openerCands(o.sig);
+    const el = c[o.nth] ?? (c.length === 1 ? c[0] : undefined);
+    if (!el || !focusables(layer).includes(el)) return;
+    // Only where it can be seen (a note card on another world's page stays behind the default focus).
+    const r = el.getBoundingClientRect();
+    const v = layer.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0 && (r.bottom <= v.top || r.top >= v.bottom || r.right <= v.left || r.left >= v.right)) return;
+    el.focus({ preventScroll: true });
+  }
+
   function goBack(): void {
     const prev = stack.pop();
     if (prev) {
+      const opener = openers.get(prev);
       current = prev;
       render();
       if (prev.id === 'select') emit('select', { from: 'back' });
+      // After core's answer (the level select comes back as a new screen of the same kind).
+      if (opener && current.id === prev.id) refocusOpener(opener);
     } else {
       current = { id: 'select', world: level?.world || 1 };
       render();
@@ -443,7 +483,10 @@ export function createUI(ctx: UiContext = {}): UI {
 
   function show(sc: Screen): void {
     if (SUB_SCREENS.has(sc.id)) {
-      if (current.id !== sc.id) stack.push(current);
+      if (current.id !== sc.id) {
+        noteOpener(current);
+        stack.push(current);
+      }
     } else {
       stack = [];
     }
@@ -564,11 +607,15 @@ export function createUI(ctx: UiContext = {}): UI {
     if (e.key === 'Tab') {
       const f = focusables(layer);
       if (f.length) {
-        const i = f.indexOf(document.activeElement as HTMLElement);
+        // i: the index in the Tab order; focus outside it (a roving card, a list) sits between two of them (x.5), so
+        // that Tab from the last card of the skins sheet also wraps instead of leaving the page.
+        const a = document.activeElement as HTMLElement;
+        const at = f.indexOf(a);
+        const i = at >= 0 ? at : f.filter((x) => a.compareDocumentPosition(x) & Node.DOCUMENT_POSITION_PRECEDING).length - 0.5;
         if (e.shiftKey && i <= 0) {
           e.preventDefault();
           f[f.length - 1]!.focus();
-        } else if (!e.shiftKey && i === f.length - 1) {
+        } else if (!e.shiftKey && i >= f.length - 1) {
           e.preventDefault();
           f[0]!.focus();
         }

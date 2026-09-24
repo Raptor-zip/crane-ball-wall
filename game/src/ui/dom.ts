@@ -69,10 +69,13 @@ export function toggleClass(el: Element, cls: string, on: boolean): void {
   if (el.classList.contains(cls) !== on) el.classList.toggle(cls, on);
 }
 
-/** Focusable descendants in DOM order (for focus trapping and arrow navigation). */
+/**
+ * Descendants in the Tab order, in DOM order (focus trapping). The items of a roving group that are not its tab stop
+ * (tabindex="-1": the other tabs, the other skin cards) are left out: Tab never lands on them.
+ */
 export function focusables(root: Element): HTMLElement[] {
   const sel = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-  return Array.from(root.querySelectorAll<HTMLElement>(sel)).filter((e) => !e.closest('[hidden]') && !e.closest('[inert]'));
+  return Array.from(root.querySelectorAll<HTMLElement>(sel)).filter((e) => e.tabIndex >= 0 && !e.closest('[hidden]') && !e.closest('[inert]'));
 }
 
 export function prefersReducedMotion(): boolean {

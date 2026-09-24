@@ -108,9 +108,10 @@ export interface UiContext {
   skinPreview?: (ids: Partial<Record<SkinPart, string>> | null) => void;
   /**
    * The skins sheet opened (true) / closed (false): core runs the title attract behind it when a menu page opened it.
-   * tall: `sheetTop` is the sheet's top edge (root px), sent again when it moves; core frames the attract above it.
+   * tall: `sheetTop` is the sheet's top edge (root px), sent again when it moves; core frames the attract above it, and
+   * when the sheet rises above the floor, from `frameTop` (root px, under the try-on tag) down (skinsSheetLayout).
    */
-  skinsShown?: (open: boolean, sheetTop?: number) => void;
+  skinsShown?: (open: boolean, sheetTop?: number, frameTop?: number) => void;
 }
 
 /** Handed to every screen renderer by ui.ts. */
@@ -140,6 +141,8 @@ export interface ScreenEnv {
   /** How the run shown on the results card was played (practice / assist runs record no PB or medal). */
   lastRun(): { practice: boolean; assist: boolean; pb: boolean | null; firstCrown: boolean };
   layoutKind(): 'wide' | 'tall';
+  /** env(safe-area-inset-top) in CSS px (tall: the HUD band starts under it). */
+  safeTop(): number;
   toast(text: string, kind?: 'info' | 'badge' | 'warn' | 'notice'): void;
   /** Re-renders the current screen (e.g. after a language change). */
   refresh(): void;

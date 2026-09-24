@@ -252,6 +252,52 @@ describe('createUI', () => {
     expect(root.querySelector('.yp')!.getAttribute('data-screen')).toBe('pause');
   });
 
+  it('a sub-screen opened from the keyboard gives the focus back to its button when it closes (not from a tap)', () => {
+    ui.mount(root);
+    const esc = (): void => {
+      (document.activeElement as HTMLElement).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    };
+    const byText = (sel: string, s: string): HTMLElement => [...root.querySelectorAll<HTMLElement>(sel)].find((b) => b.textContent!.includes(s))!;
+    // Title: 設定 / このゲームについて with the keyboard (focused, then Enter's click), Esc: the focus is on it again,
+    // so the next Enter opens it again instead of starting the game behind the title.
+    ui.show({ id: 'title' });
+    for (const label of ['設定', 'このゲームについて']) {
+      const b = byText('.title-links button', label);
+      b.focus();
+      b.click();
+      expect(root.querySelector<HTMLElement>('.yp')!.dataset.screen).not.toBe('title');
+      esc();
+      expect(root.querySelector<HTMLElement>('.yp')!.dataset.screen).toBe('title');
+      expect(document.activeElement).toBe(byText('.title-links button', label));   // a new button: the title was rebuilt
+    }
+    // A tap (the button has no keyboard focus): back on the title, the title itself has the focus (Enter starts, as its
+    // hint says).
+    (document.activeElement as HTMLElement).blur();
+    byText('.title-links button', '設定').click();
+    esc();
+    expect(document.activeElement).toBe(root.querySelector('.title'));
+    // Nested: title → 設定 → back → the title's 設定 (through ui.back(), core's Esc from outside the layer too).
+    byText('.title-links button', '設定').focus();
+    byText('.title-links button', '設定').click();
+    expect(ui.back!()).toBe(true);
+    expect(document.activeElement).toBe(byText('.title-links button', '設定'));
+    // Pause → 設定 → back: 設定, not 再開.
+    ui.show({ id: 'pause' });
+    byText('.pause-grid .btn', '設定').focus();
+    byText('.pause-grid .btn', '設定').click();
+    esc();
+    expect(root.querySelector<HTMLElement>('.yp')!.dataset.screen).toBe('pause');
+    expect(document.activeElement).toBe(byText('.pause-grid .btn', '設定'));
+    // Results → ランキング (core opens the board) → back: ランキング, not もう一回.
+    ui.show({ id: 'results', data: results(true) });
+    const board = byText('.res-row .btn, .btn', 'ランキング');
+    board.focus();
+    ui.show({ id: 'board', key: 'L:2-2' });
+    esc();
+    expect(root.querySelector<HTMLElement>('.yp')!.dataset.screen).toBe('results');
+    expect(document.activeElement).toBe(byText('.res-row .btn, .btn', 'ランキング'));
+  });
+
   it('shows at most 6 popups and at most 3 onomatopoeia', () => {
     ui.mount(root);
     ui.show({ id: 'hud' });

@@ -4352,13 +4352,14 @@ input {
   overflow: hidden;
 }
 /* tall: the sheet takes the control deck and the bench band, so its top edge is the floor's front edge and the whole
-   play area of the attract stays in view (the preview); on short phones it keeps room for the tabs and a card or two,
-   and core frames the attract above its top edge instead (app.ts sceneLayout). */
+   play area of the attract stays in view (the preview). Short phones keep at least 22.5rem for the tabs and two cards
+   and more (390x844's 365 px sheet is already taller); core then frames the attract between the try-on tag's band at
+   the top and the sheet's top edge (skinState.ts skinsSheetLayout, skins.ts TRY_BAND). */
 .yp[data-layout="tall"] .skins-sheet {
   left: calc(var(--safe-l) + 8px);
   right: calc(var(--safe-r) + 8px);
   bottom: calc(var(--safe-b) + 8px);
-  height: min(62%, max(calc(var(--deck-h) + var(--bench-h) - 8px - var(--safe-b)), 18rem));
+  height: min(62%, max(calc(var(--deck-h) + var(--bench-h) - 8px - var(--safe-b)), 22.5rem));
 }
 .yp[data-layout="wide"] .skins-sheet {
   top: calc(var(--safe-t) + 12px);
@@ -4674,6 +4675,11 @@ input {
 .yp[data-short="1"] .skins-try-short {
   display: inline;
 }
+/* ... and names the skin only: its condition (3-4 lines beside the panel, over the gantry being tried on) is on the
+   card, next to the lock. */
+.yp[data-short="1"] .skins-try-cond {
+  display: none;
+}
 .skins-try-stop {
   flex: 0 0 auto;
   width: 44px;
@@ -4683,6 +4689,8 @@ input {
   border-color: transparent;
   background: transparent;
 }
+/* tall: the band down to 80 px under the safe inset (skins.ts TRY_BAND) is the tag's; an attract framed over a high
+   sheet starts under it. */
 .yp[data-layout="tall"] .skins-try {
   top: calc(var(--safe-t) + 10px);
   left: 12px;

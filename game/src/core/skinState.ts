@@ -28,14 +28,18 @@ export const SKINS_SHEET_GAP = 6;
 
 /**
  * The layout the renderer frames the scene in while the skins sheet is open. tall, the sheet's top edge (root px) higher
- * than the floor's front edge (a small phone, 125 % text): that edge becomes the bottom of the play area (the layout's
- * bench band, at most 60 % of the scene), so the whole attract (floor to beam) shows above it as the try-on preview.
- * Otherwise (wide, no sheet, a sheet below the floor) the layout itself.
+ * than the floor's front edge (a short phone, 125 % text): that edge becomes the bottom of the play area (the layout's
+ * bench band, at most 60 % of the scene), and `frameTop` (root px, under the try-on tag) its top: the HUD band, status
+ * row and panel above it are empty while the sheet is open. The whole attract (floor to beam) shows between them as the
+ * try-on preview, no smaller than above a sheet at the floor. Otherwise (wide, no sheet, a sheet at or below the floor)
+ * the layout itself.
  */
-export function skinsSheetLayout(l: Layout, sheetTop: number | null): Layout {
+export function skinsSheetLayout(l: Layout, sheetTop: number | null, frameTop: number | null = null): Layout {
   if (sheetTop === null || l.kind !== 'tall' || !Number.isFinite(sheetTop)) return l;
   const cover = l.scene.y + l.scene.h - sheetTop + SKINS_SHEET_GAP;
-  return cover > (l.bench ?? 0) + SKINS_SHEET_GAP ? { ...l, bench: Math.min(cover, l.scene.h * 0.6) } : l;
+  if (!(cover > (l.bench ?? 0) + SKINS_SHEET_GAP)) return l;
+  const hudTop = frameTop !== null && Number.isFinite(frameTop) ? Math.max(l.scene.y, Math.min(l.hudTop, frameTop)) : l.hudTop;
+  return { ...l, hudTop, bench: Math.min(cover, l.scene.h * 0.6) };
 }
 
 /**

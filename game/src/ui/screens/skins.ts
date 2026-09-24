@@ -25,6 +25,19 @@ export const TRY_ON_DEBOUNCE_MS = 150;
 const ATTRACT_LEVEL = '2-2';
 /** Enter / Space on these activate them; anywhere else on the sheet (or the scene around it) they do nothing. */
 const CONTROLS = 'button, a, input, select, textarea, [role="tab"], [role="radio"]';
+/** px kept between a card picked with the keys and the list's edge: its focus ring (3 px out, 2.5 px wide) and shadow. */
+const REVEAL_PAD = 8;
+/**
+ * tall: px under the top safe inset kept for the try-on tag (styles.css .skins-try: 10 px down, 56-58 px tall with its
+ * × button and two or three lines) and the ghost tags that the attract draws just above its beam: the attract framed
+ * over a high sheet starts under it.
+ */
+export const TRY_BAND = 80;
+/**
+ * What the sheet keeps when it is rebuilt in place (a rotation re-renders the screen): the try-on and the list's scroll;
+ * the tab is the screen's own `part`. Opening the sheet again starts afresh (a new screen object).
+ */
+const kept = new WeakMap<object, { trying: string | null; scroll: number }>();
 
 const nameOf = (id: string): string => t(`skin.${id}.name` as I18nKey);
 /** A level id that never breaks at its hyphen (「2-」 / 「2」 on two lines): word joiners around it. */
@@ -109,7 +122,8 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
   let previewed = false;
 
   // tall: core frames the attract above the sheet (the sheet can be taller than the control deck on a small phone or at
-  // 125 % text); its top edge goes along now and whenever the sheet changes size.
+  // 125 % text); its top edge goes along now and whenever the sheet changes size. A sheet that rises above the floor also
+  // gets the empty HUD band for the attract, down from under the try-on tag's band (TRY_BAND).
   const sheetTop = (): number | undefined => {
     if (env.layoutKind() !== 'tall') return undefined;
     const yp = el.closest('.yp');
@@ -119,7 +133,8 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
   };
   const shown = (): void => {
     try {
-      env.ctx.skinsShown?.(true, sheetTop());
+      const top = sheetTop();
+      env.ctx.skinsShown?.(true, top, top === undefined ? undefined : env.safeTop() + TRY_BAND);
     } catch {
       /* core's business */
     }
@@ -182,6 +197,7 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
 
   function selectTab(p: SkinPart, focus: boolean): void {
     part = p;
+    screen.part = p;   // a rebuild (rotation) opens the same tab
     visited.add(p);
     markSeen(p);
     panel.setAttribute('aria-labelledby', `skins-tab-${p}`);
@@ -242,9 +258,10 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
     tryBanner.hidden = !trying;
     if (!trying) return;
     tryText.replaceChildren(
-      // Landscape phones: the short heading (「試着中」; the lock and the condition say the rest), see styles.css.
+      // Landscape phones: the short heading (「試着中」) and the name only (the card's lock and condition say the rest),
+      // see styles.css.
       h('b', null, h('span', { class: 'skins-try-long' }, t('skins.try')), h('span', { class: 'skins-try-short' }, t('skins.trying'))),
-      h('span', null, `${nameOf(trying.id)} — ${conditionText(trying.rule, trying.have, trying.need, env)}`));
+      h('span', null, nameOf(trying.id), h('span', { class: 'skins-try-cond' }, ` — ${conditionText(trying.rule, trying.have, trying.need, env)}`)));
   }
 
   /** Stores a waiting equip (settings.skin; core applies it) and hands the try-on state to core. */
@@ -279,8 +296,20 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
     }, TRY_ON_DEBOUNCE_MS);
   }
 
-  function refocus(id: string): void {
-    panel.querySelector<HTMLElement>(`[data-skin="${id}"]`)?.focus({ preventScroll: true });
+  /** Scrolls the list (only the list, never the sheet or the page) so that a card is in view, focus ring included. */
+  function reveal(c: HTMLElement): void {
+    const p = panel.getBoundingClientRect();
+    const r = c.getBoundingClientRect();
+    if (!p.height || !r.height) return;   // not laid out
+    if (r.top < p.top + REVEAL_PAD) panel.scrollTop -= p.top + REVEAL_PAD - r.top;
+    else if (r.bottom > p.bottom - REVEAL_PAD) panel.scrollTop += r.bottom - p.bottom + REVEAL_PAD;
+  }
+
+  /** Focus back on a card after a repaint; `show`: the keys picked it, so it is scrolled into view (a tap leaves the list). */
+  function refocus(id: string, show = false): void {
+    const c = panel.querySelector<HTMLElement>(`[data-skin="${id}"]`);
+    c?.focus({ preventScroll: true });
+    if (c && show) reveal(c);
   }
 
   function pick(it: SkinItem, byKey = false): void {
@@ -297,7 +326,7 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
     }
     paintTry();
     paintPanel();
-    if (hadFocus) refocus(it.id);
+    if (hadFocus) refocus(it.id, byKey);
   }
 
   tryStop.addEventListener('click', () => {
@@ -310,7 +339,20 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
     refocus(id);
   });
 
+  // Rebuilt in place (a rotation): the try-on comes back (core got its end from the old sheet), and the list where it was.
+  const keep = kept.get(screen);
+  const again = keep?.trying ? view.items.find((i) => i.id === keep.trying && !i.owned) ?? null : null;
+  trying = again;
   selectTab(part, false);
+  if (keep) {
+    panel.scrollTop = keep.scroll;
+    if (again) {
+      paintTry();
+      schedule(true);
+      const c = panel.querySelector<HTMLElement>(`[data-skin="${again.id}"]`);
+      if (c) reveal(c);
+    }
+  }
 
   return {
     onKey(e) {
@@ -335,7 +377,7 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
         const it = partItems(part).find((x) => x.id === cards[n]?.dataset.skin);
         // The arrows check the next card; they never uncheck the one that is on (a locked card on trial stays on trial).
         if (it && !(trying?.id === it.id)) pick(it, true);
-        else if (it) refocus(it.id);
+        else if (it) refocus(it.id, true);
         return true;
       }
       if (e.key === 'Enter' || e.key === ' ') {
@@ -359,6 +401,7 @@ export function renderSkinsScreen(root: HTMLElement, screen: Extract<Screen, { i
     dispose() {
       disposed = true;
       resize?.disconnect();
+      kept.set(screen, { trying: trying?.id ?? null, scroll: panel.scrollTop });
       // An arrow-key pick still waiting is stored; a try-on ends (closing goes back to the equipped look).
       trying = null;
       try {

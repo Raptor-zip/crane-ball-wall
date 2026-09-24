@@ -411,6 +411,8 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
   let skinsOpen = false;
   /** tall, the skins sheet open: its top edge (root px), above which the renderer frames the attract (skinsSheetLayout). */
   let skinsTop: number | null = null;
+  /** tall, the skins sheet open: the top of that frame (root px, under the try-on tag; the HUD band is empty then). */
+  let skinsFrameTop: number | null = null;
 
   /** LevelProgress.hash of a level: its physics hash and the sim version (progressHash). */
   const pbHash = (level: LevelDef): string => progressHash(data.hash(level));
@@ -482,7 +484,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     loadReplay: (req) => loadReplay(req),
     skins: () => skins.view(),
     skinPreview: (ids) => skins.preview(ids),
-    skinsShown: (open, sheetTop) => skinsAttract(open, sheetTop),
+    skinsShown: (open, sheetTop, frameTop) => skinsAttract(open, sheetTop, frameTop),
     origin: shareOrigin(d.publicOrigin ?? import.meta.env.VITE_PUBLIC_ORIGIN, d.location === undefined ? safeLocation() : d.location),
   };
   sink.current = uiContext;
@@ -501,7 +503,7 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
     // A rotation keeps the run going: only the layout changes. attach() resets the clutch and keeps the
     // target (§3.3 "目標はそのまま、クラッチはリセット"), so resetForRun must not be called here.
     layout = l;
-    safe('renderer.setLayout', () => renderer.setLayout(skinsSheetLayout(l, skinsTop)));
+    safe('renderer.setLayout', () => renderer.setLayout(skinsSheetLayout(l, skinsTop, skinsFrameTop)));
     const e = ui.elements();
     safe('input.attach', () => input.attach(e.sceneEl, e.deckEl, renderer.mapper, l));
   });
@@ -2481,12 +2483,15 @@ export function createApp(root: HTMLElement, injected?: Partial<AppDeps>): App {
    * a menu page (the settings over the level select or the daily hub) the attract runs behind the sheet and the page's
    * state comes back when the sheet closes. The UI never offers the sheet over a run, the pause menu or a results card.
    */
-  function skinsAttract(open: boolean, sheetTop?: number): void {
+  function skinsAttract(open: boolean, sheetTop?: number, frameTop?: number): void {
     skinsOpen = open;
-    const top = open && typeof sheetTop === 'number' && Number.isFinite(sheetTop) ? Math.round(sheetTop) : null;
-    if (top !== skinsTop) {
+    const px = (v?: number): number | null => (open && typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : null);
+    const top = px(sheetTop);
+    const frame = px(frameTop);
+    if (top !== skinsTop || frame !== skinsFrameTop) {
       skinsTop = top;
-      if (layout) safe('renderer.setLayout', () => renderer.setLayout(skinsSheetLayout(layout!, skinsTop)));
+      skinsFrameTop = frame;
+      if (layout) safe('renderer.setLayout', () => renderer.setLayout(skinsSheetLayout(layout!, skinsTop, skinsFrameTop)));
     }
     if (open) {
       if (skinsHost || (state !== 'LEVEL_SELECT' && state !== 'DAILY_HUB')) return;
