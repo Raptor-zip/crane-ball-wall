@@ -14,7 +14,7 @@
 | 研究の動画 | [enter](docs/media/enter.mp4)、[escape](docs/media/escape.mp4) |
 | 解説動画（YouTube、7:48） | https://youtu.be/cEGxACeO0iQ |
 | 研究の論文 | [本文 12 ページ](docs/paper.pdf)、[要約 2 ページ](docs/paper_summary.pdf) |
-| ゲームの開発記録（Claude Code に任せて作った過程） | [本文 14 ページ](docs/game_dev_paper.pdf)、[X 用の 2 段組 3 ページ](docs/game_dev_summary.pdf) |
+| ゲームの開発記録（Claude Code に任せて作った過程） | [本文 28 ページ](docs/game_dev_paper.pdf)、[X 用の 2 段組 3 ページ](docs/game_dev_summary.pdf) |
 | ゲームの宣伝動画 | GitHub Release [`promo-v1`](https://github.com/Raptor-zip/crane-ball-wall/releases/tag/promo-v1) |
 
 ## ここにあるもの

@@ -3,7 +3,7 @@
 | ディレクトリ | 内容 | 組版済み |
 |---|---|---|
 | [research/](research/) | 研究：吊り下げボールを壁のすき間に出し入れするクレーン（軌道最適化・時変 LQR・独立検証） | [本文 12 ページ](../docs/paper.pdf)、[2 段組の要約 2 ページ](../docs/paper_summary.pdf) |
-| [game_dev/](game_dev/) | 開発記録：Claude Code の ultracode モードでゲーム「ゆらしてピタッ」を作った過程 | [本文 14 ページ](../docs/game_dev_paper.pdf)、[X 用の 2 段組 3 ページ](../docs/game_dev_summary.pdf)（[画像](../docs/media/game_dev_summary-1.png)） |
+| [game_dev/](game_dev/) | 開発記録：Claude Code の ultracode モードでゲーム「ゆらしてピタッ」を作った過程 | [本文 28 ページ](../docs/game_dev_paper.pdf)、[X 用の 2 段組 3 ページ](../docs/game_dev_summary.pdf)（[画像](../docs/media/game_dev_summary-1.png)） |
 
 どちらも LuaLaTeX（`ltjsarticle`、LuaTeX-ja）で組む。図の文字には Noto Sans CJK JP を使う。
 
@@ -25,6 +25,7 @@
 
 ```bash
 uv run python paper/game_dev/make_figs.py        # figs/gantt.pdf, gantt_compact.pdf, toolmix.pdf
+uv run python paper/game_dev/make_players_fig.py # figs/players.pdf（players_timeseries.json から）
 cd paper/game_dev
 lualatex main.tex && lualatex main.tex            # 本文
 lualatex x_summary.tex && lualatex x_summary.tex  # X 用の 2 段組
