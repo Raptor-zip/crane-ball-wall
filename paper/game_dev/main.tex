@@ -3,6 +3,7 @@
 \usepackage{amsmath,amssymb}
 \usepackage{graphicx}
 \usepackage{booktabs}
+\usepackage{array}
 \usepackage{tabularx}
 \usepackage{multirow}
 \usepackage{siunitx}
@@ -35,6 +36,7 @@
   literate={→}{{$\rightarrow$}}1 {≤}{{$\le$}}1 {≥}{{$\ge$}}1 {–}{{-}}1 {×}{{$\times$}}1 {±}{{$\pm$}}1 {°}{{$^\circ$}}1
 }
 \renewcommand{\lstlistingname}{リスト}
+\newenvironment{yaku}{\par\vspace{-2pt}\small\noindent\textbf{［日本語訳］}\par\nopagebreak\begin{list}{}{\leftmargin=1.2em\rightmargin=0.5em\topsep=1pt}\item\relax}{\end{list}\vspace{4pt}}
 
 \title{「全部任せる」の一言からウェブゲーム公開まで\\
 Claude Code の ultracode モードによるマルチエージェント開発の事例報告}
@@ -56,8 +58,12 @@ Claude Code の ultracode モードによるマルチエージェント開発の
 工程は「複数案の生成と審査による設計」「契約と仮実装の先行」「ファイル所有権を分けた並列実装と独立レビュー」
 「人間らしいボットによる難易度調査」「粗探し・反証・修正の3段の総点検」の順に進んだ．
 人が入れた指示は公開までに約 10 回で，内容は公開先の指定，ヒントの提供，試遊の感想，公開操作に限られる．
+面白さは，3人の審査役による5軸の採点（楽しさの重み2倍）と，設計書での「技」と「最初の 60 秒」への分解で評価され，
+見た目は延べ 559 回のスクリーンショットの目視で詰められた．ただし遊んで確かめる工程はなく，
 試遊の感想「難しすぎる」は，エージェントの審査でランキング対象外の補助に下げられた「ゆれ止め自動制御」を，既定でオンの機能として復活させた．
 公開日（約 12 時間）の API 要求は 23,505 件（Cloudflare の分析値）で，クリアの記録が届いた端末は少なくとも 2,342 台だった．
+公開から約2日で累計 4,624 台に達した一方，要求数はピークの数\%に落ち，別の日に戻ってきた端末は約 5\% だった．
+運営費はほぼゼロで続けられるが，プレイ人口の持続と収益化は難しく，その理由と，ネイティブアプリ化などの将来の方向を考察した．
 \end{abstract}
 
 \section{はじめに}
@@ -83,6 +89,7 @@ Claude Code の実行モードは \code{/effort} で ultracode にした．
   \item Claude（以下，指揮役）がサブエージェントにどのようなプロンプトを投げたか．
   \item 開発がどのような工程で進んだか．
   \item 完成度を上げるためにどのような工夫をしたか．人は何をしたか．
+  \item 面白さ，ユーザー体験，デザインをそれぞれ何で評価し，どう作り込んだか（\secref{sec:fun}〜\secref{sec:design}）．
 \end{enumerate}
 
 \paragraph{資料} 分析には次の記録を使った．
@@ -93,7 +100,7 @@ Claude Code の実行モードは \code{/effort} で ultracode にした．
   \item サブエージェント 70 体それぞれの実行ログ
   \item 公開セッション（09-23 09:43 〜 12:34，Opus 5.5）と，公開後の集計セッションの会話ログ
 \end{itemize}
-本稿で引用するプロンプトは台本からの抜粋で，英語の原文のままである．
+本稿で引用するプロンプトは台本からの抜粋で，英語の原文のまま載せ，各リストの直後に日本語訳を付けた（本文中の短い引用は括弧内に訳を付けた）．訳は筆者側で付けたもので，日本語で同じ指示を出すときの叩き台として使えるよう，命令の形をそのまま残している．
 なお，本稿の分析と執筆も Claude Code が行った．自己評価に偏りうる点は\secref{sec:limits}で述べる．
 
 \section{対象と条件}
@@ -212,6 +219,17 @@ on the trolley (|F|<=40 N) ...
 - Scope: built by a team of AI coding agents in one session ..., so prefer depth and polish over sprawling
   feature lists. Must be genuinely fun, not a tech demo.
 \end{lstlisting}
+\begin{yaku}
+これはガントリークレーンのシミュレーションである．水平のレール（高さ rail\_y = 1.25 m）の上を台車（質量 M = 2.0 kg）が走り，
+長さ L = 1.0 m の質量のない伸びない\textbf{紐}でボール（m = 1.0 kg，半径 0.06 m）を吊っている．入力は台車に掛ける水平の力 F（$|F| \le 40$ N）である．…\\
+$(M+m)\ddot{x} + mL\cos\theta\,\ddot{\theta} - mL\omega^2\sin\theta = F - bv$\\
+…\\
+・不正：公開ランキングは攻撃される．サーバー側での検証を検討すること．Worker は，送られてきたティックごとの入力の記録を\textbf{同じ} TypeScript の物理モジュールで再シミュレーションする．
+これにはエンジンをまたいだビット単位の決定性が要る（固定の時間刻み，入力はティックごとに量子化，Math.sin は V8・JavaScriptCore・SpiderMonkey で結果が違うので sin/cos は + − × ÷ だけで自前実装する）．
+さらに CPU 10 ms の予算に収めること．…\\
+・規模：1セッションで AI のコーディングエージェントのチームが作る（…）．機能を広げるより，深さと磨き込みを優先すること．
+技術デモではなく，本当に面白いものにすること．
+\end{yaku}
 
 最初の設計ワークフローは，公開先を claude.ai の Artifact と想定していた．
 走り始めて9分後に H2（Cloudflare で公開，D1 を使ってよい）が届いたため，指揮役はワークフローを止め，
@@ -221,8 +239,8 @@ on the trolley (|F|<=40 N) ...
 
 \paragraph{5つの案} 5体のエージェントに，それぞれ別の方向からゲーム案を1つずつ作らせた（\tabref{tab:concepts}）．
 方向の指示は1〜2文で，参考作品の名前を挙げて具体的にしている．たとえば mastery には
-``\textit{The headline hook is `can a human beat the optimal-control AI?'}''，
-mobile には ``\textit{The first 10 seconds must be self-explanatory without text}'' と指示した．
+``\textit{The headline hook is `can a human beat the optimal-control AI?'}''（訳：「一番の売りは「人間は最適制御 AI に勝てるか？」である」），
+mobile には ``\textit{The first 10 seconds must be self-explanatory without text}''（訳：「最初の 10 秒は文章なしでわかるものにすること」） と指示した．
 出力は JSON スキーマで固定し，面の寸法をメートル単位で 12〜20 面ぶん書かせた．
 案を作るエージェントの多くは，研究コードの最適化器や自作のシミュレーションを実際に動かして，面が解けるかを確かめていた
 （arcade 案のエージェントは 96 分，38 回の Bash を使った）．
@@ -262,7 +280,7 @@ sandbox & ふりこパーキング & 押せるのは台車だけ． & 20 & 128.8
 12 章の必須項目（物理仕様，面の表，データ型，API と SQL，無料枠の計算，モジュールごとの所有ファイル，受け入れ基準つきのマイルストーン）を列挙した．
 できた設計書 \code{GAME\_DESIGN.md} は約 2,300 行になった．
 
-続く批評役には，``\textit{the lead engineer who must start building tomorrow}'' の立場で，
+続く批評役には，``\textit{the lead engineer who must start building tomorrow}''（訳：「明日から作り始めなければならない主任エンジニア」） の立場で，
 矛盾や解けない面を探し，設計書を直接直すよう指示した．
 批評役は 53 分・177 回のツール呼び出しを使い，最適化器と自作のサーボ・シミュレーションを実際に走らせて，
 次のような問題を見つけて直した．
@@ -304,16 +322,25 @@ sandbox & ふりこパーキング & 押せるのは台車だけ． & 20 & 128.8
 - Quality bar: this must become a genuinely fun, polished game (Nintendo-level feel), not a tech demo. Verify your
   work by actually running it (tests, builds, screenshots you look at with the Read tool). Report failures honestly.
 \end{lstlisting}
+\begin{yaku}
+・自分が所有するファイル（タスクに列挙したもの）だけを作成・変更すること．他の担当のファイル，GAME\_DESIGN.md（…），package.json，ロックファイル，共有の設定は決して編集しない．
+ほかの場所の変更が必要なら，報告（requests\_for\_other\_owners）に書くこと．\\
+・git の状態を変えるコマンドは決して実行しない．npm install も実行しない．game/ の外には触れない．\\
+・ほかの担当も同時に自分の仮実装を実装している．契約の型に厳密に従ってコードを書くこと．テストで他のモジュールの振る舞いが必要なら，小さな偽物を使うこと．…\\
+・Playwright を動かすときは\textbf{必ず}固有のポートを設定すること（環境変数 PW\_PREVIEW\_PORT と PW\_DEV\_PORT）．…\\
+・品質の基準：技術デモではなく，本当に面白く，磨き込まれたゲーム（任天堂級の手触り）にすること．
+実際に動かして確かめること（テスト，ビルド，Read ツールで自分の目で見るスクリーンショット）．失敗は正直に報告すること．
+\end{yaku}
 
 各担当のプロンプトには，所有ファイルの一覧，設計書の該当節，受け入れ基準が書かれている．
-描画担当には ``\textit{LOOK at your screenshots with the Read tool and iterate until the scene is genuinely attractive and legible on a phone}''，
-UI 担当には ``\textit{Avoid generic `AI-looking' UI (no purple gradients, no glassmorphism)}'' と，見た目の基準まで指定した．
+描画担当には ``\textit{LOOK at your screenshots with the Read tool and iterate until the scene is genuinely attractive and legible on a phone}''（訳：「スクリーンショットを Read ツールで見て，場面が本当に魅力的でスマホで読みやすくなるまで繰り返し直せ」），
+UI 担当には ``\textit{Avoid generic `AI-looking' UI (no purple gradients, no glassmorphism)}''（訳：「ありがちな『AI っぽい』UI は避けること（紫のグラデーションもガラス風もなし）」） と，見た目の基準まで指定した．
 物理担当には，研究コードとの誤差（1e-9），3ブラウザと workerd でのビット単位の一致，
 5400 ステップを 5 ms 以内で計算できることを求めた．
 
 台本は依存関係をそのまま表している（\lstref{lst:pipeline}）．
 各モジュールは作り終えると，\textbf{物理コアの完成を待ってから}，別のエージェントのレビューに回る．
-レビュー役は元の担当と同じファイルを所有し，``\textit{Adversarially review}'' して直す．
+レビュー役は元の担当と同じファイルを所有し，``\textit{Adversarially review}''（訳：「敵対的にレビューせよ」） して直す．
 
 \begin{lstlisting}[caption={作る→レビューする，の依存つきパイプライン（台本の抜粋）},label={lst:pipeline}]
 const o1Build = agent(COMMON + ... + o1.task, { label: `build:${o1.key}`, phase: 'Build', schema: REPORT })
@@ -323,6 +350,9 @@ const reviewOf = async (m, build) => {
   return agent(COMMON + REVIEW_TASK(m, build), { label: `review:${m.key}`, phase: 'Review', schema: REPORT })
 }
 \end{lstlisting}
+\begin{yaku}
+（コード中のコメントの訳）物理コアが完成して初めて，src/sim との本当の統合ができる．
+\end{yaku}
 
 レビューは形だけでは終わらなかった．\tabref{tab:review}に主な発見を示す．
 いずれも作った本人が「受け入れ基準はすべて通過」と報告したあとに見つかったものである．
@@ -352,7 +382,7 @@ Worker & 仕様の誤りはないが，テストが報告より弱く，分の�
 
 ③の結果を読んだ指揮役は，自分で開発サーバーを立ててスクリーンショットを2枚見たうえで，
 各担当の「他の担当への依頼」と「設計からの逸脱」を裁定し，\textbf{決定事項 D1〜D10} として次の台本の冒頭に書いた
-（``\textit{LEAD DECISIONS (binding; they override the spec where they differ)}''）．
+（``\textit{LEAD DECISIONS (binding; they override the spec where they differ)}''（訳：「指揮役の決定事項（拘束力あり．仕様と食い違う場合はこちらが優先）」））．
 たとえば D10 は，縦画面の上 4 割が空白の紙になっていることを指摘し，カメラの追従幅とスコア表示の配置を担当2人に分けて直させた．
 
 同じワークフローで，\textbf{人間らしい操作をするボット}による難易度調査も並行させた．
@@ -376,7 +406,7 @@ Worker & 仕様の誤りはないが，テストが報告より弱く，分の�
 \begin{enumerate}
   \item \textbf{粗探し}：サーバー（攻撃者と急な人気集中の視点），物理（再生と不正対策の一致），ゲーム進行，見た目と音の4観点で，
   読み取り専用のエージェントが不具合を探す．「具体的な失敗の筋書きがないものは書くな」と指示した．
-  \item \textbf{反証}：中・高の指摘1件ごとに，別のエージェントが反証を試みる．``\textit{Default to real=false if you cannot substantiate it}''．
+  \item \textbf{反証}：中・高の指摘1件ごとに，別のエージェントが反証を試みる．``\textit{Default to real=false if you cannot substantiate it}''（訳：「裏付けられなければ real=false とせよ」）．
   \item \textbf{修正}：観点ごとに1体が，確定した指摘を直し，1件ごとに回帰テストを足す．
 \end{enumerate}
 
@@ -386,6 +416,12 @@ Try to REFUTE this finding. Read the code paths involved, and if cheap, reproduc
 Default to real=false if you cannot substantiate it. If real, give the right severity and the best fix.
 Finding: ${JSON.stringify(f)}
 \end{lstlisting}
+\begin{yaku}
+\# 役割：懐疑的な検証役（ゲームのソースは読み取り専用．作業用のファイルは /tmp/claude-1000/yp-verify/\$\{f.id\}/ に置く）．\\
+この指摘を\textbf{反証}せよ．関係するコードの経路を読み，手間が小さければ小さなスクリプトやテストで再現すること．
+裏付けられなければ real=false とすること．本物なら，正しい重大度と最善の修正を示すこと．\\
+指摘：\$\{JSON.stringify(f)\}
+\end{yaku}
 
 指摘は 26 件（高 3，中 9，低 14）出た．中・高の 12 件はすべて反証に耐えたが，高とされた3件はすべて「中」に下げられた．
 主なものを\tabref{tab:findings}に示す．修正役は，回帰テストが元のコードで本当に落ちることも確かめている
@@ -436,6 +472,275 @@ Finding: ${JSON.stringify(f)}
 自分の記憶ファイルからもそこを指すようにしたうえで，再起動を依頼した．
 新しいセッションは「HANDOFF.md を読んで続きをやって」の一言で作業を再開し，
 残っていた細かい表示の不具合を直した．
+
+\section{面白さの評価}
+\label{sec:fun}
+
+依頼の核は「最強に面白いゲーム」だったが，公開前に人が遊んだのは H7 の1回だけである．
+では，エージェントたちは面白さを何で測っていたのか．記録を読むと，評価は次の5段に分かれていた．
+\begin{enumerate}
+  \item \textbf{案を作る段}：各案に「なぜ最も面白いか」と「最初の 60 秒」を書かせる（自己申告）．
+  \item \textbf{審査の段}：3人の審査役が5つの軸で 0〜10 点を付け，重みを付けて合計する（\secref{sec:fun-judge}）．
+  \item \textbf{設計書の段}：面白さを「名前の付く技」「最初の 60 秒の秒単位の台本」に分解して書き下す（\secref{sec:fun-gdd}）．
+  \item \textbf{実装の段}：「任天堂級の手触り」を品質基準として全員に課し，スクリーンショットを見て判断させる（\secref{sec:design}）．
+  \item \textbf{数値の段}：人間らしいボットでメダルの取りやすさを測る（\secref{sec:phases} ④⑤）．
+\end{enumerate}
+このうち点数が付いたのは2段目だけで，数値で測ったのは5段目の「難しさ」だけである．
+「遊んで面白いか」を直接確かめた工程は，人の試遊（\secref{sec:human}）までなかった．
+
+\subsection{審査の軸と重み}
+\label{sec:fun-judge}
+
+審査役の出力は JSON スキーマで固定されていた（\lstref{lst:judgeschema}）．
+面白さに関わる軸は2つで，``\textit{moment-to-moment fun and replayability}''（訳：「その瞬間瞬間の楽しさと，繰り返し遊びたくなるか」）（楽しさ）と
+``\textit{how quickly a newcomer gets it and gets hooked}''（訳：「初めての人がどれだけ早く理解し，はまるか」）（最初の1分）である．
+これに作りやすさ，独自性，研究への忠実さを加えた5軸を，台本の中で次の式で合計した．
+\begin{lstlisting}[caption={重み付き合計（台本の抜粋）},label={lst:weight}]
+for (const j of judged) for (const s of j.scores) {
+  const t = s.fun * 2 + s.first_minute * 1.5 + s.feasibility * 1.5 + s.originality + s.fidelity
+\end{lstlisting}
+重みは指揮役が台本を書いた時点で決めたもので，楽しさを2倍にしている．
+審査役にはこの重みを知らせていない．点数とは別に，土台にする案（\code{recommended\_base}），
+移植すべき案と捨てるべき案，操作方式と失敗条件についての判定も書かせた．
+
+3人の審査役の観点（\secref{sec:phases} ①）のうち，「楽しさ」の観点のプロンプトは次のとおりである．
+\begin{lstlisting}[caption={審査役「楽しさ」の観点（全文）},label={lst:funlens}]
+You are a veteran game designer and playtest lead (Nintendo EPD / indie hit sensibility). Judge primarily on
+fun, game feel, pacing, difficulty curve, retention and "one more try" pull. Be harsh on frustration, filler
+levels and features that dilute the core.
+\end{lstlisting}
+\begin{yaku}
+あなたはベテランのゲームデザイナーで，試遊の責任者である（任天堂 EPD やヒットしたインディーの感覚をもつ）．
+主に，楽しさ，手触り，テンポ，難易度曲線，継続して遊びたくなるか，「もう一回」の引力で評価せよ．
+イライラさせるもの，埋め草の面，コアを薄める機能には厳しくすること．
+\end{yaku}
+
+\tabref{tab:judgeaxes}に，軸ごとの点数（3人の合計，各 30 点満点）を示す．
+
+\begin{table}[H]
+\centering
+\caption{審査の軸ごとの点数（3人の審査役の合計．各軸 30 点満点）と重み付き合計}
+\label{tab:judgeaxes}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+案 & 楽しさ & 最初の1分 & 作りやすさ & 独自性 & 忠実さ & 重み付き合計 \\
+ & ($\times2$) & ($\times1.5$) & ($\times1.5$) & ($\times1$) & ($\times1$) & \\
+\midrule
+mastery & 24.5 & 24.0 & \textbf{23.5} & 20.5 & \textbf{29.0} & \textbf{169.8} \\
+mobile & 21.5 & \textbf{27.0} & 20.0 & 20.5 & 24.0 & 158.0 \\
+arcade & \textbf{25.0} & 24.0 & 15.0 & 22.5 & 21.0 & 152.0 \\
+campaign & 21.5 & 17.5 & 12.5 & 25.5 & 23.5 & 137.0 \\
+sandbox & 22.0 & 21.0 & 7.5 & \textbf{27.0} & 15.0 & 128.8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+表から次のことが読み取れる．
+\begin{itemize}
+  \item \textbf{楽しさの軸だけなら arcade が1位だった}．「楽しさ」の審査役と主任エンジニアの2人が arcade に最高点（8.5）を付け，
+  楽しさの合計は arcade 25.0，mastery 24.5 と僅差だった．
+  arcade を2位以下に落としたのは作りやすさ（15.0 対 23.5）で，点数の経済（ニアミスの段階×コンボ×収集物）が
+  「1セッションで磨き上げられるか」の点で割り引かれた．
+  \item \textbf{楽しさの軸は差がつきにくかった}．5案の合計は 21.5〜25.0 に収まり，幅は 3.5 点しかない．
+  一方，作りやすさは 7.5〜23.5 と大きく開いた．結果として，順位を最も大きく動かしたのは作りやすさだった．
+  \item \textbf{最初の1分は mobile が3人とも 9 点}だった．文章なしの導入と「今日の5球」は，土台に選ばれなかった mobile 案から移植された．
+\end{itemize}
+
+審査役のコメントも，面白さを抽象語ではなく仕組みで語っている．
+「楽しさ」の審査役は mastery を「5案で最も強いコアループ．カウントダウンがなく，最初の入力で時計が動き，リトライは 100 ms 未満，壁ごとにスプリットが出る Trackmania 型」と評した．
+sandbox には「壁に触れても無害にすると，他の案すべてが頼っている『ミリ単位の緊張』が消える．AI の 2 cm の余裕に意味がなくなる」と書いた．
+「プレイヤー」の審査役は mastery の「AI のルールを破ることで AI を超える」という筋を「正直で，とても投稿したくなる」と評価している．
+つまり審査役たちは，面白さを「緊張（壁 0 mm）」「即リトライ」「比べられる相手（AI）」「語れる物語」の組み合わせとして捉えていた．
+
+\subsection{設計書での面白さの言語化}
+\label{sec:fun-gdd}
+
+統合役への指示には，設計書の第1章として ``\textit{what makes it 最強に面白い}''（訳：「何がこれを最強に面白くするのか」），
+第2章として ``\textit{the first 60 seconds (moment by moment; no text walls - teach by play)}''（訳：「最初の 60 秒（瞬間ごとに．文章の壁は置かず，遊びで教える）」） を必須にしていた．
+その結果，設計書は面白さを次の3つの粒度で書き下している．
+\begin{itemize}
+  \item \textbf{柱（3本）}：「人類 vs 最適制御」「ミリで攻めて，ピタッで決める」「一瞬でもう一回」．
+  AI は壁から 2 cm 離れ，紐の張力を保つ．人間は壁 0 mm まで攻めてよく，紐をたるませてもよい．
+  「AI に勝つ方法は，この自由を使うことだけ」と，勝ち筋そのものを物理の規則の差として設計している．
+  \item \textbf{名前の付く技}：遅れ，ブレーキ振り出し，逆振りの溜め，共振ポンプ，追いかけ減衰，端ドン，パシッの7つ．
+  入力は台車の目標位置1つだけだが，劣駆動の振り子なので技が自然に生まれる，という主張である．
+  技を見つけると技名のトーストが出て，「自分で発見した」感覚を残す．
+  \item \textbf{最初の 60 秒の台本}：0:00 から 0:58 まで，何秒に何が起き，プレイヤーが何を感じるかを表にしている
+  （例：「0:27 最初のクラッシュ．ゴンッ，レンガが飛び，0.08 秒のヒットストップ，接触点の赤丸と『−4 mm』」→「最初のクラッシュが笑える」，
+  「0:42 すれすれで越える．スローモー，寸法線つきの『ギリ 9mm』」→「自慢の数字が出る」）．
+\end{itemize}
+面白さの主張が，このように検証可能な仕組み（リトライ 100 ms 未満，ヒントの開く回数，演出の秒数）に落ちていたため，
+後の工程ではそれぞれを受け入れ基準や E2E テストとして確かめられた．
+一方で，「この台本どおりに人が感じるか」は，どの工程でも確かめていない．
+
+\section{ユーザー体験の分析}
+\label{sec:ux}
+
+\tabref{tab:ux}に，ユーザー体験に関わる主な決定を，その由来と確かめ方とともにまとめる．
+由来の多くは①の審査で他の案から移植されたもので，確かめ方の多くは E2E テストかスクリーンショットだった．
+
+\begin{table}[H]
+\centering
+\caption{ユーザー体験に関わる主な決定．由来は，その考えが最初に出た案または工程}
+\label{tab:ux}
+\small
+\begin{tabularx}{\linewidth}{l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{0.16\linewidth}>{\raggedright\arraybackslash}p{0.2\linewidth}}
+\toprule
+場面 & 決定 & 由来 & 確かめ方 \\
+\midrule
+導入 & タイトルからメニューを挟まず 1-1 が始まる．文章は出さず，半透明の手が操作を見せる．時計は最初の入力で動く & mobile & E2E，通しプレイ \\
+導入 & 失敗 3・6・10 回でヒントを1行ずつ開く．未クリアの面で3連続クラッシュすると AI の手本を 0.5 倍速で1回だけ自動再生 & mobile，mastery & core のテスト \\
+操作 & 全デバイスで「目標位置→サーボ→量子化した力」の1本の経路．縦画面は下 38\% を操作盤にし，どこを触っても相対ドラッグ & arcade，審査 & 入力テスト（1 m 動かして行き過ぎ 7 cm 以下） \\
+操作 & 力バーに AI の同時刻の力を重ね，目標と台車を結ぶばね線を飽和で赤くする & mastery，sandbox & 描画のスクショ \\
+失敗 & 壁は即クラッシュ，紐のたるみとレール端は物理として続行．0.7 秒の演出の間も入力すればすぐ戻る．リトライ 100 ms 未満 & 審査（3人一致） & E2E（READY まで 100 ms 未満） \\
+失敗 & クラッシュ地点に赤丸と「−4 mm」，壁に直近5回の赤い×を残す & campaign，arcade & 描画のスクショ \\
+報酬 & ニアミスを点数でなく mm の数字と寸法線で見せる．20 mm の「論文ライン」 & arcade（点数経済は削除） & UI のスクショ \\
+社会 & 今日の5球，Wordle 風の共有行，挑戦状リンク，自動生成の表示名 & mobile & E2E（リンクの往復） \\
+環境 & オフラインでも遊べ，API が落ちても「オフライン」の札を出すだけ & 設計書 & E2E（\code{/api/*} を遮断） \\
+配慮 & 揺れ・フラッシュを OS の reduced motion に従わせる．文字 125\%．タッチ目標 44 px 以上．ゴーストは色に加えて形とラベルで区別．音だけの合図には見える対を付ける & 設計書 \S 3.5 & UI の E2E（44 px を全画面で検査） \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{審査が UX を決めた例：操作方式} 審査スキーマには点数と別に \code{control\_scheme\_verdict} を設けていた．
+3人は独立に「全デバイスで1つのサーボ経路を出荷し，同じ手触りと同じランキングを共有する」と判定した．
+「プレイヤー」の審査役はサーボの固有振動数を振り子の2倍（約 6.5 rad/s），減衰比を約 0.8 にし，
+「台車は正確に感じるが瞬間移動はできず，ボールがはっきり遅れる」ように決めている．
+一方，campaign 案と sandbox 案の「力を直接指定し，離すと惰性で進む」操作は，3人とも既定の操作から外した．
+
+\paragraph{UX の不具合はどこで見つかったか} 作った本人が見落とし，別のエージェントが見つけた UX の問題は多い．
+UI のレビュー役は約 20 件を直した．たとえば，ポーズメニューのゴースト切り替えの表示が実際の状態を推測で描いていた，
+「NaN mm」がそのまま共有カードに載った，などである．
+統合役は実際のタッチ操作で通しプレイし，10 件を直した．
+公開前の総点検では，UI 観点の粗探し役に次の観点を与えている（抜粋）．
+\begin{lstlisting}[caption={総点検の UI 観点（抜粋）},label={lst:uifind}]
+UI/UX, rendering and audio quality: ... Look for layout overlap/clipping at 320-430 px portrait and landscape
+phones and desktop, text overflow in ja and en, focus traps, keyboard operability, touch targets < 44 px, safe
+areas, reduced motion, i18n gaps ..., wrong numbers/formatting (NaN, Infinity, negative), memory leaks ...,
+and anything that would look broken in a screenshot shared on X.
+\end{lstlisting}
+\begin{yaku}
+UI/UX，描画，音の品質：…
+320〜430 px の縦持ち・横持ちのスマホとデスクトップでのレイアウトの重なりやはみ出し，日本語と英語での文字のあふれ，フォーカスの閉じ込め，キーボードで操作できるか，
+44 px 未満のタッチ目標，セーフエリア，reduced motion，翻訳の抜け（…），数値や書式の誤り（NaN，Infinity，負の値），メモリリーク（…），
+そして \textbf{X で共有されたスクリーンショットで壊れて見えるもの}すべてを探せ．
+\end{yaku}
+最後の ``\textit{anything that would look broken in a screenshot shared on X}''（訳：「X で共有されたスクリーンショットで壊れて見えるものすべて」） は，公開先の文脈を UX の基準にしたものである．
+反証役もこの基準で重大度を判断しており，360 px 幅で「ランキング」の文字がカタカナの途中で折れる不具合を
+「機能は壊れていないが，X でスクリーンショットを撮られる結果画面の見た目の傷」として中と判定した．
+
+\paragraph{UX で届かなかったところ} ボットによる難易度調査は「キーボードでは 2-2 をほぼクリアできない」ことを数値で示したが，
+入力の手触り（押した瞬間に最高速へ達する）を原因として特定し直すことはなかった．
+これは人の試遊の「減衰させようとすると加速する」で初めて特定された（\secref{sec:human}）．
+UX の検証が「画面が壊れていないか」には強く，「操作して気持ちよいか」には弱かったことを示している．
+
+\section{デザインの分析}
+\label{sec:design}
+
+\subsection{方針：「工房の机の上のジオラマ × 実験ノート」}
+設計書のアートディレクションは，研究の動画と同じ語彙（レンガ壁，ガントリー，赤いボール）に，
+製図のインク線（寸法線，角度の弧，判子）を重ねるものである．
+方針は審査役の案をもとに統合役が決め，各担当のプロンプトで繰り返し念を押している．
+\begin{itemize}
+  \item UI 担当：``\textit{Avoid generic `AI-looking' UI (no purple gradients, no glassmorphism): it should feel like a warm lab notebook / drafting card with bold rounded Japanese type.}''（訳：「ありがちな「AI っぽい」UI は避けること（紫のグラデーションもガラス風もなし）．太い丸ゴシックの日本語の文字で，温かい実験ノートや製図カードのように感じられること」）
+  \item 描画担当：``\textit{a beautiful, warm "workbench diorama $\times$ lab notebook" three.js scene built only from primitives and canvas textures}''（訳：「プリミティブと canvas のテクスチャだけで組んだ，美しく温かい「工房のジオラマ × 実験ノート」の three.js の場面」）
+  \item 音担当：``\textit{Make it sound GOOD: tasteful levels, no harshness, the apex ticks must feel musical (this replaces BGM).}''（訳：「良い音にせよ．品のよい音量で，耳障りな音はなし．折り返しの拍子音は音楽的に感じられること（これが BGM の代わりになる）」）
+\end{itemize}
+
+\paragraph{色と文字} 色は 21 個のトークンとして設計書に書かれ，CSS と three.js で同じ値を使う（\tabref{tab:palette}）．
+紙（\#F3EEE4），墨（\#1E2A44），レンガ，ガントリーの黄色が地で，意味を持つ色（ゴールの緑，危険の赤，AI のシアン）は
+着せ替えでも変えない約束になっている．
+文字は丸ゴシック（M PLUS Rounded 1c の 800 と 500）で，数字は等幅にしてタイムが揺れないようにした．
+
+\begin{table}[H]
+\centering
+\caption{色のトークン（抜粋，\code{GAME\_DESIGN.md} \S 9.1）}
+\label{tab:palette}
+\small
+\begin{tabular}{lll}
+\toprule
+トークン & 値 & 用途 \\
+\midrule
+\code{--paper-1} / \code{--paper-2} & \#F3EEE4 / \#E6DCCB & 背景の紙 \\
+\code{--ink} & \#1E2A44 & 製図線，寸法，UI の文字 \\
+\code{--brick-1} / \code{--brick-2} & \#B5553A / \#C8643F & レンガ（1個ずつ色相を揺らす） \\
+\code{--gantry} & \#F2B705 & ガントリーの梁 \\
+\code{--ball} & \#E0312B & ボール \\
+\code{--goal} & \#22B573 & ゴール，静止リング \\
+\code{--danger} & \#E5484D & クラッシュ，飽和 \\
+\code{--ai} & \#19C3FF & AI ゴースト（加算合成と走査線） \\
+判子 & \#D8342B & 「ピタッ!」の朱色の判子 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{素材を持たない} 画像・モデル・音声のファイルは1つもない．
+テクスチャは起動時に canvas で最大6枚を描き，モデルはプリミティブで組み，効果音はすべて WebAudio のレシピ（\tabref{tab:sound}）で合成する．
+BGM は置かず，振り子の折り返しで鳴る拍子木の音を，振れ幅に応じて C メジャー・ペンタトニックの 15 段に割り当てた．
+振るほど音程が上がり，共振ポンプがそのまま旋律になる．
+
+\begin{table}[H]
+\centering
+\caption{効果音のレシピ（抜粋，\code{GAME\_DESIGN.md} \S 9.6）}
+\label{tab:sound}
+\small
+\begin{tabularx}{\linewidth}{lX}
+\toprule
+音 & レシピ \\
+\midrule
+拍子木（折り返し） & 正弦波と 2.4 倍の正弦波，5 ms のノイズのクリック．振れ幅 0〜90° を C4〜C7 のペンタトニック 15 段に \\
+ニアミス & 正弦 2.4→3.2 kHz のグライド 120 ms．すき間の区分ごとに1半音ずつ上げる \\
+紐の張り直し & Karplus-Strong（遅延 1/220 s，減衰 0.996）．音量は撃力に比例 \\
+静止保持と成功 & C5 D5 E5 G5 A5 の5段を 0.1 s ごと，成功で C–E–G の和音 \\
+クラッシュ & 正弦 70→40 Hz，ローパスしたノイズ，レンガが崩れるクリック 8 回 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{ジュース表} 設計書には，ゲーム内のイベント 18 種それぞれについて，見た目・音・振動を1行で決めた表がある．
+たとえば成功は「リングが完成し 0.15 s 静止 → 判子を 1.6 倍から 1.0 倍へ 120 ms で押す → 軌跡が 0.1 s 刻みのストロボ点に固まる → 紙吹雪」
+と長三和音，振動 20 ms である．演出の担当（描画・UI・音）が別々でも，同じ表を見て作れば1つの手触りに揃う．
+
+\paragraph{性能予算} 見た目の質を性能と引き換えにしないよう，予算も数値で決めた（描画呼び出し 40 以下，三角形 6 万以下，
+メイン JS は gzip で 450 KB 以下，中位のスマホで 60 fps）．統合時点の実測は，描画呼び出し 21〜23，メイン JS 315 KB だった．
+
+\subsection{目で見て直す}
+デザインの検証は，数値の検査よりもスクリーンショットを見ることで行われた．
+開発セッションのサブエージェントが画像を読み込んだ回数は合計 559 回で，その大半は UI と描画の担当だった（\tabref{tab:shots}）．
+指揮役自身も4回スクリーンショットを見ており，そこから D10（縦画面の上 4 割が空白）を出している．
+
+\begin{table}[H]
+\centering
+\caption{スクリーンショットを読み込んだ回数（開発セッション，上位）}
+\label{tab:shots}
+\small
+\begin{tabular}{lr@{\hspace{3em}}lr}
+\toprule
+エージェント & 回数 & エージェント & 回数 \\
+\midrule
+UI のレビュー役（③） & 91 & 描画のレビュー役（③） & 34 \\
+UI の担当（③） & 72 & 描画の修正（④） & 33 \\
+UI の修正（④） & 61 & UI の修正（⑤） & 28 \\
+統合役（④） & 58 & 描画の担当（③） & 28 \\
+UI の粗探し役（⑤） & 53 & 音の担当・レビュー・修正 & 18 \\
+\midrule
+\multicolumn{3}{l}{合計（全エージェント）} & 559 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+見ることで見つかった問題の例を挙げる．
+\begin{itemize}
+  \item 描画のレビュー役：縦画面で，実験ノート風の見出しが左端で切れ，さらに UI のロゴやボタンと重なっていた．
+  設計書にあったクラッシュ時の赤いビネットが，描画と UI のどちらにも実装されていなかった．
+  \item 指揮役：縦画面の 3D ビューの約 4 割が，ガントリーより上の空白の紙だった（→ D10．カメラの追従幅を 2.0〜2.3 m にし，空いた上部を AI・時計・自己ベストのスコアボードにした）．
+  \item 統合役：結果カードの上のボタンがトーストに隠れて押せない．320 px 幅でボタンの文字が1文字ずつ折れる．
+\end{itemize}
+
+音も「聞く」代わりに測った．音のレビュー役は全効果音の A 特性の音量，スマホのスピーカーを模した 400 Hz のハイパス版，スペクトログラムを計算し，
+失敗を知らせる衝突音が拍子木より 6〜9 dB 小さく，しかもスマホで鳴らない 40〜70 Hz に偏っていることを見つけた（\tabref{tab:review}）．
+低域の正弦波を奇数倍音へ歪ませる「スマホ用の層」を足し，衝突音を拍子木より約 4 dB 大きくして直している．
 
 \section{人の試遊と公開}
 \label{sec:human}
@@ -554,6 +859,51 @@ Worker の実行回数（\code{/api/*} の要求．エラー 0） & 23,505 \\
 公開日の Worker 実行回数は Workers の無料枠（1日 10 万）の約 24\% で，
 設計段階で見積もった「1日 2 万人が遊んでも無料枠に収まる」範囲に入っている．
 
+\subsection{公開後の推移}
+\label{sec:decay}
+公開から約 2 日後の 2026-09-25 17:07 JST に，同じ方法（Cloudflare の分析 API と本番 D1．いずれも読み取り専用）で数値を取り直した．
+1時間ごとの推移を\figref{fig:players}に，日ごとの値を\tabref{tab:daily}に示す．
+データは \code{players\_timeseries.json}，図は \code{make\_players\_fig.py} で作った．
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figs/players.pdf}
+\caption{公開後のプレイヤー数の推移（1時間ごと，JST）．(a) Worker の実行回数．(b) その時間にクリアの記録が届いた端末数（棒），
+そのうち初めて記録が届いた端末数（緑）と，その累計（破線，右軸）．9/25 は 17 時までの完全な時間だけを描いた．
+plays 表は 9/23 20:44 に追加したので，それ以前の値は下限である．}
+\label{fig:players}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\caption{日ごとの推移（JST）．端末数は plays 表だけから数えたため，\tabref{tab:reception}の 2,342（runs 表との和）とは少し違う}
+\label{tab:daily}
+\small
+\begin{tabular}{lrrr}
+\toprule
+日 & Worker 実行回数 & 静的ファイルの配信要求 & 初めて記録が届いた端末 \\
+\midrule
+9/23（公開日，11:59〜） & 23,505 & 24,673 & 2,223 \\
+9/24 & 14,871 & 15,256 & 2,028 \\
+9/25（17 時まで） & 3,045 & 3,931 & 369 \\
+\midrule
+累計（重複なし） & & & 4,624 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{itemize}
+  \item \textbf{ピークは公開の約 4 時間後}（9/23 16 時台，4,366 件/時）で，その夜（21 時台）にも2つ目の山がある．
+  9/24 の昼にも小さな山が出たが，9/25 の日中は 1時間あたり 150〜360 件で，ピークの 3〜8\% に落ちた．
+  \item \textbf{新しく来る人は減り続けている}．初めて記録が届いた端末は 9/23 に 2,223 台，9/24 に 2,028 台だったが，
+  9/25 は 17 時までで 369 台（1時間あたり 20〜60 台）である．累計の曲線は 9/25 の未明にほぼ平らになった．
+  \item \textbf{戻ってくる人は少ない}．累計 4,624 台のうち，最初の記録と別の日（JST）にも記録が届いた端末は 244 台（5.3\%），
+  最初の記録から 24 時間以上たって記録が届いた端末は 79 台（1.7\%）だった．
+  plays 表は「面ごとの初回のクリア」しか残さないので，クリア済みの面だけを遊び直した人は数えられず，これは下限である．
+  ただし「今日の5球」は日ごとに別の面として記録されるので，日替わりを遊びに戻った人はここに入る．
+  Wordle 風の日替わりは再訪の仕掛けとして設計されたが（\secref{sec:ux}），少なくとも最初の2日間ではほとんど効いていない．
+\end{itemize}
+
 \section{考察}
 
 \subsection{完成度を上げた工夫}
@@ -589,6 +939,8 @@ Worker の実行回数（\code{/api/*} の要求．エラー 0） & 23,505 \\
 \begin{itemize}
   \item 描画・UI・統合の担当には，スクリーンショットを撮って画像として読み，直すことを繰り返させた．
   \item 人の代わりに，人間らしい制約とぶれをもつボットにゲームを遊ばせ，メダルの取りやすさを数値で測った．
+  \item 面白さを「技」「最初の 60 秒の台本」「リトライ 100 ms 未満」のような検証できる仕組みに分解し，受け入れ基準に落とした．
+  \item 見た目の基準（「AI っぽくしない」「スマホで読めるまで直す」）を言葉で与え，延べ 559 回のスクリーンショットの目視で詰めた．
 \end{itemize}
 
 \subsection{人が必要だったところ}
@@ -602,6 +954,209 @@ Worker の実行回数（\code{/api/*} の要求．エラー 0） & 23,505 \\
 また，外部に影響する操作（デプロイ，公開後に変えられない日付の決定）は，指揮役が必ず人に確認した．
 CasADi の件では，人のヒントをそのまま採用せず，検証したうえで「いまは使わない」と判断し，理由（ライセンス）を示した．
 
+\subsection{AI はなぜ面白さを扱えたのか}
+\label{sec:whyfun}
+公開後の数字（2日で 4,600 台以上，1-1 をクリアした端末の約 3 割が 2-1 までクリア）を見るかぎり，
+少なくとも「一度遊んでみたくなり，数面は続けたくなる」面白さは作れていた．
+しかし\secref{sec:fun}で見たとおり，エージェントは一度もゲームを「遊んで楽しんで」はいない．
+それでも面白さを扱えた理由は，記録から次の4つにまとめられる．
+
+\paragraph{1. 面白さを既知の型の組み合わせとして扱った}
+5案の方向づけのプロンプトは，すべて既存の作品を参照点にしている
+（Trackmania，Getting Over It，QWOP，Tiny Wings，Downwell，Vlambeer の ``juice it or lose it''，Portal，Baba Is You，Wordle）．
+審査役の講評も「Trackmania 型の即リトライ」「Wordle 風の共有行」のように，型の名前で面白さを語っている．
+言語モデルは，こうした作品についての大量の批評や設計論を学んでおり，
+「どの仕組みがどんな感情を生むか」を言葉の上では知っている．
+エージェントがしたのは，面白さを体験することではなく，既知の型を題材に合わせて選び，組み合わせることだった．
+
+\paragraph{2. 題材が面白さの核をすでに持っていた}
+研究コードには，本物の最短時間の最適化器があった．
+3人の審査役がそろって mastery 案を選び，忠実さの軸で 29/30 を付けたのは，「本物の最適制御 AI と競う」がほかでは作れない核だったからである．
+AI の 2 cm の余裕は「人間は 0 mm まで攻めてよい」という勝ち筋に，紐のたるみは「パシッ」という技になった．
+エージェントは面白さを無から作ったのではなく，題材に埋まっていた面白さを見つけて，ゲームの規則に翻訳した．
+翻訳の筋は「AI は規則を守る．人は規則の隙間を使ってよい」という1文にまとまっており，これが3本の柱すべてを貫いている．
+
+\paragraph{3. 面白さを検証できる仕組みに分解した}
+「最初の 60 秒」は秒単位の台本に，「もう一回」は「リトライ 100 ms 未満」に，「緊張」は「すき間を mm で表示し，20 mm の論文ラインを引く」に落とされた（\secref{sec:fun-gdd}）．
+こうすると，面白さそのものは測れなくても，面白さを支えるはずの仕組みが「あるか，動くか」はテストで確かめられる．
+エージェントの強みである「大量に確かめる」を，面白さにも使える形にしたことになる．
+
+\paragraph{4. 1人の好みではなく，観点の違う合議にした}
+案を5つ出して観点の違う3人に採点させたことで，1体の思いつきに依存しなかった．
+楽しさの軸では arcade が1位だったが，作りやすさと合わせた合計で mastery が選ばれ，arcade の良い部分（すき間の mm 表示，相対ドラッグ）は移植された．
+
+\paragraph{限界：手触りと「また来たい」は扱えなかった}
+一方で，操作の手触り（キーを押すと加速しすぎる）は人の試遊まで見つからなかった（\secref{sec:human}）．
+審査役「プレイヤー」には ``whether you would come back tomorrow''（明日もまた来たいか）を評価させていたが，
+実際に別の日に戻ってきた端末は約 5\% だった（\secref{sec:decay}）．
+文章の上で評価できる面白さ（初見の引き，共有したくなる物語）は当たり，
+遊んで初めてわかる面白さ（手触り）や，時間をかけて初めてわかる面白さ（習慣になるか）は外れた．
+「AI は面白さを理解した」というより，「AI は面白さを，言葉で説明できる範囲で再構成できた」と言うのが正確だと考える．
+
+\subsection{丸投げか，仕様の言語化の移譲か}
+\label{sec:delegate}
+公開後，X で「丸投げに見えて，実は仕様の言語化を AI に移譲している」「人が先に決めようとする制約が抜け落ちるぶん，構造がすっきりする」
+「何を作るかより，どう問いを渡すかが本質」という趣旨の感想をもらった．記録に照らして検討する．
+
+\paragraph{言語化の移譲：記録はおおむねこれを支持する}
+人が書いたのは2文（約 50 文字）である．これに対し，指揮役とサブエージェントが書いた仕様は，
+ワークフローの台本6本で約 9.6 万文字（英語），設計書 \code{GAME\_DESIGN.md} で 2,337 行，これに決定事項 D1〜D10，R5〜R10 が加わる．
+ジャンル，対象の端末，操作方式，面の寸法，失敗の規則，ランキングの仕組み，色の値，効果音のレシピまで，すべてエージェントが言葉にした．
+「何を作るか」の言語化は，ほぼすべて移譲されたと言ってよい．
+
+\paragraph{制約が抜け落ちると構造がすっきりするか：半分正しい}
+人がジャンルも規模も決めなかったので，指揮役は設計の空間を5方向に開いたまま探索できた．
+入った制約は，人の好みではなく目的と題材から導かれたもの（研究と同じ運動方程式，無料枠，再シミュレーションのためのビット単位の決定性）で，
+それぞれに理由があるので，設計書の構造は一貫している．この点で感想は当たっている．
+
+ただし，制約が「なかった」わけではない．指揮役は前置き（\lstref{lst:context}）に，規模（5〜15k 行），「技術デモではなく本当に面白いもの」，
+オフラインで動くこと，など多くの制約を\textbf{自分で書き足して}いる．抜け落ちたのは「人が先に決める制約」で，制約そのものは AI が書いた．
+また，AI が導けない種類の制約もあった．
+\begin{itemize}
+  \item \textbf{外の世界の制約}：公開先（H2）は9分遅れで届き，最初の設計ワークフローを止めてやり直した（5体，約 39 万トークン）．
+  公開先，予算，権利（CasADi の METIS のライセンスは AI が自分で見つけたが）など，外から与えられる条件は，先に言うほど安い．
+  \item \textbf{体験から出る制約}：「難しすぎる」（H7）は，遊んだ人にしか言えない．
+\end{itemize}
+つまり，移譲してよいのは「目的から導ける制約の言語化」で，「外の世界の条件」と「体験による判定」は人が持ち続ける必要があった．
+
+\paragraph{「どう問いを渡すか」：指揮役自身がそれをしていた}
+この感想は，人と指揮役の間だけでなく，指揮役とサブエージェントの間にも当てはまる．
+指揮役の仕事の大部分は，コードを書くことではなく，問いの形を決めることだった．
+\begin{itemize}
+  \item 「人間は最適制御 AI に勝てるか？」（mastery 案への問い）
+  \item 「メダルの基準は\textbf{人間}に達成できるか？」（難易度調査役への問い）
+  \item 「この指摘を\textbf{反証}せよ．裏付けられなければ偽とせよ」（反証役への問い）
+  \item 「明日から作り始める主任エンジニアとして，抜けを探せ」（批評役への問い）
+\end{itemize}
+問いの形が，出てくるものの質を決めていた．
+その裏返しとして，\textbf{問われなかったことは作られなかった}．
+最初の依頼は「最強に面白い」で，「長く遊ばれる」「続けて運営できる」は問われていない．
+エージェントたちも再訪を主な評価軸にしなかった．結果として，一度遊ぶ面白さは作れたが，持続性はほぼゼロだった（\secref{sec:sustain}）．
+「どう問うか」が本質だという主張は，良い面と悪い面の両方で，今回の記録によく当てはまる．
+
+さらに付け加えると，今回の問いは2文だけではなかった．問いと一緒に，研究コード（運動方程式，最適化器，検証済みの数値）という大きな「答えの材料」を渡している．
+2文の依頼だけを空のリポジトリで出していたら，面白さの核（本物の AI と競う）は生まれなかった可能性が高い．
+「丸投げ」が成り立ったのは，問いが短かったからではなく，問いの背後にある材料が厚かったからでもある．
+
+\subsection{役割分担，レビューの境界，失敗時の止め方}
+\label{sec:roles}
+別の読者から，役割分担，レビューの境界，失敗したときの停止条件を確かめたい，という声があった．
+台本から読み取れるものを\tabref{tab:roles}にまとめる．
+
+\begin{table}[H]
+\centering
+\caption{役割ごとの書き込み範囲と，その出力を確かめる役（台本から整理）}
+\label{tab:roles}
+\small
+\begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}p{0.2\linewidth}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{0.27\linewidth}}
+\toprule
+役割 & 書いてよい範囲 & 出力を確かめる役 \\
+\midrule
+指揮役 & 台本と決定事項だけ（コードは書かない） & 人（外部に影響する操作は必ず確認） \\
+案を作る役（①） & 何も書かない（JSON を返すだけ） & 審査役3人 \\
+審査役（①） & 何も書かない & 指揮役（重み付き合計） \\
+統合役・批評役（①） & 設計書1ファイル & 批評役 → 指揮役 \\
+土台の担当（②） & 雛形と仮実装，面データ & 検証役（全コマンドを自分で再実行） \\
+モジュール担当 O1〜O9（③） & 所有ファイルだけ．他人のファイルは「依頼」として報告 & 同じファイルを引き継ぐレビュー兼修正役 \\
+修正役（④） & 所有ファイルだけ & 統合役（全ファイルを引き継ぎ，全テスト） \\
+難易度調査役（④⑤） & 作業用の一時ディレクトリだけ（ゲームは読み取り専用） & 指揮役（R5〜R10 を決める） \\
+粗探し役（⑤） & 何も書かない（読み取り専用） & 反証役（1件ごとに別の1体） \\
+反証役（⑤） & 一時ディレクトリだけ & 修正役（確定した指摘だけを受け取る） \\
+修正役（⑤） & 観点ごとに重ならないファイル & ゲート役（全テストと難易度の再測定） \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{レビューの境界} 境界の引き方には，3つの原則が見える．
+第一に，\textbf{作る役と確かめる役は必ず別の個体}である．同じモデルでも，文脈を共有しない別の個体に確かめさせた．
+第二に，\textbf{書き込み範囲をファイル単位で分けた}．並行する役どうしの書き込み範囲は重ならず，レビュー役は元の担当と「同じファイルだけ」を引き継ぐ．
+確かめるだけの役（粗探し，反証，難易度調査）は，ゲームのソースに書き込めない．
+第三に，\textbf{境界を越える変更は報告で上に上げる}．他人のファイルの変更が必要なときは \code{requests\_for\_other\_owners} に書き，
+指揮役がそれを裁定して次の台本の決定事項にした．
+全員に共通の禁止事項として，git の状態を変える操作，\code{npm install}，\code{game/} の外への書き込みがあった．
+
+\paragraph{失敗時の止め方：自動の停止条件はほとんどなかった}
+この点は正直に書く必要がある．台本には，「この条件なら全体を止める」という停止条件は\textbf{ほぼ書かれていない}．
+台本は失敗を吸収して先へ進む作りになっている．
+\begin{itemize}
+  \item エージェントが失敗すると結果は \code{null} になり，\code{filter(Boolean)} で落として次の段へ進む（例：5案のうち1つが失敗しても，残りで審査する）．
+  \item モジュールの作成が失敗しても例外を捕まえて \code{\{key, error\}} を返し，ほかのモジュールは続ける．
+\end{itemize}
+代わりに，次のものが止める役を果たしていた．
+\begin{itemize}
+  \item \textbf{ワークフローの切れ目}：7本のワークフローは1本ずつ指揮役に結果を返す．指揮役は報告を読み，スクリーンショットを見て，次の台本を書く．
+  実質的な停止条件の判断はここで行われた．最初の設計ワークフローを止めたのもこの判断である（H2 を受けて中止）．
+  \item \textbf{ゲート}：各工程の最後の役（統合役，ゲート役）は「全テストが通るまで直す．根本原因を直し，テストを弱めない」ことを求められた．
+  これは停止条件ではなく完了条件だが，通らなければ報告の \code{open\_problems} に残る．
+  \item \textbf{時間と計算の上限}：難易度調査は「全体で約 60 分」，最適化器は候補ごとにプロセスを打ち切り，時間切れの候補は1回だけ延長して解き直す．
+  \item \textbf{正直な報告の要求}：全員に ``Report failures honestly''（失敗は正直に報告せよ）と，受け入れ基準ごとの「通ったか」と「証拠」を書かせた．
+  失敗を隠さずに上げさせることが，止める判断の前提になっている．
+  \item \textbf{外部に影響する操作は人の承認}：デプロイ，公開後に変えられない日付，リポジトリの接続は人が行った．
+\end{itemize}
+この設計は，今回のように「壊れても作業ツリーの中で閉じる」開発では機能した．
+しかし，エージェントが失敗しても黙って先へ進むので，たとえば9体のモジュール担当のうち物理コア（全員が依存する）が失敗した場合でも，
+台本はレビューを始めてしまう（\lstref{lst:pipeline} は物理コアの失敗を \code{null} として待つだけで，止まらない）．
+今回それが起きなかったのは結果論である．
+次に同じことをするなら，「依存の根っこが失敗したら下流を止める」「ゲートが通らなければ次のワークフローに進まない」を台本に明示すべきだと考える．
+
+\subsection{持続可能性と将来性}
+\label{sec:sustain}
+\figref{fig:players}は，X の投稿の拡散とともに人が来て，拡散が収まるとともに去っていく形をしている．
+筆者は，このまま拡散が終われば，プレイ人口はほぼゼロになると考えている．
+本節では，「持続可能なゲーム」をこのゲームの外側の問題として考える．
+
+\paragraph{2つの持続可能性} 持続可能性には2つの意味がある．
+\begin{itemize}
+  \item \textbf{運営の持続}：このゲームはほぼ満たしている．サーバーは Cloudflare の無料枠の中で動き，
+  拡散のピークの日でも Worker の実行回数は上限の約 24\% だった．保守の必要な常駐のサーバーもない．
+  誰も遊ばなくなっても費用はかからないので，「作品」としては何年でも置いておける．
+  \item \textbf{プレイ人口の持続}：こちらはほぼゼロである．再訪率は 1〜5\% で，新規は拡散の波が来たときだけ入ってくる．
+  ゲームとして生き続けるには，拡散がなくても毎日遊びに来る人が一定数いる状態が要るが，その兆しは見えない．
+\end{itemize}
+「持続可能なゲームを作る」は，「面白いゲームを作る」とは難しさの段階がいくつも違う，というのが筆者の実感である．
+今回，AI エージェントは後者の壁を大きく下げた．約 14 時間，人の指示約 10 回で，拡散されて 2 日で 4,600 台以上に遊ばれるものができた．
+しかし前者，つまり人が習慣として戻ってくる理由や，運営を続けるための収入は，開発の自動化では下がっていない．
+作る費用が下がるほど，差がつくのは「作ったあと」になる．
+
+\paragraph{収益化：広告は付けられない} 収益の手段として最初に思いつくのは広告だが，このゲームには合わないと考える．
+\begin{itemize}
+  \item このゲームの売りは「リトライは 100 ms 未満で，読み込みもカウントダウンもない」「30 秒しか我慢しない人に最初の 10 秒で伝わる」ことである（\secref{sec:fun}）．
+  リトライの間や結果画面に広告を挟めば，売りそのものを壊す．
+  \item 縦画面の下 38\% は指で操作する盤で，上は 3D の場面と HUD で埋まっている．バナーを置く場所は，操作か視認性のどちらかを削らないと作れない．
+  \item 遊ぶ時間は1人あたり数分で，再訪もほとんどない．表示回数が拡散の日に集中し，その後は残らないので，広告の収入も同じ形で一瞬で終わる．
+\end{itemize}
+つまり，広告を付けると遊ばれなくなり，付けなければ収入がない．今の形のままでは，収益による持続はほぼ見込めない．
+
+\paragraph{ウェブアプリであること} ウェブアプリであることは，拡散では強みで，定着では弱みだった．
+\begin{itemize}
+  \item \textbf{強み}：X のリンクを押せば 1〜2 秒で遊べる．インストールもアカウントも要らない．
+  「30 秒しか我慢しない」人を取りこぼさないこの摩擦の低さが，公開2日で 4,600 台以上という数字を生んだと考えられる．
+  \item \textbf{弱み}：遊び終えたタブを閉じると，戻ってくるきっかけが何も残らない．
+  ホーム画面のアイコンも，「今日の5球が更新された」という通知もない．保存は端末のブラウザの中だけにある．
+\end{itemize}
+
+\paragraph{スマホのネイティブアプリにしていたら} ネイティブアプリにすれば，定着の弱みの一部は改善したと考える．
+ホーム画面のアイコンは毎日目に入り，プッシュ通知で日替わりを知らせられ，ストアの検索や「おすすめ」という，拡散以外の新規の入り口もできる．
+課金（広告を消す買い切り，スキン）もストアの仕組みで扱いやすい．
+一方で，インストールという一手間が入ると，拡散の瞬間に来た人の大半は遊ぶ前に離れた可能性が高い．
+ストアの審査，年間の登録料，手数料（15〜30\%）もかかる．
+したがって「最初からネイティブ」より，「ウェブで拡散させ，気に入った人をアプリに移す」二段構えが現実的だったと考える．
+その中間として，PWA（ホーム画面への追加と Web Push．iOS も 16.4 以降は対応）はコードをほぼ変えずに試せる．
+描画は three.js，物理と不正対策は TypeScript なので，Capacitor などでアプリに包むことも技術的には難しくない．
+
+\paragraph{将来性} プレイ人口を持続させる方向として，次が考えられる．
+\begin{itemize}
+  \item \textbf{コンテンツを出し続ける}：面の追加を定期的に行う．①で「作りやすさ」を理由に削った面エディタ（sandbox 案）と，URL で共有できる面は，
+  作り手を遊び手の側に増やす，最も長く効く仕掛けである．AI エージェントで作る費用が下がった今，削った機能を後から足す判断は以前より軽い．
+  \item \textbf{イベントで波を作り直す}：「人類 vs AI」の集計（AI に勝った人数），期間限定の面，世界記録の更新の告知など，
+  拡散のきっかけを周期的に作る．1回の大きな波ではなく，小さな波を何度も起こす運営である．
+  \item \textbf{教材として置く}：このゲームは研究の最適制御と同じ運動方程式の上にある．
+  劣駆動系，共振，最短時間制御を「指で体験してから式を見る」教材は，大学や高専の授業という，拡散に頼らない利用者を持ちうる．
+  娯楽としての持続よりも，こちらのほうが今回の出自に合っている．
+  \item \textbf{作品として割り切る}：運営費がほぼゼロなので，プレイ人口の持続を目標にせず，
+  「研究を 2 日で数千人に触ってもらった」ことを成果とする考え方もある．本稿は，実質的にこの立場で評価している．
+\end{itemize}
+
 \subsection{費用と限界}
 \label{sec:limits}
 \begin{itemize}
@@ -612,6 +1167,9 @@ CasADi の件では，人のヒントをそのまま採用せず，検証した�
   \item 規模の見積もり：前置きでは 5〜15k 行としていたが，テストを含めて約 5.5 万行になった．
   \item 本稿の偏り：本稿の分析と執筆は Claude Code が行った．数値はすべて記録から集計したものだが，
   「工夫」の選び方や評価には，作った側の視点が入りうる．
+  \item 面白さの評価：点数が付いたのは文書（案の JSON）に対する審査だけで，遊んだうえでの評価ではない．
+  楽しさの軸は5案で差がつきにくく，順位は作りやすさで決まった．手触りの問題は人の試遊まで見つからなかった．
+  \item 持続性の評価：公開から約2日しかたっておらず，再訪率は最初の2日だけの値である．また plays 表は面ごとの初回のクリアしか残さないので，再訪は過小に数えている．
   \item 反響の数値：訪問者数は取れず，端末数はクリアの記録が届いたものに限られるので，\tabref{tab:reception}の端末数は遊んだ人数の下限にすぎない．
 \end{itemize}
 
@@ -622,6 +1180,12 @@ CasADi の件では，人のヒントをそのまま採用せず，検証した�
 作る役と確かめる役の分離，そしてスクリーンショットとボットによる「見て，遊ばせて」確かめることだった．
 人の関与は約 10 回で，ゲームの出来を最も大きく変えたのは，実際に遊んだ人の「難しすぎる」という一言だった．
 公開日の約 12 時間で，API 要求は 23,505 件，クリアの記録が届いた端末は少なくとも 2,342 台だった．
+ただし2日後にはピークの数\%まで落ち，別の日に戻ってきた端末は約 5\% にとどまった．
+AI エージェントは「面白いものを作る」費用を大きく下げたが，「遊ばれ続ける」ための仕組みと収益は，広告が売りの速さと両立しないこともあり，今回は解けていない．
+ウェブで拡散させ，PWA やネイティブアプリ，教材としての利用で定着させることが，次の課題である．
+また，今回の「丸投げ」は，実際には仕様の言語化を AI に移譲し，人は外の世界の条件と体験による判定を持ち続ける分担だった．
+何が作られるかは問いの形で決まり，問われなかった「持続」は作られなかった．
+台本には自動の停止条件がほとんどなく，止める判断はワークフローの切れ目で指揮役が担っていた．
 
 \begin{thebibliography}{9}
 \bibitem{gulley2026} N.~Gulley, ``Simulate in MATLAB, Animate in Blender,'' MathWorks Blogs, 2026.
@@ -665,12 +1229,25 @@ CasADi の件では，人のヒントをそのまま採用せず，検証した�
   with a shared global leaderboard (Cloudflare Worker + D1), shareable result text for X (Wordle-style), async
   ghost races against other players. The first 10 seconds must be self-explanatory without text.' },
 \end{lstlisting}
+\begin{yaku}
+mastery（熟達／AI に勝つスピードラン）：深い熟達のある精密な技能玩具という方向から設計せよ．
+きびきびして読みやすい操作，速いリトライ，スピードランのタイマー，自己ベストと軌道最適化器（「AI」）の\textbf{両方}とのゴーストレース，メダル．
+Trackmania，Getting Over It（ただし残酷にしない），QWOP を軽くしたような物理の熟達を思い浮かべよ．
+一番の売りは「人間は最適制御 AI に勝てるか？」である．\\[3pt]
+mobile（スマホ優先のカジュアル＋ソーシャル）：スマホ優先，親指1本，1回 30 秒，強いソーシャルの仕掛け，という方向から設計せよ．
+すぐにわかるタッチ操作，共有の世界ランキングつきの日替わりチャレンジ（Cloudflare Worker + D1），X 向けの共有できる結果文（Wordle 風），ほかのプレイヤーとの非同期のゴーストレース．
+最初の 10 秒は文章なしでわかるものにすること．
+\end{yaku}
 
 \begin{lstlisting}[caption={審査役「プレイヤー」の観点}]
 You are the target player: a Japanese engineer/student who sees this on X, taps the link on a phone, and has 30
 seconds of patience. Also imagine sharing it with friends. Judge on first-minute clarity, touch controls,
 shareability, the "wow, this is the real physics from the paper" factor, and whether you would come back tomorrow.
 \end{lstlisting}
+\begin{yaku}
+あなたは想定プレイヤーである．X でこれを見かけ，スマホでリンクをタップし，30 秒しか我慢しない日本の技術者・学生．友達に共有する場面も想像せよ．
+最初の1分のわかりやすさ，タッチ操作，共有したくなるか，「すごい，論文の本物の物理だ」と思えるか，明日もまた来たいか，で評価せよ．
+\end{yaku}
 
 \begin{lstlisting}[caption={レビュー役への指示}]
 # Your role: independent REVIEWER-FIXER for module ${m.key}
@@ -685,6 +1262,16 @@ The owner agent just finished building this module. Its report: ${JSON.stringify
 3. FIX everything you find directly in the module's files, re-run, and iterate until the acceptance criteria
    truly pass.
 \end{lstlisting}
+\begin{yaku}
+\# あなたの役割：モジュール \$\{m.key\} の独立したレビュー兼修正役\\
+担当エージェントがこのモジュールを作り終えたところである．その報告：\$\{JSON.stringify(build)\}\\
+…\\
+1. GAME\_DESIGN.md（…）と品質の基準（楽しさ，手触り，磨き込み，堅牢さ，性能，アクセシビリティ）に照らして，このモジュールを\textbf{敵対的に}レビューせよ．
+モジュールのコードを\textbf{すべて}読むこと．探すもの：仕様からの逸脱，欠けている機能，バグ，端のケース（NaN，空のデータ，minGapMm が null，オフライン，スマホの回転，reduced motion），
+非決定性，毎フレームの処理の中での確保，メモリリーク，不安定なテスト，主張を本当には確かめていないテスト．\\
+2. モジュールの受け入れ基準が挙げるテスト・検査をすべて実行せよ（足りないテストは足すこと）．見た目のモジュールではスクリーンショットを撮り，スマホのプレイヤーの目で厳しく\textbf{見る}こと．\\
+3. 見つけたものはすべて，モジュールのファイルで直接\textbf{直し}，実行し直し，受け入れ基準が本当に通るまで繰り返せ．
+\end{yaku}
 
 \begin{lstlisting}[caption={難易度調査役への指示（抜粋）}]
 Question: are the medal thresholds (bronze <= 2.0*P, silver <= 1.5*P, gold <= 1.2*P, crown < P, with P = AI
@@ -697,5 +1284,95 @@ with HUMAN-LIKE controller families:
  plus a human reaction/precision penalty: add Gaussian timing jitter sigma = 40 ms and position jitter
  sigma = 1 cm to the best found plan and report the success rate over 50 jittered replays.
 \end{lstlisting}
+\begin{yaku}
+問い：メダルの基準（銅 $\le 2.0P$，銀 $\le 1.5P$，金 $\le 1.2P$，王冠 $< P$．P は AI の parSub）は，キャンペーンの 18 面それぞれと日替わり面から選んだ 12 面で，\textbf{人間}が達成できるか？\\
+方法：…本物のシミュレーター（src/sim）と本物のサーボ（src/input/servo.ts）を読み込み，人間らしい操作の族で各面を遊ぶ．\\
+(a) タッチ／マウス：目標位置 $x_t(t)$ を折れ線とし，折れ点は 6 個以下，折れ点の間隔は 0.15 s 以上，目標の速さは 5 m/s 以下，その後は保持．\\
+(b) キーボード：速度の意図を $\{-4, 0, +4\}$ m/s（と微速 $\pm 1$）から選び，仕様どおりの加減速，切り替えは 7 回以下…\\
+さらに人間の反応と精度のペナルティとして，見つけた最良の操作に時刻のぶれ $\sigma = 40$ ms と位置のぶれ $\sigma = 1$ cm のガウス雑音を加え，50 回のぶれた再生での成功率を報告せよ．
+\end{yaku}
+
+\begin{lstlisting}[caption={審査役の出力スキーマ（採点部分）},label={lst:judgeschema}]
+scores: { type: 'array', items: { type: 'object', properties: {
+  angle: { type: 'string' },
+  fun: { type: 'number', description: '0-10 moment-to-moment fun and replayability' },
+  first_minute: { type: 'number', description: '0-10 how quickly a newcomer gets it and gets hooked' },
+  feasibility: { type: 'number', description: '0-10 likelihood of a polished, bug-free result in one session' },
+  originality: { type: 'number', description: '0-10' },
+  fidelity: { type: 'number', description: '0-10 faithfulness to the research physics/story' },
+  comment: { type: 'string' } } } },
+recommended_base: { type: 'string', description: 'angle key of the best base concept' },
+best_ideas_to_graft: [ { from, idea, why } ],  ideas_to_cut: [ { idea, why } ],
+control_scheme_verdict: { type: 'string', description: 'which control scheme(s) to ship for desktop and touch and why' },
+failure_rule_verdict: { type: 'string', description: 'what should happen on wall contact / slack string, and why' },
+\end{lstlisting}
+\begin{yaku}
+scores（案ごとの点数）：angle（案のキー），
+fun「0〜10．その瞬間瞬間の楽しさと，繰り返し遊びたくなるか」，
+first\_minute「0〜10．初めての人がどれだけ早く理解し，はまるか」，
+feasibility「0〜10．1セッションで磨き込まれ，バグのない結果になる見込み」，
+originality「0〜10」，
+fidelity「0〜10．研究の物理や物語への忠実さ」，comment（講評）．\\
+recommended\_base「土台として最良の案のキー」，best\_ideas\_to\_graft（移植すべき案：出どころ，案，理由），ideas\_to\_cut（捨てる案：案，理由）．\\
+control\_scheme\_verdict「デスクトップとタッチでどの操作方式を出荷するか，その理由」，
+failure\_rule\_verdict「壁に触れたとき／紐がたるんだときにどうなるべきか，その理由」．
+\end{yaku}
+
+\begin{lstlisting}[caption={案を作る役への共通の指示と，案の出力スキーマの面白さに関わる項目}]
+You are a senior game designer. ${a.brief}
+Produce ONE complete game concept for this project (a single game, not a menu of options). Be concrete: real
+numbers for level geometry in metres ... exact control mappings, exact success/failure rules. Give 12-20 levels.
+... Aim for what a player would call 最強に面白い.
+  pitch: '1 paragraph: what the player does and why it is fun'
+  first_60_seconds: 'moment-by-moment what a first-time player experiences'
+  juice_visual_audio, art_direction, why_most_fun, risks_and_mitigations
+\end{lstlisting}
+\begin{yaku}
+あなたはシニアのゲームデザイナーである．\$\{a.brief\}\\
+このプロジェクトのゲーム案を\textbf{1つ}，完全な形で作れ（選択肢の一覧ではなく，1本のゲーム）．具体的に書くこと：面の形はメートル単位の実数で…，操作の対応は正確に，成功と失敗の規則も正確に．面は 12〜20 個．
+… プレイヤーが「最強に面白い」と呼ぶものを目指せ．\\
+pitch「1段落：プレイヤーが何をするか，なぜそれが楽しいか」，
+first\_60\_seconds「初めてのプレイヤーが体験することを瞬間ごとに」，
+juice\_visual\_audio（演出の見た目と音），art\_direction（アートの方針），why\_most\_fun（なぜ最も面白いか），risks\_and\_mitigations（リスクと対策）．
+\end{yaku}
+
+\begin{lstlisting}[caption={審査役「作りやすさ」の観点（全文）}]
+You are a principal engineer who will own the build (three.js, TypeScript, WebAudio, mobile web performance,
+Cloudflare Workers + D1 backend within the free tier, anti-cheat re-simulation, single-file preview packaging,
+physics integration, testing). Judge primarily on feasibility, risk of bugs, physics correctness (same EOM as the
+Python code so optimiser ghosts are valid; slack string and collisions must be robust), and whether the scope
+yields a POLISHED result rather than a broad buggy one.
+\end{lstlisting}
+\begin{yaku}
+あなたは開発を率いる主任エンジニアである（three.js，TypeScript，WebAudio，スマホのウェブの性能，無料枠内の Cloudflare Workers + D1 のバックエンド，再シミュレーションによる不正対策，1ファイルのプレビュー版の梱包，物理の組み込み，テスト）．
+主に，作れるかどうか，バグの危険，物理の正しさ（最適化器のゴーストが有効であるよう Python のコードと同じ運動方程式であること．紐のたるみと衝突が堅牢であること），
+そしてその規模が「広くてバグだらけ」ではなく\textbf{磨き込まれた}結果になるか，で評価せよ．
+\end{yaku}
+
+\begin{lstlisting}[caption={描画担当への受け入れ基準（抜粋）}]
+Acceptance (M4): tests/e2e/render-demo.spec.ts renders all 18 levels at 390x844, 844x390 and 1280x720, saves
+screenshots, asserts renderer.info.render.calls <= 40 and zero console errors ... LOOK at your screenshots with
+the Read tool and iterate until the scene is genuinely attractive and legible on a phone (ball clearly visible,
+walls read as brick, numbers readable).
+\end{lstlisting}
+\begin{yaku}
+受け入れ基準（M4）：tests/e2e/render-demo.spec.ts が 18 面すべてを 390×844，844×390，1280×720 で描画し，スクリーンショットを保存し，
+renderer.info.render.calls が 40 以下であることと，コンソールのエラーが 0 であることを確かめる．…
+スクリーンショットを Read ツールで\textbf{見て}，場面が本当に魅力的で，スマホで読みやすくなるまで（ボールがはっきり見え，壁がレンガに見え，数字が読める）繰り返し直せ．
+\end{yaku}
+
+\begin{lstlisting}[caption={UI 担当への受け入れ基準（抜粋）}]
+Touch targets >= 44 px, keyboard operable menus, aria-labels, safe-area insets, prefers-reduced-motion, text
+scale 125%. Avoid generic "AI-looking" UI (no purple gradients, no glassmorphism) ...
+Acceptance (M6): tests/e2e/ui-screens.spec.ts screenshots of all screens in ja and en at 390x844 and 1280x720
+...; share card PNG 1200x630; i18n key diff 0; fmtLevelText tests. LOOK at the screenshots with the Read tool
+and iterate until they look professionally designed and nothing overlaps or clips at 390x844.
+\end{lstlisting}
+\begin{yaku}
+タッチ目標は 44 px 以上，メニューはキーボードで操作でき，aria-label を付け，セーフエリアの余白，prefers-reduced-motion，文字サイズ 125\% に対応すること．
+ありがちな「AI っぽい」UI は避けること（紫のグラデーションもガラス風もなし）．…\\
+受け入れ基準（M6）：tests/e2e/ui-screens.spec.ts で，すべての画面を日本語と英語，390×844 と 1280×720 で撮影する…．共有カードの PNG は 1200×630．翻訳のキーの差は 0．fmtLevelText のテスト．
+スクリーンショットを Read ツールで\textbf{見て}，プロがデザインしたように見え，390×844 で何も重ならず，はみ出さなくなるまで繰り返し直せ．
+\end{yaku}
 
 \end{document}
