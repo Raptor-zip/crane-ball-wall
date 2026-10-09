@@ -1,0 +1,117 @@
+{
+  "sampled_at_utc": "2026-10-09T00:31:42.602Z",
+  "source": "Production yurapita D1: plays UNION runs, deduplicated by (board, pidh)",
+  "users_definition": "Distinct browser IDs with a recorded level clear or daily participation",
+  "plays_definition": "One first clear per browser and level board, plus one participation per browser and daily board; retries and repeat clears are not counted",
+  "caveat": "plays began 2026-09-23 20:44 JST; earlier records are incomplete. Dates are first known server records, not necessarily actual play dates. Counts exclude unsubmitted offline/assisted/practice play and may count one person across multiple browsers.",
+  "totals": {
+    "users": 5230,
+    "recorded_plays": 15499,
+    "level_clears": 14942,
+    "daily_entries": 557
+  },
+  "daily": [
+    {
+      "date_jst": "2026-09-23",
+      "new_users": 2223,
+      "level_clears": 5331,
+      "daily_entries": 52
+    },
+    {
+      "date_jst": "2026-09-24",
+      "new_users": 2028,
+      "level_clears": 6351,
+      "daily_entries": 160
+    },
+    {
+      "date_jst": "2026-09-25",
+      "new_users": 491,
+      "level_clears": 1447,
+      "daily_entries": 62
+    },
+    {
+      "date_jst": "2026-09-26",
+      "new_users": 186,
+      "level_clears": 653,
+      "daily_entries": 44
+    },
+    {
+      "date_jst": "2026-09-27",
+      "new_users": 72,
+      "level_clears": 248,
+      "daily_entries": 36
+    },
+    {
+      "date_jst": "2026-09-28",
+      "new_users": 54,
+      "level_clears": 186,
+      "daily_entries": 36
+    },
+    {
+      "date_jst": "2026-09-29",
+      "new_users": 35,
+      "level_clears": 143,
+      "daily_entries": 23
+    },
+    {
+      "date_jst": "2026-09-30",
+      "new_users": 23,
+      "level_clears": 91,
+      "daily_entries": 17
+    },
+    {
+      "date_jst": "2026-10-01",
+      "new_users": 23,
+      "level_clears": 125,
+      "daily_entries": 18
+    },
+    {
+      "date_jst": "2026-10-02",
+      "new_users": 20,
+      "level_clears": 73,
+      "daily_entries": 13
+    },
+    {
+      "date_jst": "2026-10-03",
+      "new_users": 21,
+      "level_clears": 67,
+      "daily_entries": 13
+    },
+    {
+      "date_jst": "2026-10-04",
+      "new_users": 8,
+      "level_clears": 46,
+      "daily_entries": 16
+    },
+    {
+      "date_jst": "2026-10-05",
+      "new_users": 12,
+      "level_clears": 52,
+      "daily_entries": 17
+    },
+    {
+      "date_jst": "2026-10-06",
+      "new_users": 19,
+      "level_clears": 69,
+      "daily_entries": 18
+    },
+    {
+      "date_jst": "2026-10-07",
+      "new_users": 8,
+      "level_clears": 33,
+      "daily_entries": 11
+    },
+    {
+      "date_jst": "2026-10-08",
+      "new_users": 7,
+      "level_clears": 27,
+      "daily_entries": 16
+    },
+    {
+      "date_jst": "2026-10-09",
+      "new_users": 0,
+      "level_clears": 0,
+      "daily_entries": 5
+    }
+  ]
+}
