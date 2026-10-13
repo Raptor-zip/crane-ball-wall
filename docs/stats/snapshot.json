@@ -1,14 +1,14 @@
 {
-  "sampled_at_utc": "2026-10-09T00:31:42.602Z",
+  "sampled_at_utc": "2026-10-13T02:04:34.903Z",
   "source": "Production yurapita D1: plays UNION runs, deduplicated by (board, pidh)",
   "users_definition": "Distinct browser IDs with a recorded level clear or daily participation",
   "plays_definition": "One first clear per browser and level board, plus one participation per browser and daily board; retries and repeat clears are not counted",
   "caveat": "plays began 2026-09-23 20:44 JST; earlier records are incomplete. Dates are first known server records, not necessarily actual play dates. Counts exclude unsubmitted offline/assisted/practice play and may count one person across multiple browsers.",
   "totals": {
-    "users": 5230,
-    "recorded_plays": 15499,
-    "level_clears": 14942,
-    "daily_entries": 557
+    "users": 5256,
+    "recorded_plays": 15637,
+    "level_clears": 15034,
+    "daily_entries": 603
   },
   "daily": [
     {
@@ -109,9 +109,33 @@
     },
     {
       "date_jst": "2026-10-09",
+      "new_users": 4,
+      "level_clears": 7,
+      "daily_entries": 10
+    },
+    {
+      "date_jst": "2026-10-10",
+      "new_users": 12,
+      "level_clears": 43,
+      "daily_entries": 11
+    },
+    {
+      "date_jst": "2026-10-11",
+      "new_users": 1,
+      "level_clears": 9,
+      "daily_entries": 11
+    },
+    {
+      "date_jst": "2026-10-12",
+      "new_users": 9,
+      "level_clears": 33,
+      "daily_entries": 12
+    },
+    {
+      "date_jst": "2026-10-13",
       "new_users": 0,
       "level_clears": 0,
-      "daily_entries": 5
+      "daily_entries": 7
     }
   ]
 }
